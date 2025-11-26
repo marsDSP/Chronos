@@ -2,5 +2,25 @@
 <project version="4">
   <component name="VcsDirectoryMappings">
     <mapping directory="" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/libs/clap" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/libs/clap-helpers" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/libs/clap-wrapper" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/libs/cmake-includes" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/modules/JUCE" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/modules/MTS-ESP" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/modules/fmt" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/modules/melatonin_blur" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/modules/melatonin_inspector" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/modules/simde" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/modules/sst/sst-basic-blocks" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/modules/sst/sst-clap-helpers" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/modules/sst/sst-cmake" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/modules/sst/sst-cpputils" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/modules/sst/sst-effects" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/modules/sst/sst-filters" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/modules/sst/sst-jucegui" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/modules/sst/sst-plugininfra" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/modules/sst/sst-voicemanager" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/modules/sst/sst-waveshapers" vcs="Git" />
   </component>
 </project>
