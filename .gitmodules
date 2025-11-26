@@ -1,0 +1,60 @@
+[submodule "modules/JUCE"]
+	path = modules/JUCE
+	url = https://github.com/marsDSP/JUCE.git
+[submodule "modules/sst/sst-basic-blocks"]
+	path = modules/sst/sst-basic-blocks
+	url = https://github.com/surge-synthesizer/sst-basic-blocks.git
+[submodule "modules/sst/sst-clap-helpers"]
+	path = modules/sst/sst-clap-helpers
+	url = https://github.com/surge-synthesizer/sst-clap-helpers.git
+[submodule "modules/sst/sst-cmake"]
+	path = modules/sst/sst-cmake
+	url = https://github.com/surge-synthesizer/sst-cmake.git
+[submodule "modules/sst/sst-cpputils"]
+	path = modules/sst/sst-cpputils
+	url = https://github.com/surge-synthesizer/sst-cpputils.git
+[submodule "modules/sst/sst-effects"]
+	path = modules/sst/sst-effects
+	url = https://github.com/surge-synthesizer/sst-effects.git
+[submodule "modules/sst/sst-filters"]
+	path = modules/sst/sst-filters
+	url = https://github.com/surge-synthesizer/sst-filters.git
+[submodule "modules/sst/sst-jucegui"]
+	path = modules/sst/sst-jucegui
+	url = https://github.com/surge-synthesizer/sst-jucegui.git
+[submodule "modules/sst/sst-plugininfra"]
+	path = modules/sst/sst-plugininfra
+	url = https://github.com/surge-synthesizer/sst-plugininfra.git
+[submodule "modules/sst/sst-voicemanager"]
+	path = modules/sst/sst-voicemanager
+	url = https://github.com/surge-synthesizer/sst-voicemanager.git
+[submodule "modules/sst/sst-waveshapers"]
+	path = modules/sst/sst-waveshapers
+	url = https://github.com/surge-synthesizer/sst-waveshapers.git
+[submodule "modules/MTS-ESP"]
+	path = modules/MTS-ESP
+	url = https://github.com/ODDSound/MTS-ESP.git
+[submodule "modules/fmt"]
+	path = modules/fmt
+	url = https://github.com/fmtlib/fmt.git
+[submodule "modules/simde"]
+	path = modules/simde
+	url = https://github.com/simd-everywhere/simde.git
+[submodule "modules/melatonin_inspector"]
+	path = modules/melatonin_inspector
+	url = https://github.com/sudara/melatonin_inspector.git
+[submodule "modules/melatonin_blur"]
+	path = modules/melatonin_blur
+	url = https://github.com/sudara/melatonin_blur.git
+[submodule "libs/clap"]
+	path = libs/clap
+	url = https://github.com/free-audio/clap.git
+[submodule "libs/clap-helpers"]
+	path = libs/clap-helpers
+	url = https://github.com/free-audio/clap-helpers.git
+[submodule "libs/clap-wrapper"]
+	path = libs/clap-wrapper
+	url = https://github.com/free-audio/clap-wrapper.git
+[submodule "libs/cmake-includes"]
+	path = libs/cmake-includes
+	url = https://github.com/sudara/cmake-includes.git
