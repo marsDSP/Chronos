@@ -4,15 +4,10 @@
 //==============================================================================
 PluginProcessor::PluginProcessor() : AudioProcessor(BusesProperties()
                          .withInput("Input", juce::AudioChannelSet::stereo(), true)
-                         .withOutput("Output", juce::AudioChannelSet::stereo(), true)
-    )
+                         .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
+                            params(vts)
 {
 }
-
-PluginProcessor::~PluginProcessor()
-{
-}
-
 //==============================================================================
 const juce::String PluginProcessor::getName() const
 {
@@ -78,9 +73,23 @@ void PluginProcessor::changeProgramName(int index, const juce::String &newName)
     juce::ignoreUnused(index, newName);
 }
 
+void PluginProcessor::parameterChanged(const juce::String& paramID, float newValue)
+{
+}
+
+void PluginProcessor::updateParameters()
+{
+    const auto oversampling_choice = params.oversample->getIndex();
+    if (oversampling_choice >= 0 && static_cast<size_t>(oversampling_choice) < processDSP.size())
+    {processDSP[static_cast<size_t>(oversampling_choice)].updateParams(params);}
+}
+
 void PluginProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
-    juce::ignoreUnused(sampleRate, samplesPerBlock);
+    for (int i {}; i < processDSP.size(); ++i)
+    {
+        processDSP[i].prepareDSP(sampleRate, samplesPerBlock, 2, i, params);
+    }
 }
 
 void PluginProcessor::releaseResources()
@@ -108,11 +117,27 @@ bool PluginProcessor::isBusesLayoutSupported(const BusesLayout &layouts) const
     return true;
 #endif
 }
-
 void PluginProcessor::processBlock(juce::AudioBuffer<float> &buffer,
                                    juce::MidiBuffer &midiMessages)
 {
     juce::ignoreUnused(midiMessages);
+
+    updateParameters();
+
+    // Ensure the active processing path receives the latest parameter targets
+    // so that its internal smoother object can drive per-sample values.
+
+    const auto oversampleChoice = params.oversample->getIndex();
+    if (oversampleChoice >= 0 && static_cast<size_t>(oversampleChoice) < processDSP.size())
+    {
+        processDSP[static_cast<size_t>(oversampleChoice)].updateParams(params);
+    }
+
+    juce::ScopedNoDenormals noDenormals;
+
+    if (oversampleChoice >= 0 && static_cast<size_t>(oversampleChoice) < processDSP.size())
+        processDSP[static_cast<size_t>(oversampleChoice)].processDSP(buffer, buffer.getNumSamples());
+
 }
 
 //==============================================================================
@@ -122,19 +147,25 @@ bool PluginProcessor::hasEditor() const
 }
 
 juce::AudioProcessorEditor *PluginProcessor::createEditor()
-{ // Use generic gui for editor for now
-    return new PluginEditor(*this);
+{
+    return new juce::GenericAudioProcessorEditor(*this);
 }
 
 //==============================================================================
-void PluginProcessor::getStateInformation(juce::MemoryBlock &destData)
+void PluginProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
+    copyXmlToBinary( *vts.copyState().createXml(), destData );
 }
 
-void PluginProcessor::setStateInformation(const void *data, int sizeInBytes)
+void PluginProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
+    // Restore the parameters state from the given data
+    const std::unique_ptr xml(getXmlFromBinary( data, sizeInBytes ));
+    if ( xml.get() != nullptr && xml->hasTagName( vts.state.getType() ))
+    {
+        vts.replaceState(juce::ValueTree::fromXml( *xml ));
+    }
 }
-
 //==============================================================================
 // This creates new instances of the plugin..
 juce::AudioProcessor *JUCE_CALLTYPE createPluginFilter()

@@ -17,5 +17,8 @@ private:
 
     PluginProcessor &pref;
 
+    juce::ComboBox m_oversampling_menu;
+    void setOversampleMenu(juce::ComboBox& box, const juce::StringArray& items);
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginEditor)
 };
