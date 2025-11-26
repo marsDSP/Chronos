@@ -1,0 +1,104 @@
+name: Build JUCE Plugin
+
+env:
+  project_name: Chronos
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install dependencies
+        run: |
+          brew install cmake gtk+3
+
+      - name: Clear CMake build directories
+        run: |
+          if [ -d Build ]; then
+            rm -rf Build
+          fi
+      - name: Configure CMake
+        run: cmake -B Build -D CMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"
+
+      - name: Build
+        run: cmake --build Build --config Release
+
+      - name: Create Installer Mac AU
+        run: |
+          pkgbuild --root Build/${{ env.project_name }}_artefacts/Release/AU \
+          --identifier com.MarsDSP.${{ env.project_name }} \
+          --install-location /Library/Audio/Plug-Ins/Components \
+          --version "1.0.0" \
+          ${{ env.project_name }}-AU.pkg
+
+      - name: Create Installer Mac VST3
+        run: |
+          pkgbuild --root Build/${{ env.project_name }}_artefacts/Release/VST3 \
+          --identifier com.MarsDSP.${{ env.project_name }} \
+          --install-location /Library/Audio/Plug-Ins/VST3 \
+          --version "1.0.0" \
+          ${{ env.project_name }}-VST3.pkg
+
+      - name: Upload AU Installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.project_name }}-Mac-Installer-AU
+          path: ${{ env.project_name }}-AU.pkg
+
+      - name: Upload VST3 Installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.project_name }}-Mac-Installer-VST3
+          path: ${{ env.project_name }}-VST3.pkg
+
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Visual Studio
+        uses: microsoft/setup-msbuild@v1.1
+        with:
+          msbuild-architecture: 'x64'
+
+      - name: Install dependencies
+        run: |
+          choco install cmake
+
+      - name: Clear CMake build directories
+        run: |
+          if (Test-Path Build) {
+            Remove-Item Build -Recurse -Force
+          }
+
+      - name: Configure CMake
+        run: |
+          cmake -B Build -G "Visual Studio 17 2022" -A x64 -D CMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: |
+          cmake --build Build --config Release
+
+      - name: Zip the folder
+        run: |
+          Compress-Archive -Path "Build\${{ env.project_name }}_artefacts\Release\VST3\${{ env.project_name }}.vst3" -DestinationPath "${{ env.project_name }}.zip"
+        shell: pwsh
+
+      - name: Upload Installer Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.project_name }}-Windows-Installer-VST3
+          path: ${{ env.project_name }}.zip
