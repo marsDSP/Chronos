@@ -40,12 +40,12 @@ namespace MarsDSP::DSP
     		if (inL == nullptr || inR == nullptr || outL == nullptr || outR == nullptr || numSamples <= 0)
     			return;
 
-            A = smoother.getTime(1.0);
-            B = smoother.getRegen(0.0);
-            C = smoother.getFreq(0.5);
-            D = smoother.getReso(0.0);
-            E = smoother.getFlutter(0.0);
-            F = smoother.getDryWet(1.0);
+            A = smoother.getTime();
+            B = smoother.getRegen();
+            C = smoother.getFreq();
+            D = smoother.getReso();
+            E = smoother.getFlutter();
+            F = smoother.getDryWet();
 
             if (numSamples > 1)
                 smoother.setSmoother(numSamples - 1, Smoother::SmootherUpdateMode::liveInRealTime);
