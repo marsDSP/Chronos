@@ -4,9 +4,6 @@
 
 namespace MarsDSP {
 
-    inline const juce::ParameterID oversamplingChoiceID { "oversample", 1 };
-    static constexpr const char* oversamplingChoiceName = "Oversampling Choice";
-
     inline const juce::ParameterID timeParamID { "time", 1 };
     static constexpr const char* timeParamIDName = "Time";
 
@@ -28,18 +25,12 @@ namespace MarsDSP {
     inline const juce::ParameterID bypassParamID { "bypass", 1 };
     static constexpr const char* bypassParamIDName = "Bypass";
 
-    inline const juce::StringArray items
-    {
-        "OFF", "2x", "4x", "8x", "16x"
-    };
-
     class Parameters
     {
     public:
 
         explicit Parameters(juce::AudioProcessorValueTreeState& vts)
         {
-            castParameter (vts, oversamplingChoiceID, oversample);
             castParameter (vts, timeParamID, time);
             castParameter (vts, regenParamID, regen);
             castParameter (vts, freqParamID, freq);
@@ -52,9 +43,6 @@ namespace MarsDSP {
         static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
         {
             juce::AudioProcessorValueTreeState::ParameterLayout layout;
-
-            layout.add(std::make_unique<juce::AudioParameterChoice>
-                (oversamplingChoiceID, oversamplingChoiceName, items, 0));
 
             layout.add(std::make_unique<juce::AudioParameterFloat>
                 (timeParamID, timeParamIDName, juce::NormalisableRange<float>
@@ -101,14 +89,14 @@ namespace MarsDSP {
 
         ~Parameters() = default;
 
-        juce::AudioParameterBool* bypass {nullptr};
-        juce::AudioParameterChoice* oversample { nullptr };
+
         juce::AudioParameterFloat* time { nullptr };
         juce::AudioParameterFloat* regen { nullptr };
         juce::AudioParameterFloat* freq { nullptr };
         juce::AudioParameterFloat* reso { nullptr };
         juce::AudioParameterFloat* flutter { nullptr };
         juce::AudioParameterFloat* drywet { nullptr} ;
+        juce::AudioParameterBool* bypass {nullptr};
 
     private:
 
