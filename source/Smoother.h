@@ -1,14 +1,14 @@
 #pragma once
 
-#include "Parameters.h"
+#include <Includes.h>
 
-namespace MarsDSP {
-
-    class Smoother {
-
+namespace MarsDSP
+{
+    template <typename ParametersType>
+    class Smoother
+    {
     public:
-
-        explicit Smoother(const Parameters& p) : params(p) {}
+        explicit Smoother(const ParametersType& p) : params(p) {}
 
         void prepare(const juce::dsp::ProcessSpec& spec) noexcept
         {
@@ -85,7 +85,6 @@ namespace MarsDSP {
                 smoother.setTargetValue(newDryWet);
 
             bypassed = params.bypass->get();
-            oversample = params.oversample->getIndex();
         }
 
         void smoothen() noexcept
@@ -104,15 +103,6 @@ namespace MarsDSP {
             smoothen(drywetSmoother);
         }
 
-        std::vector<std::array<juce::LinearSmoothedValue<float>, 2>*> getSmoother() noexcept
-        {
-            return { &timeSmoother,
-                     &regenSmoother,
-                     &freqSmoother,
-                     &resoSmoother,
-                     &flutterSmoother,
-                     &drywetSmoother };
-        }
 
         enum class SmootherUpdateMode
         {
@@ -145,10 +135,11 @@ namespace MarsDSP {
         float getFlutter (size_t channel = 0) noexcept { return flutterSmoother[channel].getNextValue(); }
         float getDryWet  (size_t channel = 0) noexcept { return drywetSmoother[channel].getNextValue(); }
 
+        [[nodiscard]] bool getBypass() const noexcept { return bypassed; }
+
     private:
 
-        // we don't need to copy, just reference
-        const Parameters& params;
+        const ParametersType& params;
 
         float time    { 0.0f };
         float regen    { 0.0f };
@@ -167,6 +158,5 @@ namespace MarsDSP {
         resoSmoother,
         flutterSmoother,
         drywetSmoother;
-
     };
-} // namespace MarsDSP
+}

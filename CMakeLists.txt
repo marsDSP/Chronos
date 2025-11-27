@@ -79,9 +79,9 @@ add_library(SharedCode INTERFACE
         source/Parameters.h
         source/Includes.h
         source/Converters.h
-        source/Smoother.h
-        source/DSP/ProcessBlock.h
-        source/DSP/TapeDelay/TapeDelay.h)
+        source/DSP/TapeDelayDSP.h
+        source/DSP/ProcessDSP.h
+        source/Smoother.h)
 
 # Set compile features for SharedCode
 target_compile_features(SharedCode INTERFACE cxx_std_20)

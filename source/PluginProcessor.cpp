@@ -75,21 +75,17 @@ void PluginProcessor::changeProgramName(int index, const juce::String &newName)
 
 void PluginProcessor::parameterChanged(const juce::String& paramID, float newValue)
 {
+    juce::ignoreUnused(paramID, newValue);
 }
 
 void PluginProcessor::updateParameters()
 {
-    const auto oversampling_choice = params.oversample->getIndex();
-    if (oversampling_choice >= 0 && static_cast<size_t>(oversampling_choice) < processDSP.size())
-    {processDSP[static_cast<size_t>(oversampling_choice)].updateParams(params);}
 }
 
 void PluginProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
-    for (int i {}; i < processDSP.size(); ++i)
-    {
-        processDSP[i].prepareDSP(sampleRate, samplesPerBlock, 2, i, params);
-    }
+    processDSP.prepareDSP(sampleRate, static_cast<juce::uint32>(samplesPerBlock),
+                static_cast<juce::uint32>(getTotalNumOutputChannels()), params);
 }
 
 void PluginProcessor::releaseResources()
@@ -122,21 +118,7 @@ void PluginProcessor::processBlock(juce::AudioBuffer<float> &buffer,
 {
     juce::ignoreUnused(midiMessages);
 
-    updateParameters();
-
-    // Ensure the active processing path receives the latest parameter targets
-    // so that its internal smoother object can drive per-sample values.
-
-    const auto oversampleChoice = params.oversample->getIndex();
-    if (oversampleChoice >= 0 && static_cast<size_t>(oversampleChoice) < processDSP.size())
-    {
-        processDSP[static_cast<size_t>(oversampleChoice)].updateParams(params);
-    }
-
-    juce::ScopedNoDenormals noDenormals;
-
-    if (oversampleChoice >= 0 && static_cast<size_t>(oversampleChoice) < processDSP.size())
-        processDSP[static_cast<size_t>(oversampleChoice)].processDSP(buffer, buffer.getNumSamples());
+    processDSP.process(buffer);
 
 }
 
