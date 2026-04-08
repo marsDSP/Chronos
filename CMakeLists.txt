@@ -202,5 +202,6 @@ if(DOXYGEN_FOUND)
     )
 endif()]]
 
-# Add test harness
+# Add test harnesses
 add_subdirectory(tests/simd_harness)
+add_subdirectory(tests/perf_harness)

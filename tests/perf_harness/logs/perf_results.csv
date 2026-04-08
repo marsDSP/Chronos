@@ -1,0 +1,4 @@
+algorithm,avg_time_us,speedup
+std::sin,37.895807,1.0
+Pade (Scalar),6.180775,6.131239
+Pade (SIMD),3.211280,11.800841

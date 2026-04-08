@@ -1,0 +1,28 @@
+<svg width="800" height="600" xmlns="http://www.w3.org/2000/svg">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="400" y="50" text-anchor="middle" font-family="sans-serif" font-size="24" font-weight="bold">SIMD Performance Comparison</text>
+<text x="400" y="75" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#666">Block Size: 512 samples | Average of 100,000 iterations</text>
+<line x1="100" y1="500.0" x2="700" y2="500.0" stroke="#eee" />
+<text x="90" y="505.0" text-anchor="end" font-family="sans-serif" font-size="12" fill="#999">0.0 us</text>
+<line x1="100" y1="400.0" x2="700" y2="400.0" stroke="#eee" />
+<text x="90" y="405.0" text-anchor="end" font-family="sans-serif" font-size="12" fill="#999">9.5 us</text>
+<line x1="100" y1="300.0" x2="700" y2="300.0" stroke="#eee" />
+<text x="90" y="305.0" text-anchor="end" font-family="sans-serif" font-size="12" fill="#999">18.9 us</text>
+<line x1="100" y1="200.0" x2="700" y2="200.0" stroke="#eee" />
+<text x="90" y="205.0" text-anchor="end" font-family="sans-serif" font-size="12" fill="#999">28.4 us</text>
+<line x1="100" y1="100.0" x2="700" y2="100.0" stroke="#eee" />
+<text x="90" y="105.0" text-anchor="end" font-family="sans-serif" font-size="12" fill="#999">37.9 us</text>
+<rect x="140" y="100.0" width="150" height="400.0" fill="#3498db" rx="5"/>
+<text x="215" y="90.0" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="bold" fill="#3498db">37.896 us</text>
+<text x="215" y="525" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="bold">std::sin</text>
+<text x="215" y="545" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#666">Baseline</text>
+<rect x="370" y="434.7603284975565" width="150" height="65.23967150244351" fill="#e74c3c" rx="5"/>
+<text x="445" y="424.7603284975565" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="bold" fill="#e74c3c">6.181 us</text>
+<text x="445" y="525" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="bold">Pade (Scalar)</text>
+<text x="445" y="545" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#666">6.1x faster</text>
+<rect x="600" y="466.10411278482604" width="150" height="33.89588721517396" fill="#2ecc71" rx="5"/>
+<text x="675" y="456.10411278482604" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="bold" fill="#2ecc71">3.211 us</text>
+<text x="675" y="525" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="bold">Pade (SIMD)</text>
+<text x="675" y="545" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#666">11.8x faster</text>
+<line x1="100" y1="500" x2="700" y2="500" stroke="#ccc" stroke-width="2"/>
+</svg>
