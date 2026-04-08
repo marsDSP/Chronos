@@ -13,3 +13,6 @@
 [submodule "libs/tracy"]
 	path = libs/tracy
 	url = https://github.com/marsDSP/tracy.git
+[submodule "libs/simde"]
+	path = libs/simde
+	url = https://github.com/marsDSP/simde.git

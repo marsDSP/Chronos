@@ -97,7 +97,11 @@ add_compile_definitions(JUCE_PROJECT_NAME="${PROJECT_NAME}")
 add_library(SharedCode INTERFACE
         source/ChronosProcessor.h
         source/utils/helpers/conversion.h
-        source/utils/helpers/overload.h)
+        source/utils/helpers/overload.h
+        source/dsp/engine/delay/digital_engine.h
+        source/utils/helpers/temposync.h
+        source/dsp/math/fastermath.h
+        source/dsp/math/simd/simd_config.h)
 
 # Set compile features for SharedCode
 target_compile_features(SharedCode INTERFACE cxx_std_23)
@@ -111,6 +115,7 @@ target_include_directories(SharedCode INTERFACE
         "${CMAKE_CURRENT_SOURCE_DIR}/libs"
         "${CMAKE_CURRENT_SOURCE_DIR}/libs/JUCE/modules"
         "${CMAKE_CURRENT_SOURCE_DIR}/libs/xsimd/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/libs/simde"
         "${GENERATED_DIR}"
 )
 
