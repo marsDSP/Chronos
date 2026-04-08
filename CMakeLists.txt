@@ -95,7 +95,8 @@ add_compile_definitions(JUCE_PROJECT_NAME="${PROJECT_NAME}")
 
 # Define SharedCode as an INTERFACE library (no sources required)
 add_library(SharedCode INTERFACE
-        source/ChronosProcessor.h)
+        source/ChronosProcessor.h
+        source/utils/helpers/conversion.h)
 
 # Set compile features for SharedCode
 target_compile_features(SharedCode INTERFACE cxx_std_23)
