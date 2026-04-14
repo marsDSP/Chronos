@@ -3,7 +3,7 @@
 #ifndef CHRONOS_DIGITAL_ENGINE_H
 #define CHRONOS_DIGITAL_ENGINE_H
 
-namespace MarsDSP::inline DSP
+namespace MarsDSP::DSP
 {
     class DigitalDelay
     {

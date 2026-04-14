@@ -98,11 +98,11 @@ add_library(SharedCode INTERFACE
         source/ChronosProcessor.h
         source/utils/helpers/conversion.h
         source/utils/helpers/overload.h
-        source/dsp/engine/delay/digital_engine.h
+        source/dsp/engine/delay/delay_engine.h
         source/utils/helpers/temposync.h
         source/dsp/math/fastermath.h
         source/dsp/math/simd/simd_config.h
-        source/utils/computers/taylor_cos.cpp)
+        source/dsp/engine/delay/delay_interpolator.h)
 
 # Set compile features for SharedCode
 target_compile_features(SharedCode INTERFACE cxx_std_23)
