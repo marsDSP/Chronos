@@ -8,6 +8,7 @@ def generate_svg(data, filename="cos_error_visualization.svg"):
     plot_width = width - 2 * margin
 
     try:
+        data = sorted(data, key=lambda row: float(row[0]))
         x_vals = [float(row[0]) for row in data]
         std_vals = [float(row[1]) for row in data]
         scalar_vals = [float(row[2]) for row in data]
@@ -50,8 +51,10 @@ def generate_svg(data, filename="cos_error_visualization.svg"):
         
         # Grid for top panel
         for i in range(5):
+            val = max_y1 - i * (max_y1 - min_y1) / 4
             y = margin + i * panel_height / 4
             f.write(f'<line x1="{margin}" y1="{y}" x2="{margin+plot_width}" y2="{y}" stroke="#eee" />\n')
+            f.write(f'<text x="{margin-5}" y="{y+5}" text-anchor="end" font-family="sans-serif" font-size="10" fill="#666">{val:g}</text>\n')
 
         # Paths
         f.write('<path d="M' + ' L'.join([f"{scale_x(x):.2f},{scale_y1(y):.2f}" for x, y in zip(x_vals, std_vals)]) + '" fill="none" stroke="#3498db" stroke-width="3" opacity="0.4" />\n')
@@ -71,12 +74,19 @@ def generate_svg(data, filename="cos_error_visualization.svg"):
 
         # Grid for bottom panel
         for i in range(5):
+            val = (4 - i) * max_err / 4
             y = start_y2 + i * panel_height / 4
             f.write(f'<line x1="{margin}" y1="{y}" x2="{margin+plot_width}" y2="{y}" stroke="#eee" />\n')
+            f.write(f'<text x="{margin-5}" y="{y+5}" text-anchor="end" font-family="sans-serif" font-size="10" fill="#666">{val:.1e}</text>\n')
 
         f.write('<path d="M' + ' L'.join([f"{scale_x(x):.2f},{scale_y2(y):.2f}" for x, y in zip(x_vals, scalar_err)]) + '" fill="none" stroke="#e74c3c" stroke-width="1.5" />\n')
         f.write('<path d="M' + ' L'.join([f"{scale_x(x):.2f},{scale_y2(y):.2f}" for x, y in zip(x_vals, simd_err)]) + '" fill="none" stroke="#2ecc71" stroke-width="1.5" stroke-dasharray="3,3" />\n')
         f.write('<path d="M' + ' L'.join([f"{scale_x(x):.2f},{scale_y2(y):.2f}" for x, y in zip(x_vals, diff_simd_scalar)]) + '" fill="none" stroke="#333" stroke-width="1" opacity="0.3" />\n')
+
+        # X-axis labels
+        for x_val in [min_x, (min_x + max_x)/2, max_x]:
+            f.write(f'<text x="{scale_x(x_val)}" y="{height-margin+20}" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#666">{x_val:.2f}</text>\n')
+        f.write(f'<text x="{width//2}" y="{height-10}" text-anchor="middle" font-family="sans-serif" font-size="12" font-weight="bold">Input x</text>\n')
 
         # Legend 2
         f.write(f'<rect x="{margin+10}" y="{start_y2+10}" width="160" height="65" fill="white" fill-opacity="0.8" stroke="#ccc"/>\n')

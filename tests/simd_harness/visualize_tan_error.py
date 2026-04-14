@@ -1,7 +1,7 @@
 import csv
 import os
 
-def generate_svg(data, filename="sin_error_visualization.svg"):
+def generate_svg(data, filename="tan_error_visualization.svg"):
     width, height = 1000, 800
     margin = 60
     panel_height = (height - 3 * margin) // 2
@@ -21,8 +21,8 @@ def generate_svg(data, filename="sin_error_visualization.svg"):
 
     min_x, max_x = min(x_vals), max(x_vals)
     
-    # Top panel: sin(x)
-    min_y1, max_y1 = -1.2, 1.2
+    # Top panel: tan(x)
+    min_y1, max_y1 = min(std_vals) * 1.1, max(std_vals) * 1.1
     def scale_x(val):
         return margin + (val - min_x) / (max_x - min_x) * plot_width
     def scale_y1(val):
@@ -43,10 +43,10 @@ def generate_svg(data, filename="sin_error_visualization.svg"):
         f.write('<rect width="100%" height="100%" fill="#ffffff"/>\n')
         
         # Title
-        f.write(f'<text x="{width//2}" y="35" text-anchor="middle" font-family="sans-serif" font-size="24" font-weight="bold">SIMD Pade Sine Approximant Validation</text>\n')
+        f.write(f'<text x="{width//2}" y="35" text-anchor="middle" font-family="sans-serif" font-size="24" font-weight="bold">SIMD Pade Tangent Approximant Validation</text>\n')
 
         # Top Panel
-        f.write(f'<text x="{margin}" y="{margin-15}" font-family="sans-serif" font-size="16" font-weight="bold">sin(x) Comparison</text>\n')
+        f.write(f'<text x="{margin}" y="{margin-15}" font-family="sans-serif" font-size="16" font-weight="bold">tan(x) Comparison</text>\n')
         f.write(f'<rect x="{margin}" y="{margin}" width="{plot_width}" height="{panel_height}" fill="#fdfdfd" stroke="#ccc"/>\n')
         
         # Grid for top panel
@@ -63,7 +63,7 @@ def generate_svg(data, filename="sin_error_visualization.svg"):
 
         # Legend 1
         f.write(f'<rect x="{margin+10}" y="{margin+10}" width="160" height="65" fill="white" fill-opacity="0.8" stroke="#ccc"/>\n')
-        f.write(f'<text x="{margin+20}" y="{margin+30}" fill="#3498db" font-family="sans-serif" font-size="12">Solid: std::sin</text>\n')
+        f.write(f'<text x="{margin+20}" y="{margin+30}" fill="#3498db" font-family="sans-serif" font-size="12">Solid: std::tan</text>\n')
         f.write(f'<text x="{margin+20}" y="{margin+45}" fill="#e74c3c" font-family="sans-serif" font-size="12">Dash: Pade Scalar</text>\n')
         f.write(f'<text x="{margin+20}" y="{margin+60}" fill="#2ecc71" font-family="sans-serif" font-size="12">Dot: Pade SIMD</text>\n')
 
@@ -98,8 +98,8 @@ def generate_svg(data, filename="sin_error_visualization.svg"):
 
 if __name__ == "__main__":
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    csv_file = os.path.join(script_dir, "logs", "simd_sin_results.csv")
-    output_file = os.path.join(script_dir, "logs", "sin_error_visualization.svg")
+    csv_file = os.path.join(script_dir, "logs", "simd_tan_results.csv")
+    output_file = os.path.join(script_dir, "logs", "tan_error_visualization.svg")
 
     if not os.path.exists(csv_file):
         print(f"Error: {csv_file} not found. Run the C++ test first (from project root).")

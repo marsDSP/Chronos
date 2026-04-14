@@ -135,5 +135,59 @@ namespace MarsDSP::inline FasterMath
         return SIMD_MM(div_ps)(num, den);
     }
 //==============================================================================//
+    namespace PadeTanCoeffs
+    {
+        // (7,6) pade approximant of tan(x)
+        constexpr float N0 = -135135.0f;
+        constexpr float N1 = 17325.0f;
+        constexpr float N2 = -378.0f;
+        constexpr float N3 = 1.0f;
+
+        constexpr float D0 = -135135.0f;
+        constexpr float D1 = 62370.0f;
+        constexpr float D2 = -3150.0f;
+        constexpr float D3 = 28.0f;
+    }
+
+    inline float padeTanApprox(const float x) noexcept
+    {
+        using namespace PadeTanCoeffs;
+
+        const auto x2 = x * x;
+
+        const auto num = x * (N0 + x2 * (N1 + x2 * (N2 + x2 * N3)));
+        const auto den =       D0 + x2 * (D1 + x2 * (D2 + x2 * D3));
+
+        return num / den;
+    }
+
+    inline SIMD_M128 fasterTan(const SIMD_M128 x) noexcept
+    {
+        using namespace PadeTanCoeffs;
+
+        const auto vN0 = SIMD_MM(set_ps1)(N0);
+        const auto vN1 = SIMD_MM(set_ps1)(N1);
+        const auto vN2 = SIMD_MM(set_ps1)(N2);
+        const auto vN3 = SIMD_MM(set_ps1)(N3);
+
+        const auto vD0 = SIMD_MM(set_ps1)(D0);
+        const auto vD1 = SIMD_MM(set_ps1)(D1);
+        const auto vD2 = SIMD_MM(set_ps1)(D2);
+        const auto vD3 = SIMD_MM(set_ps1)(D3);
+
+        const auto x2  = SIMD_MM(mul_ps)(x, x);
+
+        auto numInner  = SIMD_MM(add_ps)(vN2, SIMD_MM(mul_ps)(x2, vN3));        // N2 + x²·N3
+        numInner       = SIMD_MM(add_ps)(vN1, SIMD_MM(mul_ps)(x2, numInner));   // N1 + x²·(…)
+        const auto poly = SIMD_MM(add_ps)(vN0, SIMD_MM(mul_ps)(x2, numInner));   // N0 + x²·(…)
+        const auto num  = SIMD_MM(mul_ps)(x, poly);
+
+        auto denInner  = SIMD_MM(add_ps)(vD2, SIMD_MM(mul_ps)(x2, vD3));        // D2 + x²·D3
+        denInner       = SIMD_MM(add_ps)(vD1, SIMD_MM(mul_ps)(x2, denInner));   // D1 + x²·(…)
+        const auto den = SIMD_MM(add_ps)(vD0, SIMD_MM(mul_ps)(x2, denInner));
+
+        return SIMD_MM(div_ps)(num, den);
+    }
+//==============================================================================//
 }
 #endif
