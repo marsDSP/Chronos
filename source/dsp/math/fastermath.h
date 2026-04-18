@@ -57,17 +57,17 @@ namespace MarsDSP::inline FasterMath
         using namespace PadeSinCoeffs;
 
         // broadcast each coeff across 4 lanes
-        const auto vN0 = SIMD_MM(set_ps1)(N0);
-        const auto vN1 = SIMD_MM(set_ps1)(N1);
-        const auto vN2 = SIMD_MM(set_ps1)(N2);
-        const auto vN3 = SIMD_MM(set_ps1)(N3);
+        const auto vN0 = SIMD_MM(set1_ps)(N0);
+        const auto vN1 = SIMD_MM(set1_ps)(N1);
+        const auto vN2 = SIMD_MM(set1_ps)(N2);
+        const auto vN3 = SIMD_MM(set1_ps)(N3);
 
-        const auto vD0 = SIMD_MM(set_ps1)(D0);
-        const auto vD1 = SIMD_MM(set_ps1)(D1);
-        const auto vD2 = SIMD_MM(set_ps1)(D2);
-        const auto vD3 = SIMD_MM(set_ps1)(D3);
+        const auto vD0 = SIMD_MM(set1_ps)(D0);
+        const auto vD1 = SIMD_MM(set1_ps)(D1);
+        const auto vD2 = SIMD_MM(set1_ps)(D2);
+        const auto vD3 = SIMD_MM(set1_ps)(D3);
 
-        const auto neg = SIMD_MM(set_ps1)(-1.0f);
+        const auto neg = SIMD_MM(set1_ps)(-1.0f);
         const auto x2  = SIMD_MM(mul_ps)(x, x);
 
         // numerator:  -x · (N0 + x²·(N1 + x²·(N2 + x²·N3))) | innermost first
@@ -121,16 +121,15 @@ namespace MarsDSP::inline FasterMath
     {
         using namespace PadeCosCoeffs;
 
-        // broadcast each coeff across 4 lanes
-        const auto vN0 = SIMD_MM(set_ps1)(N0);
-        const auto vN1 = SIMD_MM(set_ps1)(N1);
-        const auto vN2 = SIMD_MM(set_ps1)(N2);
-        const auto vN3 = SIMD_MM(set_ps1)(N3);
+        const auto vN0 = SIMD_MM(set1_ps)(N0);
+        const auto vN1 = SIMD_MM(set1_ps)(N1);
+        const auto vN2 = SIMD_MM(set1_ps)(N2);
+        const auto vN3 = SIMD_MM(set1_ps)(N3);
 
-        const auto vD0 = SIMD_MM(set_ps1)(D0);
-        const auto vD1 = SIMD_MM(set_ps1)(D1);
-        const auto vD2 = SIMD_MM(set_ps1)(D2);
-        const auto vD3 = SIMD_MM(set_ps1)(D3);
+        const auto vD0 = SIMD_MM(set1_ps)(D0);
+        const auto vD1 = SIMD_MM(set1_ps)(D1);
+        const auto vD2 = SIMD_MM(set1_ps)(D2);
+        const auto vD3 = SIMD_MM(set1_ps)(D3);
 
         const auto x2  = SIMD_MM(mul_ps)(x, x);
 
@@ -182,15 +181,15 @@ namespace MarsDSP::inline FasterMath
     {
         using namespace PadeTanCoeffs;
 
-        const auto vN0  = SIMD_MM(set_ps1)(N0);
-        const auto vN1  = SIMD_MM(set_ps1)(N1);
-        const auto vN2  = SIMD_MM(set_ps1)(N2);
-        const auto vN3  = SIMD_MM(set_ps1)(N3);
+        const auto vN0  = SIMD_MM(set1_ps)(N0);
+        const auto vN1  = SIMD_MM(set1_ps)(N1);
+        const auto vN2  = SIMD_MM(set1_ps)(N2);
+        const auto vN3  = SIMD_MM(set1_ps)(N3);
 
-        const auto vD0  = SIMD_MM(set_ps1)(D0);
-        const auto vD1  = SIMD_MM(set_ps1)(D1);
-        const auto vD2  = SIMD_MM(set_ps1)(D2);
-        const auto vD3  = SIMD_MM(set_ps1)(D3);
+        const auto vD0  = SIMD_MM(set1_ps)(D0);
+        const auto vD1  = SIMD_MM(set1_ps)(D1);
+        const auto vD2  = SIMD_MM(set1_ps)(D2);
+        const auto vD3  = SIMD_MM(set1_ps)(D3);
 
         const auto x2   = SIMD_MM(mul_ps)(x, x);
 
@@ -240,15 +239,15 @@ namespace MarsDSP::inline FasterMath
     {
         using namespace PadeTanhCoeffs;
 
-        const auto vN0  = SIMD_MM(set_ps1)(N0);
-        const auto vN1  = SIMD_MM(set_ps1)(N1);
-        const auto vN2  = SIMD_MM(set_ps1)(N2);
-        const auto vN3  = SIMD_MM(set_ps1)(N3);
+        const auto vN0  = SIMD_MM(set1_ps)(N0);
+        const auto vN1  = SIMD_MM(set1_ps)(N1);
+        const auto vN2  = SIMD_MM(set1_ps)(N2);
+        const auto vN3  = SIMD_MM(set1_ps)(N3);
 
-        const auto vD0  = SIMD_MM(set_ps1)(D0);
-        const auto vD1  = SIMD_MM(set_ps1)(D1);
-        const auto vD2  = SIMD_MM(set_ps1)(D2);
-        const auto vD3  = SIMD_MM(set_ps1)(D3);
+        const auto vD0  = SIMD_MM(set1_ps)(D0);
+        const auto vD1  = SIMD_MM(set1_ps)(D1);
+        const auto vD2  = SIMD_MM(set1_ps)(D2);
+        const auto vD3  = SIMD_MM(set1_ps)(D3);
 
         const auto x2   = SIMD_MM(mul_ps)(x, x);
 

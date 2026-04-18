@@ -13,10 +13,8 @@ namespace MarsDSP::DSP {
     public:
         DelayEngine() = default;
 
-        void AllocBuffer(int maxLengthInSamples) noexcept
+        void AllocBuffer() noexcept
         {
-            assert(maxLengthInSamples > 0);
-
             if (bufferL.size() < static_cast<size_t>(kBufSize + kTail))
             {
                 bufferL.assign(static_cast<size_t>(kBufSize + kTail), SampleType(0));
@@ -55,24 +53,17 @@ namespace MarsDSP::DSP {
 
         void reset() noexcept
         {
-            writeIdxL = 0;
-            writeIdxR = 0;
-
-            if (!bufferL.empty())
-            {
-                std::fill(bufferL.begin(), bufferL.end(), static_cast<SampleType>(0));
-            }
-
-            if (!bufferR.empty())
-            {
-                std::fill(bufferR.begin(), bufferR.end(), static_cast<SampleType>(0));
-            }
+            writeIdxL = writeIdxR = 0;
+            prevPos   = SampleType(0);
+            duckGain  = SampleType(1);
+            if (!bufferL.empty()) std::fill(bufferL.begin(), bufferL.end(), SampleType(0));
+            if (!bufferR.empty()) std::fill(bufferR.begin(), bufferR.end(), SampleType(0));
         }
 
         void prepare(const dsp::ProcessSpec &spec) noexcept
         {
             sampleRate = spec.sampleRate;
-            AllocBuffer(kBufSize);
+            AllocBuffer();
 
             // 10ms attack, 100ms release for ducking response
             duckAtkCoeff = static_cast<SampleType>(1.0 - std::exp(-1.0 / (0.010 * sampleRate)));
@@ -101,9 +92,9 @@ namespace MarsDSP::DSP {
             const size_t numSamplesSize = static_cast<size_t>(numSamples);
             assert(numSamplesSize <= N_BLOCK - 8);
 
-            int delayInt = static_cast<int>(std::floor(static_cast<double>(currentPos)));
-            delayInt = std::max(delayInt, static_cast<int>(numSamplesSize) + 1);
-            SampleType delayFrac = currentPos - static_cast<SampleType>(delayInt);
+            const SampleType pos = std::max(currentPos, static_cast<SampleType>(numSamplesSize + 1));
+            const int delayInt = static_cast<int>(std::floor(static_cast<double>(pos)));
+            const SampleType delayFrac = pos - static_cast<SampleType>(delayInt);
             int offset = delayInt;
 
             // Pre-read from circular buffer into linear scratch (tL/tR) using memcpys
@@ -115,11 +106,14 @@ namespace MarsDSP::DSP {
             if (firstL < total)
                 std::memcpy(tL + firstL, &bufferL[kTail], (total - firstL) * sizeof(SampleType));
 
-            const int rposR = (writeIdxR - offset) & kBufMask;
-            const int firstR = std::min(total, kBufSize + kTail - rposR);
-            std::memcpy(tR, &bufferR[rposR], firstR * sizeof(SampleType));
-            if (firstR < total)
-                std::memcpy(tR + firstR, &bufferR[kTail], (total - firstR) * sizeof(SampleType));
+            if (!isMono() && ch1 != nullptr)
+            {
+                const int rposR = (writeIdxR - offset) & kBufMask;
+                const int firstR = std::min(total, kBufSize + kTail - rposR);
+                std::memcpy(tR, &bufferR[rposR], firstR * sizeof(SampleType));
+                if (firstR < total)
+                    std::memcpy(tR + firstR, &bufferR[kTail], (total - firstR) * sizeof(SampleType));
+            }
 
             LagrangeCoeffs coeffs;
             coeffs.frac = delayFrac;
@@ -162,7 +156,7 @@ namespace MarsDSP::DSP {
                     auto vMonoSum = SIMD_MM(setzero_ps)();
                     if (ch0 != nullptr && ch1 != nullptr)
                     {
-                        vMonoSum = SIMD_MM(mul_ps)(SIMD_MM(set_ps1)(0.5f), SIMD_MM(add_ps)(SIMD_MM(loadu_ps)(ch0 + n),
+                        vMonoSum = SIMD_MM(mul_ps)(SIMD_MM(set1_ps)(0.5f), SIMD_MM(add_ps)(SIMD_MM(loadu_ps)(ch0 + n),
                                                                                            SIMD_MM(loadu_ps)(ch1 + n)));
                     }
                     else if (ch0 != nullptr)
@@ -197,11 +191,11 @@ namespace MarsDSP::DSP {
                     auto vDuckedOut = SIMD_MM(mul_ps)(vDelayedOut, vDuckGain);
 
                     // feedback-mix in SIMD
-                    auto vWriteVal = fasterTanhBounded(SIMD_MM(add_ps)(vMonoSum, SIMD_MM(mul_ps)(SIMD_MM(set_ps1)(feedbackParam), vDuckedOut)));
+                    auto vWriteVal = fasterTanhBounded(SIMD_MM(add_ps)(vMonoSum, SIMD_MM(mul_ps)(SIMD_MM(set1_ps)(feedbackParam), vDuckedOut)));
                     SIMD_MM(storeu_ps)(&wL[n], vWriteVal);
 
-                    auto vOut = fasterTanhBounded(SIMD_MM(add_ps)(SIMD_MM(mul_ps)(vDuckedOut, SIMD_MM(set_ps1)(mixParam)),
-                                                                                       SIMD_MM(mul_ps)(vMonoSum, SIMD_MM(set_ps1)(oneMinusMix))));
+                    auto vOut = fasterTanhBounded(SIMD_MM(add_ps)(SIMD_MM(mul_ps)(vDuckedOut, SIMD_MM(set1_ps)(mixParam)),
+                                                                                       SIMD_MM(mul_ps)(vMonoSum, SIMD_MM(set1_ps)(oneMinusMix))));
 
                     if (ch0 != nullptr) SIMD_MM(storeu_ps)(ch0 + n, vOut);
                     if (ch1 != nullptr) SIMD_MM(storeu_ps)(ch1 + n, vOut);
@@ -230,20 +224,28 @@ namespace MarsDSP::DSP {
                 if (wrapped)
                 {
                     for (size_t k = 0; k < numSamplesSize; ++k)
-                        bufferL[(writeIdxL + (int)k) & kBufMask] = wL[k];
+                    {
+                        const int idx = (writeIdxL + (int)k) & kBufMask;
+                        bufferL[idx] = wL[k];
+                        bufferR[idx] = wL[k];
+                    }
                 }
                 else
                 {
                     std::memcpy(&bufferL[writeIdxL], wL, numSamplesSize * sizeof(SampleType));
+                    std::memcpy(&bufferR[writeIdxL], wL, numSamplesSize * sizeof(SampleType));
                 }
 
                 const int oldIdx = writeIdxL;
-                // ...copy...
-                writeIdxL = oldIdx + static_cast<int>(numSamplesSize) & kBufMask;
+                writeIdxL = (oldIdx + static_cast<int>(numSamplesSize)) & kBufMask;
+                writeIdxR = writeIdxL;
                 if (wrapped || oldIdx < kTail)
                 {
                     for (int k = 0; k < kTail; ++k)
+                    {
                         bufferL[kBufSize + k] = bufferL[k];
+                        bufferR[kBufSize + k] = bufferR[k];
+                    }
                 }
             }
             else // stereo
@@ -275,11 +277,11 @@ namespace MarsDSP::DSP {
                                                    SIMD_MM(mul_ps)(vFrac, vSum));
                         
                         auto vYL_ducked = SIMD_MM(mul_ps)(vYL, vDuckGain);
-                        auto vWriteValL = fasterTanhBounded(SIMD_MM(add_ps)(vXL, SIMD_MM(mul_ps)(SIMD_MM(set_ps1)(fbLParam), vYL_ducked)));
+                        auto vWriteValL = fasterTanhBounded(SIMD_MM(add_ps)(vXL, SIMD_MM(mul_ps)(SIMD_MM(set1_ps)(fbLParam), vYL_ducked)));
                         SIMD_MM(storeu_ps)(&wL[n], vWriteValL);
 
-                        auto vOutL = fasterTanhBounded(SIMD_MM(add_ps)(SIMD_MM(mul_ps)(vYL_ducked, SIMD_MM(set_ps1)(mixParam)),
-                                                                                           SIMD_MM(mul_ps)(vXL, SIMD_MM(set_ps1)(oneMinusMix))));
+                        auto vOutL = fasterTanhBounded(SIMD_MM(add_ps)(SIMD_MM(mul_ps)(vYL_ducked, SIMD_MM(set1_ps)(mixParam)),
+                                                                                           SIMD_MM(mul_ps)(vXL, SIMD_MM(set1_ps)(oneMinusMix))));
                         SIMD_MM(storeu_ps)(ch0 + n, vOutL);
                     }
 
@@ -305,11 +307,11 @@ namespace MarsDSP::DSP {
                                                    SIMD_MM(mul_ps)(vFrac, vSum));
                         
                         auto vYR_ducked = SIMD_MM(mul_ps)(vYR, vDuckGain);
-                        auto vWriteValR = fasterTanhBounded(SIMD_MM(add_ps)(vXR, SIMD_MM(mul_ps)(SIMD_MM(set_ps1)(fbRParam), vYR_ducked)));
+                        auto vWriteValR = fasterTanhBounded(SIMD_MM(add_ps)(vXR, SIMD_MM(mul_ps)(SIMD_MM(set1_ps)(fbRParam), vYR_ducked)));
                         SIMD_MM(storeu_ps)(&wR[n], vWriteValR);
 
-                        auto vOutR = fasterTanhBounded(SIMD_MM(add_ps)(SIMD_MM(mul_ps)(vYR_ducked, SIMD_MM(set_ps1)(mixParam)),
-                                                                                           SIMD_MM(mul_ps)(vXR, SIMD_MM(set_ps1)(oneMinusMix))));
+                        auto vOutR = fasterTanhBounded(SIMD_MM(add_ps)(SIMD_MM(mul_ps)(vYR_ducked, SIMD_MM(set1_ps)(mixParam)),
+                                                                                           SIMD_MM(mul_ps)(vXR, SIMD_MM(set1_ps)(oneMinusMix))));
                         SIMD_MM(storeu_ps)(ch1 + n, vOutR);
                     }
                 }
@@ -336,15 +338,16 @@ namespace MarsDSP::DSP {
 
                 // Block write & Mirror L
                 if (ch0 != nullptr) {
-                    const bool wrappedL = (writeIdxL + (int)numSamplesSize) > kBufSize;
+                    const int oldIdxL = writeIdxL;
+                    const bool wrappedL = (oldIdxL + (int)numSamplesSize) > kBufSize;
                     if (wrappedL) {
                         for (size_t k = 0; k < numSamplesSize; ++k)
-                            bufferL[(writeIdxL + (int)k) & kBufMask] = wL[k];
+                            bufferL[(oldIdxL + (int)k) & kBufMask] = wL[k];
                     } else {
-                        std::memcpy(&bufferL[writeIdxL], wL, numSamplesSize * sizeof(SampleType));
+                        std::memcpy(&bufferL[oldIdxL], wL, numSamplesSize * sizeof(SampleType));
                     }
-                    writeIdxL = (writeIdxL + (int)numSamplesSize) & kBufMask;
-                    if (wrappedL || writeIdxL < kTail) {
+                    writeIdxL = (oldIdxL + (int)numSamplesSize) & kBufMask;
+                    if (wrappedL || oldIdxL < kTail) {
                         for (int k = 0; k < kTail; ++k)
                             bufferL[kBufSize + k] = bufferL[k];
                     }
@@ -352,15 +355,16 @@ namespace MarsDSP::DSP {
 
                 // Block write & Mirror R
                 if (ch1 != nullptr) {
-                    const bool wrappedR = (writeIdxR + (int)numSamplesSize) > kBufSize;
+                    const int oldIdxR = writeIdxR;
+                    const bool wrappedR = (oldIdxR + (int)numSamplesSize) > kBufSize;
                     if (wrappedR) {
                         for (size_t k = 0; k < numSamplesSize; ++k)
-                            bufferR[(writeIdxR + (int)k) & kBufMask] = wR[k];
+                            bufferR[(oldIdxR + (int)k) & kBufMask] = wR[k];
                     } else {
-                        std::memcpy(&bufferR[writeIdxR], wR, numSamplesSize * sizeof(SampleType));
+                        std::memcpy(&bufferR[oldIdxR], wR, numSamplesSize * sizeof(SampleType));
                     }
-                    writeIdxR = (writeIdxR + (int)numSamplesSize) & kBufMask;
-                    if (wrappedR || writeIdxR < kTail) {
+                    writeIdxR = (oldIdxR + (int)numSamplesSize) & kBufMask;
+                    if (wrappedR || oldIdxR < kTail) {
                         for (int k = 0; k < kTail; ++k)
                             bufferR[kBufSize + k] = bufferR[k];
                     }
@@ -417,6 +421,8 @@ namespace MarsDSP::DSP {
         }
 
         std::vector<SampleType> bufferL, bufferR;
+        // scratch buffers are thread_local to avoid per-instance allocation while remaining thread-safe.
+        // Assumes no re-entrant process() on the same thread (e.g. sidechain feedback loops).
         alignas(16) static thread_local inline float tL[N_BLOCK];
         alignas(16) static thread_local inline float tR[N_BLOCK];
         alignas(16) static thread_local inline float wL[N_BLOCK];
