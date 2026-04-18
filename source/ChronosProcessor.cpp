@@ -1,5 +1,6 @@
 #include "ChronosProcessor.h"
 #include "ChronosEditor.h"
+#include "PluginParameters.h"
 //==============================================================================
 ChronosProcessor::ChronosProcessor() : AudioProcessor (BusesProperties()
                        .withInput  ("Input",  AudioChannelSet::stereo(), true)
@@ -49,7 +50,11 @@ bool ChronosProcessor::isMidiEffect() const
 }
 double ChronosProcessor::getTailLengthSeconds() const
 {
-    return 0.0;
+    // Forward the DelayEngine's ringout estimate so hosts know when the
+    // feedback tail has decayed and the plugin can be released.
+    const double sr = getSampleRate();
+    if (sr <= 0.0) return 0.0;
+    return static_cast<double>(delay.ringoutSamples()) / sr;
 }
 int ChronosProcessor::getNumPrograms()
 {
@@ -76,46 +81,47 @@ void ChronosProcessor::changeProgramName (int index, const String& newName)
 //=============================================================================
 AudioProcessorValueTreeState::ParameterLayout ChronosProcessor::createParameterLayout()
 {
+    using namespace Chronos::ParamID;
     AudioProcessorValueTreeState::ParameterLayout layout;
 
     layout.add(std::make_unique<AudioParameterFloat>(
-        ParameterID("delayTime", 1), "Delay Time",
+        ParameterID(kDelayTime, 1), "Delay Time",
         NormalisableRange(5.0f, 5000.0f, 0.1f, 0.3f), 200.0f,
         AudioParameterFloatAttributes().withLabel("ms")));
 
     layout.add(std::make_unique<AudioParameterFloat>(
-        ParameterID("mix", 1), "Mix",
+        ParameterID(kMix, 1), "Mix",
         NormalisableRange(0.0f, 1.0f, 0.01f), 0.5f,
         AudioParameterFloatAttributes().withLabel("%")));
 
     layout.add(std::make_unique<AudioParameterFloat>(
-        ParameterID("feedback", 1), "Feedback",
+        ParameterID(kFeedback, 1), "Feedback",
         NormalisableRange(0.0f, 0.99f, 0.01f), 0.3f,
         AudioParameterFloatAttributes().withLabel("%")));
 
     // Feedback-path low-cut (highpass) corner frequency.
     layout.add(std::make_unique<AudioParameterFloat>(
-        ParameterID("lowCut", 1), "Low Cut",
+        ParameterID(kLowCut, 1), "Low Cut",
         NormalisableRange(20.0f, 20000.0f, 1.0f, 0.3f), 20.0f,
         AudioParameterFloatAttributes().withLabel("Hz")));
 
     // Feedback-path high-cut (lowpass) corner frequency.
     layout.add(std::make_unique<AudioParameterFloat>(
-        ParameterID("highCut", 1), "High Cut",
+        ParameterID(kHighCut, 1), "High Cut",
         NormalisableRange(20.0f, 20000.0f, 1.0f, 0.3f), 20000.0f,
         AudioParameterFloatAttributes().withLabel("Hz")));
 
     // Stereo crossfeed (ping-pong amount). 0 = none, 1 = full swap.
     layout.add(std::make_unique<AudioParameterFloat>(
-        ParameterID("crossfeed", 1), "Crossfeed",
+        ParameterID(kCrossfeed, 1), "Crossfeed",
         NormalisableRange(0.0f, 1.0f, 0.01f), 0.0f,
         AudioParameterFloatAttributes().withLabel("%")));
 
     layout.add(std::make_unique<AudioParameterBool>(
-        ParameterID("mono", 1), "Mono", false));
+        ParameterID(kMono, 1), "Mono", false));
 
     layout.add(std::make_unique<AudioParameterBool>(
-        ParameterID("bypass", 1), "Bypass", false));
+        ParameterID(kBypass, 1), "Bypass", false));
 
     return layout;
 }
@@ -166,15 +172,16 @@ void ChronosProcessor::processBlock (AudioBuffer<float> &buffer, MidiBuffer &mid
     if (numSamples == 0)
         return;
 
-    // read parameters
-    delay.setDelayTimeParam(apvts.getRawParameterValue("delayTime")->load());
-    delay.setMixParam(apvts.getRawParameterValue("mix")->load());
-    delay.setFeedbackParam(apvts.getRawParameterValue("feedback")->load());
-    delay.setLowCutParam(apvts.getRawParameterValue("lowCut")->load());
-    delay.setHighCutParam(apvts.getRawParameterValue("highCut")->load());
-    delay.setCrossfeedParam(apvts.getRawParameterValue("crossfeed")->load());
-    delay.setMono(apvts.getRawParameterValue("mono")->load() >= 0.5f);
-    delay.setBypassed(apvts.getRawParameterValue("bypass")->load() >= 0.5f);
+    // read parameters (all IDs funnel through Chronos::ParamID)
+    using namespace Chronos::ParamID;
+    delay.setDelayTimeParam(apvts.getRawParameterValue(kDelayTime)->load());
+    delay.setMixParam     (apvts.getRawParameterValue(kMix)->load());
+    delay.setFeedbackParam(apvts.getRawParameterValue(kFeedback)->load());
+    delay.setLowCutParam  (apvts.getRawParameterValue(kLowCut)->load());
+    delay.setHighCutParam (apvts.getRawParameterValue(kHighCut)->load());
+    delay.setCrossfeedParam(apvts.getRawParameterValue(kCrossfeed)->load());
+    delay.setMono    (apvts.getRawParameterValue(kMono)  ->load() >= 0.5f);
+    delay.setBypassed(apvts.getRawParameterValue(kBypass)->load() >= 0.5f);
 
     const dsp::AudioBlock<float> block(buffer);
     delay.process(block, numSamples);
@@ -205,7 +212,12 @@ AudioProcessorEditor* ChronosProcessor::createEditor()
 //==============================================================================
 void ChronosProcessor::getStateInformation(MemoryBlock &destData)
 {
-    const auto state = apvts.copyState();
+    // Stamp the current state-tree version so a future build can migrate
+    // this state forward if the schema changes.
+    auto state = apvts.copyState();
+    state.setProperty(Chronos::kStateVersionProperty,
+                      Chronos::kPluginStateVersion, nullptr);
+
     std::unique_ptr xml(state.createXml());
     copyXmlToBinary(*xml, destData);
 }
@@ -213,8 +225,17 @@ void ChronosProcessor::getStateInformation(MemoryBlock &destData)
 void ChronosProcessor::setStateInformation(const void *data, int sizeInBytes)
 {
     std::unique_ptr xml(getXmlFromBinary(data, sizeInBytes));
-    if (xml != nullptr && xml->hasTagName(apvts.state.getType()))
-        apvts.replaceState(ValueTree::fromXml(*xml));
+    if (xml == nullptr || !xml->hasTagName(apvts.state.getType()))
+        return;
+
+    auto tree = ValueTree::fromXml(*xml);
+
+    // Pre-versioning builds stored no version property; treat as v0.
+    const int fromVersion = static_cast<int>(
+        tree.getProperty(Chronos::kStateVersionProperty, 0));
+    Chronos::migrateStateTree(tree, fromVersion);
+
+    apvts.replaceState(tree);
 }
 //==============================================================================
 AudioProcessor* JUCE_CALLTYPE createPluginFilter()

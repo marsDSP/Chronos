@@ -627,6 +627,70 @@ namespace MarsDSP::DSP {
             return mono;
         }
 
+        // ------------------------------------------------------------------
+        // Tail prediction
+        // ------------------------------------------------------------------
+        // Returns the number of samples after which the feedback tail can be
+        // considered decayed below -60 dB (the threshold most hosts treat as
+        // "silent"). Hosts can use this to know when to free / suspend the
+        // plugin after an input transition to silence.
+        //
+        // Calculation:
+        //   repeats until |fb|^n < 0.001, i.e. n = ceil(log(0.001) / log(fb))
+        // plus a safety margin for biquad ring-down + parameter smoothing.
+        // Clamped to a sane maximum so pathological feedback values (~0.99)
+        // don't yield absurd tail lengths.
+        [[nodiscard]] int ringoutSamples() const noexcept
+        {
+            if (bypassed) return 0;
+
+            const float delayMs     = std::clamp(delayTime, minDelayTime, maxDelayTime);
+            const float delaySamples = static_cast<float>(sampleRate * delayMs * 0.001);
+            const float fb           = std::clamp(std::max(feedbackL, feedbackR),
+                                                  0.0f, 0.9999f);
+
+            constexpr float silenceDb  = 0.001f;  // -60 dB
+            constexpr int   kMargin    = 2048;    // biquad ring-down + smoothers
+            constexpr int   kMaxTail   = 1 << 20; // clamp (~21.8 s @ 48 kHz)
+
+            if (fb < 1.0e-4f)
+                return std::min(static_cast<int>(delaySamples) + kMargin, kMaxTail);
+
+            const int repeats = static_cast<int>(std::ceil(
+                std::log(silenceDb) / std::log(fb)));
+            const long long tail = static_cast<long long>(delaySamples)
+                                 * static_cast<long long>(std::max(repeats, 1))
+                                 + kMargin;
+            return static_cast<int>(std::min<long long>(tail, kMaxTail));
+        }
+
+        // ------------------------------------------------------------------
+        // Streaming-version contract
+        // ------------------------------------------------------------------
+        // Bumped whenever the meaning of any parameter value stream-in changes
+        // in a way that can't be represented by the host's normal state
+        // serialization. Increment and add a migration branch in
+        // remapParametersForStreamingVersion whenever:
+        //   - a parameter is renamed or removed
+        //   - a parameter's units / range / skew change meaning
+        //   - the engine's internal interpretation of a value changes
+        //
+        // Adding a new parameter with a sane default does NOT require bumping.
+        static constexpr int16_t streamingVersion{1};
+
+        // Given a flat parameter array streamed from an older version,
+        // migrate its values in place to the current schema. Called by the
+        // plugin layer before pushing values into the engine. The input array
+        // must be large enough to hold every parameter for the *newer* of the
+        // two schemas.
+        static void remapParametersForStreamingVersion(
+            int16_t streamedFrom, float* const /*parameters*/) noexcept
+        {
+            assert(streamedFrom <= streamingVersion);
+            // v1 is the initial schema; nothing to migrate yet.
+            (void)streamedFrom;
+        }
+
     private:
         struct LipolSIMD
         {

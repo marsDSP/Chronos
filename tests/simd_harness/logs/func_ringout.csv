@@ -1,0 +1,5 @@
+test_idx,delay_ms,feedback,predicted_tail,measured_peak_at_tail,passed
+0,50,0,4448,4.08488e-06,1
+1,200,0.3,59648,1.20519e-07,1
+2,500,0.7,482048,1.00851e-07,1
+3,800,0.9,1048576,2.27565e-08,1
