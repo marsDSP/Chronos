@@ -1,0 +1,32 @@
+<svg width="900" height="600" xmlns="http://www.w3.org/2000/svg">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="450" y="50" text-anchor="middle" font-family="sans-serif" font-size="24" font-weight="bold">SIMD Tanh Performance Comparison</text>
+<text x="450" y="75" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#666">Block Size: 512 samples | Average of 1,000,000 iterations</text>
+<line x1="100" y1="100.0" x2="800" y2="100.0" stroke="#eee" />
+<text x="90" y="105.0" text-anchor="end" font-family="sans-serif" font-size="12" fill="#999">13.4 us</text>
+<line x1="100" y1="200.0" x2="800" y2="200.0" stroke="#eee" />
+<text x="90" y="205.0" text-anchor="end" font-family="sans-serif" font-size="12" fill="#999">10.1 us</text>
+<line x1="100" y1="300.0" x2="800" y2="300.0" stroke="#eee" />
+<text x="90" y="305.0" text-anchor="end" font-family="sans-serif" font-size="12" fill="#999">6.7 us</text>
+<line x1="100" y1="400.0" x2="800" y2="400.0" stroke="#eee" />
+<text x="90" y="405.0" text-anchor="end" font-family="sans-serif" font-size="12" fill="#999">3.4 us</text>
+<line x1="100" y1="500.0" x2="800" y2="500.0" stroke="#eee" />
+<text x="90" y="505.0" text-anchor="end" font-family="sans-serif" font-size="12" fill="#999">0.0 us</text>
+<rect x="125" y="100.0" width="150" height="400.0" fill="#3498db" rx="5"/>
+<text x="200" y="90.0" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="bold" fill="#3498db">13.449 us</text>
+<text x="200" y="525" text-anchor="middle" font-family="sans-serif" font-size="12" font-weight="bold">std::tanh</text>
+<text x="200" y="545" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#666">Baseline</text>
+<rect x="325" y="470.22439018006503" width="150" height="29.77560981993497" fill="#e74c3c" rx="5"/>
+<text x="400" y="460.22439018006503" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="bold" fill="#e74c3c">1.001 us</text>
+<text x="400" y="525" text-anchor="middle" font-family="sans-serif" font-size="12" font-weight="bold">Pade (Scalar)</text>
+<text x="400" y="545" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#666">13.4x faster</text>
+<rect x="525" y="467.46170626596887" width="150" height="32.53829373403113" fill="#2ecc71" rx="5"/>
+<text x="600" y="457.46170626596887" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="bold" fill="#2ecc71">1.094 us</text>
+<text x="600" y="525" text-anchor="middle" font-family="sans-serif" font-size="12" font-weight="bold">Pade (SIMD)</text>
+<text x="600" y="545" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#666">12.3x faster</text>
+<rect x="725" y="463.01786195741096" width="150" height="36.98213804258904" fill="#f39c12" rx="5"/>
+<text x="800" y="453.01786195741096" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="bold" fill="#f39c12">1.243 us</text>
+<text x="800" y="525" text-anchor="middle" font-family="sans-serif" font-size="12" font-weight="bold">Pade (SIMD Bounded)</text>
+<text x="800" y="545" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#666">10.8x faster</text>
+<line x1="100" y1="500" x2="800" y2="500" stroke="#ccc" stroke-width="2"/>
+</svg>

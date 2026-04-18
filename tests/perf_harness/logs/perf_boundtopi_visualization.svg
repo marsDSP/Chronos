@@ -1,0 +1,24 @@
+<svg width="700" height="600" xmlns="http://www.w3.org/2000/svg">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="350" y="50" text-anchor="middle" font-family="sans-serif" font-size="24" font-weight="bold">boundToPi Performance Comparison</text>
+<text x="350" y="75" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#666">Block Size: 512 samples | Average of 1,000,000 iterations</text>
+<line x1="100" y1="100.0" x2="600" y2="100.0" stroke="#eee" />
+<text x="90" y="105.0" text-anchor="end" font-family="sans-serif" font-size="12" fill="#999">4.3 us</text>
+<line x1="100" y1="200.0" x2="600" y2="200.0" stroke="#eee" />
+<text x="90" y="205.0" text-anchor="end" font-family="sans-serif" font-size="12" fill="#999">3.2 us</text>
+<line x1="100" y1="300.0" x2="600" y2="300.0" stroke="#eee" />
+<text x="90" y="305.0" text-anchor="end" font-family="sans-serif" font-size="12" fill="#999">2.1 us</text>
+<line x1="100" y1="400.0" x2="600" y2="400.0" stroke="#eee" />
+<text x="90" y="405.0" text-anchor="end" font-family="sans-serif" font-size="12" fill="#999">1.1 us</text>
+<line x1="100" y1="500.0" x2="600" y2="500.0" stroke="#eee" />
+<text x="90" y="505.0" text-anchor="end" font-family="sans-serif" font-size="12" fill="#999">0.0 us</text>
+<rect x="150" y="100.0" width="150" height="400.0" fill="#3498db" rx="5"/>
+<text x="225" y="90.0" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="bold" fill="#3498db">4.271 us</text>
+<text x="225" y="525" text-anchor="middle" font-family="sans-serif" font-size="12" font-weight="bold">boundToPi (Scalar)</text>
+<text x="225" y="545" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#666">Baseline</text>
+<rect x="400" y="433.6955697073978" width="150" height="66.3044302926022" fill="#2ecc71" rx="5"/>
+<text x="475" y="423.6955697073978" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="bold" fill="#2ecc71">0.708 us</text>
+<text x="475" y="525" text-anchor="middle" font-family="sans-serif" font-size="12" font-weight="bold">boundToPiSIMD (SIMD)</text>
+<text x="475" y="545" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#666">6.0x faster</text>
+<line x1="100" y1="500" x2="600" y2="500" stroke="#ccc" stroke-width="2"/>
+</svg>

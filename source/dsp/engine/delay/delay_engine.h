@@ -5,6 +5,7 @@
 
 #include <cassert>
 #include <JuceHeader.h>
+#include "dsp/math/fastermath.h"
 #include "delay_interpolator.h"
 
 namespace MarsDSP::DSP {
@@ -131,13 +132,118 @@ namespace MarsDSP::DSP {
             const SampleType fbLParam = static_cast<SampleType>(std::clamp(feedbackL, 0.0f, 0.99f));
             const SampleType fbRParam = static_cast<SampleType>(std::clamp(feedbackR, 0.0f, 0.99f));
 
+            const SampleType currentPos = delayMsToSamples;
+            // Document SIMD-safety: block size is 4, so delay must be at least 4 samples to avoid read/write overlap in the same vectorized block.
+            assert(currentPos >= 4.0f);
+
+            // Precompute Lagrange 5th order coefficients once for the entire block
+            int delayInt = static_cast<int>(std::floor(static_cast<double>(currentPos)));
+            SampleType delayFrac = currentPos - static_cast<SampleType>(delayInt);
+            int offset = delayInt;
+            lagrange5thL.write(offset, delayFrac); // Adjust offset/frac for 5th order alignment
+
+            const float d1 = delayFrac - 1.0f;
+            const float d2 = delayFrac - 2.0f;
+            const float d3 = delayFrac - 3.0f;
+            const float d4 = delayFrac - 4.0f;
+            const float d5 = delayFrac - 5.0f;
+
+            const auto vC1 = SIMD_MM(set1_ps)(-d1 * d2 * d3 * d4 * d5 / 120.0f);
+            const auto vC2 = SIMD_MM(set1_ps)(d2 * d3 * d4 * d5 / 24.0f);
+            const auto vC3 = SIMD_MM(set1_ps)(-d1 * d3 * d4 * d5 / 12.0f);
+            const auto vC4 = SIMD_MM(set1_ps)(d1 * d2 * d4 * d5 / 12.0f);
+            const auto vC5 = SIMD_MM(set1_ps)(-d1 * d2 * d3 * d5 / 24.0f);
+            const auto vC6 = SIMD_MM(set1_ps)(d1 * d2 * d3 * d4 / 120.0f);
+            const auto vFrac = SIMD_MM(set1_ps)(delayFrac);
+
             if (isMono()) // mono
             {
-                for (auto n {0uz}; n < static_cast<size_t>(numSamples); ++n)
-                {
-                    const SampleType currentPos = delayMsToSamples;
-                    const SampleType feedbackParam = fbLParam;
+                const SampleType feedbackParam = fbLParam;
+                const SampleType oneMinusMix = static_cast<SampleType>(1) - mixParam;
 
+                size_t n = 0;
+                const size_t numSamplesSize = static_cast<size_t>(numSamples);
+
+                // vectorized block processing
+                for (; n + 3 < numSamplesSize; n += 4)
+                {
+                    float duckGains[4];
+                    for (int i = 0; i < 4; ++i)
+                    {
+                        const SampleType modspeed = std::abs(currentPos - prevPos);
+                        prevPos = currentPos;
+                        updateDuckGain(modspeed);
+                        duckGains[i] = duckGain;
+                    }
+
+                    auto vMonoSum = SIMD_MM(setzero_ps)();
+                    if (ch0 != nullptr && ch1 != nullptr)
+                    {
+                        vMonoSum = SIMD_MM(mul_ps)(SIMD_MM(set_ps1)(0.5f), SIMD_MM(add_ps)(SIMD_MM(loadu_ps)(ch0 + n),
+                                                                                           SIMD_MM(loadu_ps)(ch1 + n)));
+                    }
+                    else if (ch0 != nullptr)
+                    {
+                        vMonoSum = SIMD_MM(loadu_ps)(ch0 + n);
+                    }
+                    else if (ch1 != nullptr)
+                    {
+                        vMonoSum = SIMD_MM(loadu_ps)(ch1 + n);
+                    }
+
+                    // Vectorized interpolation for mono
+                    int start0 = (writeIdxL - offset + bufferLength) % bufferLength;
+                    SIMD_M128 vDelayedOut;
+                    if (start0 + 8 < bufferLength)
+                    {
+                        auto v0 = SIMD_MM(loadu_ps)(bufferL.data() + start0);
+                        auto v1 = SIMD_MM(loadu_ps)(bufferL.data() + start0 + 1);
+                        auto v2 = SIMD_MM(loadu_ps)(bufferL.data() + start0 + 2);
+                        auto v3 = SIMD_MM(loadu_ps)(bufferL.data() + start0 + 3);
+                        auto v4 = SIMD_MM(loadu_ps)(bufferL.data() + start0 + 4);
+                        auto v5 = SIMD_MM(loadu_ps)(bufferL.data() + start0 + 5);
+
+                        auto vSum = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v1, vC2),
+                                    SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v2, vC3),
+                                    SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v3, vC4),
+                                    SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v4, vC5),
+                                                    SIMD_MM(mul_ps)(v5, vC6)))));
+
+                        vDelayedOut = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v0, vC1),
+                                                      SIMD_MM(mul_ps)(vFrac, vSum));
+                    }
+                    else
+                    {
+                        float delayedOuts[4];
+                        for (int i = 0; i < 4; ++i)
+                        {
+                            const int rIdx = (writeIdxL + i + bufferLength) % bufferLength;
+                            delayedOuts[i] = readInterpolated(bufferL.data(), rIdx, currentPos, lagrange5thL);
+                        }
+                        vDelayedOut = SIMD_MM(loadu_ps)(delayedOuts);
+                    }
+                    auto vDuckGain = SIMD_MM(loadu_ps)(duckGains);
+                    auto vDuckedOut = SIMD_MM(mul_ps)(vDelayedOut, vDuckGain);
+
+                    // feedback-mix in SIMD
+                    auto vWriteVal = fasterTanhBounded(SIMD_MM(add_ps)(vMonoSum, SIMD_MM(mul_ps)(SIMD_MM(set_ps1)(feedbackParam), vDuckedOut)));
+
+                    float writeVals[4];
+                    SIMD_MM(storeu_ps)(writeVals, vWriteVal);
+
+                    for (int i = 0; i < 4; ++i)
+                        writeSample(bufferL.data(), writeIdxL, writeVals[i]);
+
+                    auto vOut = fasterTanhBounded(SIMD_MM(add_ps)(SIMD_MM(mul_ps)(vDuckedOut, SIMD_MM(set_ps1)(mixParam)),
+                                                           SIMD_MM(mul_ps)(vMonoSum, SIMD_MM(set_ps1)(oneMinusMix))));
+
+                    if (ch0 != nullptr) SIMD_MM(storeu_ps)(ch0 + n, vOut);
+                    if (ch1 != nullptr) SIMD_MM(storeu_ps)(ch1 + n, vOut);
+                }
+
+                // remainder loop
+                for (; n < numSamplesSize; ++n)
+                {
                     const SampleType modspeed = std::abs(currentPos - prevPos);
                     prevPos = currentPos;
                     updateDuckGain(modspeed);
@@ -146,19 +252,14 @@ namespace MarsDSP::DSP {
                     if (ch1 != nullptr)
                         monoSum = static_cast<SampleType>(0.5) * (monoSum + ch1[n]);
 
-
-                    // prevent negative indices
-                    const int readIdxL = ((writeIdxL - 1) + bufferLength) % bufferLength;
-
-                    // calc read pos
+                    const int readIdxL = (writeIdxL + bufferLength) % bufferLength;
                     const SampleType delayedOut = readInterpolated(bufferL.data(), readIdxL, currentPos, lagrange5thL);
                     const SampleType duckedOut = delayedOut * duckGain;
 
-                    // write (input + fb) -> softclip sweeps
                     const SampleType writeVal = softClip(monoSum + feedbackParam * duckedOut);
                     writeSample(bufferL.data(), writeIdxL, writeVal);
 
-                    const SampleType out = softClip(duckedOut * mixParam + monoSum * (static_cast<SampleType>(1) - mixParam));
+                    const SampleType out = softClip(duckedOut * mixParam + monoSum * oneMinusMix);
 
                     if (ch0 != nullptr) ch0[n] = out;
                     if (ch1 != nullptr) ch1[n] = out;
@@ -166,51 +267,146 @@ namespace MarsDSP::DSP {
             }
             else // stereo
             {
-                for (auto n {0uz}; n < static_cast<size_t>(numSamples); ++n)
+                const SampleType currentPos = delayMsToSamples;
+                const SampleType oneMinusMix = static_cast<SampleType>(1) - mixParam;
+
+                size_t n = 0;
+                const size_t numSamplesSize = static_cast<size_t>(numSamples);
+
+                for (; n + 3 < numSamplesSize; n += 4)
                 {
-                    const SampleType currentPos2 = delayMsToSamples;
-                    const SampleType modspeed = std::abs(currentPos2 - prevPos);
-                    prevPos = currentPos2;
+                    float duckGains[4];
+                    for (int i = 0; i < 4; ++i)
+                    {
+                        const SampleType modspeed = std::abs(currentPos - prevPos);
+                        prevPos = currentPos;
+                        updateDuckGain(modspeed);
+                        duckGains[i] = duckGain;
+                    }
+
+                    auto vDuckGain = SIMD_MM(loadu_ps)(duckGains);
+
+                    if (ch0 != nullptr)
+                    {
+                        auto vXL = SIMD_MM(loadu_ps)(ch0 + n);
+                        // Vectorized interpolation for stereo L
+                        int start0L = (writeIdxL - offset + bufferLength) % bufferLength;
+                        SIMD_M128 vYL;
+                        if (start0L + 8 < bufferLength)
+                        {
+                            auto v0 = SIMD_MM(loadu_ps)(bufferL.data() + start0L);
+                            auto v1 = SIMD_MM(loadu_ps)(bufferL.data() + start0L + 1);
+                            auto v2 = SIMD_MM(loadu_ps)(bufferL.data() + start0L + 2);
+                            auto v3 = SIMD_MM(loadu_ps)(bufferL.data() + start0L + 3);
+                            auto v4 = SIMD_MM(loadu_ps)(bufferL.data() + start0L + 4);
+                            auto v5 = SIMD_MM(loadu_ps)(bufferL.data() + start0L + 5);
+
+                            auto vSum = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v1, vC2),
+                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v2, vC3),
+                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v3, vC4),
+                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v4, vC5),
+                                                        SIMD_MM(mul_ps)(v5, vC6)))));
+
+                            vYL = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v0, vC1),
+                                                  SIMD_MM(mul_ps)(vFrac, vSum));
+                        }
+                        else
+                        {
+                            float delayedOutsL[4];
+                            for (int i = 0; i < 4; ++i)
+                            {
+                                const int rIdx = (writeIdxL + i + bufferLength) % bufferLength;
+                                delayedOutsL[i] = readInterpolated(bufferL.data(), rIdx, currentPos, lagrange5thL);
+                            }
+                            vYL = SIMD_MM(loadu_ps)(delayedOutsL);
+                        }
+                        auto vYL_ducked = SIMD_MM(mul_ps)(vYL, vDuckGain);
+
+                        auto vWriteValL = fasterTanhBounded(SIMD_MM(add_ps)(vXL, SIMD_MM(mul_ps)(SIMD_MM(set_ps1)(fbLParam), vYL_ducked)));
+
+                        float writeValsL[4];
+                        SIMD_MM(storeu_ps)(writeValsL, vWriteValL);
+
+                        for (int i = 0; i < 4; ++i)
+                            writeSample(bufferL.data(), writeIdxL, writeValsL[i]);
+
+                        auto vOutL = fasterTanhBounded(SIMD_MM(add_ps)(SIMD_MM(mul_ps)(vYL_ducked, SIMD_MM(set_ps1)(mixParam)),
+                                                                       SIMD_MM(mul_ps)(vXL, SIMD_MM(set_ps1)(oneMinusMix))));
+                        SIMD_MM(storeu_ps)(ch0 + n, vOutL);
+                    }
+
+                    if (ch1 != nullptr)
+                    {
+                        auto vXR = SIMD_MM(loadu_ps)(ch1 + n);
+                        // Vectorized interpolation for stereo R
+                        int start0R = (writeIdxR - offset + bufferLength) % bufferLength;
+                        SIMD_M128 vYR;
+                        if (start0R + 8 < bufferLength)
+                        {
+                            auto v0 = SIMD_MM(loadu_ps)(bufferR.data() + start0R);
+                            auto v1 = SIMD_MM(loadu_ps)(bufferR.data() + start0R + 1);
+                            auto v2 = SIMD_MM(loadu_ps)(bufferR.data() + start0R + 2);
+                            auto v3 = SIMD_MM(loadu_ps)(bufferR.data() + start0R + 3);
+                            auto v4 = SIMD_MM(loadu_ps)(bufferR.data() + start0R + 4);
+                            auto v5 = SIMD_MM(loadu_ps)(bufferR.data() + start0R + 5);
+
+                            auto vSum = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v1, vC2),
+                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v2, vC3),
+                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v3, vC4),
+                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v4, vC5),
+                                                        SIMD_MM(mul_ps)(v5, vC6)))));
+
+                            vYR = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v0, vC1),
+                                                  SIMD_MM(mul_ps)(vFrac, vSum));
+                        }
+                        else
+                        {
+                            float delayedOutsR[4];
+                            for (int i = 0; i < 4; ++i)
+                            {
+                                const int rIdx = (writeIdxR + i + bufferLength) % bufferLength;
+                                delayedOutsR[i] = readInterpolated(bufferR.data(), rIdx, currentPos, lagrange5thR);
+                            }
+                            vYR = SIMD_MM(loadu_ps)(delayedOutsR);
+                        }
+                        auto vYR_ducked = SIMD_MM(mul_ps)(vYR, vDuckGain);
+
+                        auto vWriteValR = fasterTanhBounded(SIMD_MM(add_ps)(vXR, SIMD_MM(mul_ps)(SIMD_MM(set_ps1)(fbRParam), vYR_ducked)));
+
+                        float writeValsR[4];
+                        SIMD_MM(storeu_ps)(writeValsR, vWriteValR);
+
+                        for (int i = 0; i < 4; ++i)
+                            writeSample(bufferR.data(), writeIdxR, writeValsR[i]);
+
+                        auto vOutR = fasterTanhBounded(SIMD_MM(add_ps)(SIMD_MM(mul_ps)(vYR_ducked, SIMD_MM(set_ps1)(mixParam)),
+                                                                       SIMD_MM(mul_ps)(vXR, SIMD_MM(set_ps1)(oneMinusMix))));
+                        SIMD_MM(storeu_ps)(ch1 + n, vOutR);
+                    }
+                }
+
+                for (; n < numSamplesSize; ++n)
+                {
+                    const SampleType modspeed = std::abs(currentPos - prevPos);
+                    prevPos = currentPos;
                     updateDuckGain(modspeed);
 
-                    SampleType xL = static_cast<SampleType> (0);
-                    SampleType xR = static_cast<SampleType> (0);
-                    SampleType yL_ducked = static_cast<SampleType> (0);
-                    SampleType yR_ducked = static_cast<SampleType> (0);
-
                     if (ch0 != nullptr)
                     {
-                        xL = ch0[n];
-                        const int lastIndexL = (writeIdxL - 1 + bufferLength) % bufferLength;
-                        const SampleType yL = readInterpolated (bufferL.data(), lastIndexL, currentPos2, lagrange5thL);
-                        yL_ducked = yL * duckGain;
+                        const SampleType xL = ch0[n];
+                        const int rIdx = (writeIdxL + bufferLength) % bufferLength;
+                        const SampleType yL_ducked = readInterpolated (bufferL.data(), rIdx, currentPos, lagrange5thL) * duckGain;
+                        writeSample (bufferL.data(), writeIdxL, softClip (xL + fbLParam * yL_ducked));
+                        ch0[n] = softClip(yL_ducked * mixParam + xL * oneMinusMix);
                     }
 
                     if (ch1 != nullptr)
                     {
-                        xR = ch1[n];
-                        const int lastIndexR = (writeIdxR - 1 + bufferLength) % bufferLength;
-                        const SampleType yR = readInterpolated (bufferR.data(), lastIndexR, currentPos2, lagrange5thR);
-                        yR_ducked = yR * duckGain;
-                    }
-
-                    SampleType fbInL = yL_ducked;
-                    SampleType fbInR = yR_ducked;
-                    SampleType wetOutL = yL_ducked;
-                    SampleType wetOutR = yR_ducked;
-
-                    if (ch0 != nullptr)
-                    {
-                        const SampleType writeValueL = softClip (xL + fbLParam * fbInL);
-                        writeSample (bufferL.data(), writeIdxL, writeValueL);
-                        ch0[n] = softClip(wetOutL * mixParam + xL * (static_cast<SampleType> (1) - mixParam));
-                    }
-
-                    if (ch1 != nullptr)
-                    {
-                        const SampleType writeValueR = softClip (xR + fbRParam * fbInR);
-                        writeSample (bufferR.data(), writeIdxR, writeValueR);
-                        ch1[n] = softClip(wetOutR * mixParam + xR * (static_cast<SampleType> (1) - mixParam));
+                        const SampleType xR = ch1[n];
+                        const int rIdx = (writeIdxR + bufferLength) % bufferLength;
+                        const SampleType yR_ducked = readInterpolated (bufferR.data(), rIdx, currentPos, lagrange5thR) * duckGain;
+                        writeSample (bufferR.data(), writeIdxR, softClip (xR + fbRParam * yR_ducked));
+                        ch1[n] = softClip(yR_ducked * mixParam + xR * oneMinusMix);
                     }
                 }
             }
@@ -256,7 +452,7 @@ namespace MarsDSP::DSP {
     private:
         SampleType softClip(SampleType x) noexcept
         {
-            return std::tanh(x);
+            return fasterTanhBounded(x);
         }
 
         std::vector<SampleType> bufferL, bufferR;

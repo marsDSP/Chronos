@@ -1,0 +1,5 @@
+algorithm,avg_time_us,speedup
+std::tanh,13.448806,1.0
+Pade (Scalar),1.001116,13.433815
+Pade (SIMD),1.094003,12.293208
+Pade (SIMD Bounded),1.243414,10.816028
