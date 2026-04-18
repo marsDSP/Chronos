@@ -120,7 +120,7 @@ namespace MarsDSP::inline FasterMath
         const auto vD2 = SIMD_MM(set_ps1)(D2);
         const auto vD3 = SIMD_MM(set_ps1)(D3);
 
-        const auto x2 = SIMD_MM(mul_ps)(x, x);
+        const auto x2  = SIMD_MM(mul_ps)(x, x);
 
         // numerator: N0 + x²·(N1 + x²·(N2 + x²·N3))
         auto numInner  = SIMD_MM(add_ps)(vN2, SIMD_MM(mul_ps)(x2, vN3));        // N2 + x²·N3
@@ -177,8 +177,8 @@ namespace MarsDSP::inline FasterMath
 
         const auto x2  = SIMD_MM(mul_ps)(x, x);
 
-        auto numInner  = SIMD_MM(add_ps)(vN2, SIMD_MM(mul_ps)(x2, vN3));        // N2 + x²·N3
-        numInner       = SIMD_MM(add_ps)(vN1, SIMD_MM(mul_ps)(x2, numInner));   // N1 + x²·(…)
+        auto numInner   = SIMD_MM(add_ps)(vN2, SIMD_MM(mul_ps)(x2, vN3));        // N2 + x²·N3
+        numInner        = SIMD_MM(add_ps)(vN1, SIMD_MM(mul_ps)(x2, numInner));   // N1 + x²·(…)
         const auto poly = SIMD_MM(add_ps)(vN0, SIMD_MM(mul_ps)(x2, numInner));   // N0 + x²·(…)
         const auto num  = SIMD_MM(mul_ps)(x, poly);
 

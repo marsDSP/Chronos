@@ -1,16 +1,15 @@
 #pragma once
 
 #include "ChronosProcessor.h"
-
 //==============================================================================
-class ChronosEditor final : public juce::AudioProcessorEditor
+class ChronosEditor final : public AudioProcessorEditor
 {
 public:
     explicit ChronosEditor (ChronosProcessor&);
     ~ChronosEditor() override;
 
     //==============================================================================
-    void paint (juce::Graphics&) override;
+    void paint (Graphics&) override;
     void resized() override;
 
 private:

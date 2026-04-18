@@ -19,10 +19,17 @@ endif()
 # Keep CMake project version in sync with CURRENT_VERSION defined above
 project(${PROJECT_NAME} VERSION ${CURRENT_VERSION})
 
+option(BUILD_AUDIO_PLUGIN_HOST "Build JUCE AudioPluginHost" ON)
+if(BUILD_AUDIO_PLUGIN_HOST)
+    set(JUCE_BUILD_EXTRAS ON CACHE INTERNAL "")
+endif()
+
 add_subdirectory(libs/JUCE)
 
 # Project configuration
 set(CMAKE_CXX_STANDARD 23)
+
+add_compile_options("$<$<CONFIG:Debug>:-gdwarf-4>")
 
 option(TRACY_ENABLE "Enable Tracy profiling" ON)
 
@@ -167,6 +174,8 @@ if(Assets)
     target_link_libraries("${PROJECT_NAME}" PRIVATE AudioPluginData)
 endif()
 
+target_link_libraries("${PROJECT_NAME}" PRIVATE ${OPENSSL_LIBRARIES})
+
 # Link libraries to main project
 target_link_libraries("${PROJECT_NAME}" PUBLIC
         SharedCode
@@ -206,18 +215,44 @@ if(APPLE)
     )
 endif()
 
-#[[# Doxygen documentation generation
-find_package(Doxygen)
-if(DOXYGEN_FOUND)
-    set(DOXYFILE "${CMAKE_CURRENT_SOURCE_DIR}/Doxyfile")
-    add_custom_target(docs
-        COMMAND ${DOXYGEN_EXECUTABLE} ${DOXYFILE}
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        COMMENT "Generating API documentation with Doxygen"
-        VERBATIM
-    )
-endif()]]
 
 # Add test harnesses
 add_subdirectory(tests/simd_harness)
 add_subdirectory(tests/perf_harness)
+
+# Convenience run targets to launch AudioPluginHost for VST3 and AU debugging on macOS
+if (BUILD_AUDIO_PLUGIN_HOST AND APPLE)
+    # Path to the built AudioPluginHost app bundle
+    # JUCE places the app inside <target_binary_dir>/AudioPluginHost_artefacts/<Config>/AudioPluginHost.app
+    set(JUCE_HOST_APP "${CMAKE_BINARY_DIR}/libs/JUCE/extras/AudioPluginHost/AudioPluginHost_artefacts/$<CONFIG>/Audio Plugin Host.app")
+
+    # Helper: print where the plugin artifacts are emitted
+    add_custom_target(Print_Plugin_Paths ALL
+            COMMAND ${CMAKE_COMMAND} -E echo "VST3: ${CMAKE_BINARY_DIR}/${PROJECT_NAME}_artefacts/$<CONFIG>/VST3/${PRODUCT_NAME}.vst3"
+            COMMAND ${CMAKE_COMMAND} -E echo "AU:   ${CMAKE_BINARY_DIR}/${PROJECT_NAME}_artefacts/$<CONFIG>/AU/${PRODUCT_NAME}.component"
+            COMMENT "Plugin artifact locations"
+    )
+
+    add_custom_target(Run_AudioPluginHost_VST3
+            DEPENDS ${PROJECT_NAME}_VST3 AudioPluginHost Print_Plugin_Paths
+            COMMAND ${CMAKE_COMMAND} -E echo "Launching AudioPluginHost for VST3..."
+            COMMAND open ${JUCE_HOST_APP}
+            COMMENT "Open AudioPluginHost.app (scan the VST3 folder shown above)"
+    )
+
+    add_custom_target(Run_AudioPluginHost_AU
+            DEPENDS ${PROJECT_NAME}_AU AudioPluginHost Print_Plugin_Paths
+            COMMAND ${CMAKE_COMMAND} -E echo "Launching AudioPluginHost for AU..."
+            COMMAND open ${JUCE_HOST_APP}
+            COMMENT "Open AudioPluginHost.app (scan the AU folder shown above)"
+    )
+endif()
+
+# Post-build script to copy VST3 bundle to Desktop/vst test
+if(TARGET ${PROJECT_NAME}_VST3)
+    add_custom_command(TARGET ${PROJECT_NAME}_VST3 POST_BUILD
+            COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/scripts/bash/copy_vst3.sh" "$<TARGET_BUNDLE_DIR:${PROJECT_NAME}_VST3>"
+            COMMENT "Triggering post-build copy of VST3 to Desktop/vst test..."
+            VERBATIM
+    )
+endif()

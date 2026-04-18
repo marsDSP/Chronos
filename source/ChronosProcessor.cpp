@@ -1,25 +1,28 @@
 #include "ChronosProcessor.h"
 #include "ChronosEditor.h"
-#include <tracy/Tracy.hpp>
-
 //==============================================================================
-ChronosProcessor::ChronosProcessor()
-     : AudioProcessor (BusesProperties()
-                       .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
-                       .withOutput ("Output", juce::AudioChannelSet::stereo(), true))
+ChronosProcessor::ChronosProcessor() : AudioProcessor (BusesProperties()
+                       .withInput  ("Input",  AudioChannelSet::stereo(), true)
+                       .withOutput ("Output", AudioChannelSet::stereo(), true)),
+                       apvts(*this, nullptr, "Parameters", createParameterLayout())
 {
+    xorshiftL = 1.0;
+    while (xorshiftL < 16386)
+        xorshiftL = rand() * UINT32_MAX;
+
+    xorshiftR = 1.0;
+    while (xorshiftR < 16386)
+        xorshiftR = rand() * UINT32_MAX;
 }
 
 ChronosProcessor::~ChronosProcessor()
 {
 }
-
-//==============================================================================
-const juce::String ChronosProcessor::getName() const
+//=============================================================================
+const String ChronosProcessor::getName() const
 {
     return JucePlugin_Name;
 }
-
 bool ChronosProcessor::acceptsMidi() const
 {
    #if JucePlugin_WantsMidiInput
@@ -28,7 +31,6 @@ bool ChronosProcessor::acceptsMidi() const
     return false;
    #endif
 }
-
 bool ChronosProcessor::producesMidi() const
 {
    #if JucePlugin_ProducesMidiOutput
@@ -37,7 +39,6 @@ bool ChronosProcessor::producesMidi() const
     return false;
    #endif
 }
-
 bool ChronosProcessor::isMidiEffect() const
 {
    #if JucePlugin_IsMidiEffect
@@ -46,65 +47,85 @@ bool ChronosProcessor::isMidiEffect() const
     return false;
    #endif
 }
-
 double ChronosProcessor::getTailLengthSeconds() const
 {
     return 0.0;
 }
-
 int ChronosProcessor::getNumPrograms()
 {
     return 1;   // NB: some hosts don't cope very well if you tell them there are 0 programs,
                 // so this should be at least 1, even if you're not really implementing programs.
 }
-
 int ChronosProcessor::getCurrentProgram()
 {
     return 0;
 }
-
 void ChronosProcessor::setCurrentProgram (int index)
 {
-    juce::ignoreUnused (index);
+    ignoreUnused (index);
 }
-
-const juce::String ChronosProcessor::getProgramName (int index)
+const String ChronosProcessor::getProgramName (int index)
 {
-    juce::ignoreUnused (index);
+    ignoreUnused (index);
     return {};
 }
-
-void ChronosProcessor::changeProgramName (int index, const juce::String& newName)
+void ChronosProcessor::changeProgramName (int index, const String& newName)
 {
-    juce::ignoreUnused (index, newName);
+    ignoreUnused (index, newName);
 }
+//=============================================================================
+AudioProcessorValueTreeState::ParameterLayout ChronosProcessor::createParameterLayout()
+{
+    AudioProcessorValueTreeState::ParameterLayout layout;
 
+    layout.add(std::make_unique<AudioParameterFloat>(
+        ParameterID("delayTime", 1), "Delay Time",
+        NormalisableRange(5.0f, 5000.0f, 0.1f, 0.3f), 200.0f,
+        AudioParameterFloatAttributes().withLabel("ms")));
+
+    layout.add(std::make_unique<AudioParameterFloat>(
+        ParameterID("mix", 1), "Mix",
+        NormalisableRange(0.0f, 1.0f, 0.01f), 0.5f,
+        AudioParameterFloatAttributes().withLabel("%")));
+
+    layout.add(std::make_unique<AudioParameterFloat>(
+        ParameterID("feedback", 1), "Feedback",
+        NormalisableRange(0.0f, 0.99f, 0.01f), 0.3f,
+        AudioParameterFloatAttributes().withLabel("%")));
+
+    layout.add(std::make_unique<AudioParameterBool>(
+        ParameterID("mono", 1), "Mono", false));
+
+    layout.add(std::make_unique<AudioParameterBool>(
+        ParameterID("bypass", 1), "Bypass", false));
+
+    return layout;
+}
 //==============================================================================
 void ChronosProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    // Use this method as the place to do any pre-playback
-    // initialisation that you need..
-    juce::ignoreUnused (sampleRate, samplesPerBlock);
+    dsp::ProcessSpec spec {};
+    spec.sampleRate = sampleRate;
+    spec.maximumBlockSize = static_cast<uint32>(samplesPerBlock);
+    spec.numChannels = static_cast<uint32>(getTotalNumOutputChannels());
+    delay.prepare(spec);
 }
-
+//=============================================================================
 void ChronosProcessor::releaseResources()
 {
-    // When playback stops, you can use this as an opportunity to free up any
-    // spare memory, etc.
 }
-
 bool ChronosProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
   #if JucePlugin_IsMidiEffect
-    juce::ignoreUnused (layouts);
+    ignoreUnused (layouts);
     return true;
   #else
     // This is the place where you check if the layout is supported.
     // In this template code we only support mono or stereo.
     // Some plugin hosts, such as certain GarageBand versions, will only
     // load plugins that support stereo bus layouts.
-    if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::mono()
-     && layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
+    if (layouts.getMainOutputChannelSet() != AudioChannelSet::mono()
+     && layouts.getMainOutputChannelSet() != AudioChannelSet::stereo())
         return false;
 
     // This checks if the input layout matches the output layout
@@ -116,51 +137,66 @@ bool ChronosProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
     return true;
   #endif
 }
-
-void ChronosProcessor::processBlock (juce::AudioBuffer<float>& buffer,
-                                       juce::MidiBuffer& midiMessages)
+//=============================================================================
+void ChronosProcessor::processBlock (AudioBuffer<float> &buffer, MidiBuffer &midiMessages)
 {
-    juce::ignoreUnused (buffer, midiMessages);
-    juce::ScopedNoDenormals noDenormals;
+    ignoreUnused (buffer, midiMessages);
+    ScopedNoDenormals noDenormals;
     ZoneScoped;
+
+    const int numSamples = buffer.getNumSamples();
+    if (numSamples == 0)
+        return;
+
+    // read parameters
+    delay.setDelayTimeParam(apvts.getRawParameterValue("delayTime")->load());
+    delay.setMixParam(apvts.getRawParameterValue("mix")->load());
+    delay.setFeedbackParam(apvts.getRawParameterValue("feedback")->load());
+    delay.setMono(apvts.getRawParameterValue("mono")->load() >= 0.5f);
+    delay.setBypassed(apvts.getRawParameterValue("bypass")->load() >= 0.5f);
+
+    const dsp::AudioBlock<float> block(buffer);
+    delay.process(block, numSamples);
+
+    // advance dither state
+    xorshiftL ^= xorshiftL << 13;
+    xorshiftL ^= xorshiftL >> 17;
+    xorshiftL ^= xorshiftL << 5;
+
+    xorshiftR ^= xorshiftR << 13;
+    xorshiftR ^= xorshiftR >> 17;
+    xorshiftR ^= xorshiftR << 5;
 
 #if JUCE_DEBUG
     MarsDSP::overloaded(buffer);
 #endif
-
     FrameMark;
 }
-
 //==============================================================================
 bool ChronosProcessor::hasEditor() const
 {
     return true; // (change this to false if you choose to not supply an editor)
 }
-
-juce::AudioProcessorEditor* ChronosProcessor::createEditor()
+AudioProcessorEditor* ChronosProcessor::createEditor()
 {
-    return new ChronosEditor (*this);
+    return new GenericAudioProcessorEditor(*this);
 }
-
 //==============================================================================
-void ChronosProcessor::getStateInformation (juce::MemoryBlock& destData)
+void ChronosProcessor::getStateInformation(MemoryBlock &destData)
 {
-    // You should use this method to store your parameters in the memory block.
-    // You could do that either as raw data, or use the XML or ValueTree classes
-    // as intermediaries to make it easy to save and load complex data.
-    juce::ignoreUnused (destData);
+    const auto state = apvts.copyState();
+    std::unique_ptr xml(state.createXml());
+    copyXmlToBinary(*xml, destData);
 }
 
-void ChronosProcessor::setStateInformation (const void* data, int sizeInBytes)
+void ChronosProcessor::setStateInformation(const void *data, int sizeInBytes)
 {
-    // You should use this method to restore your parameters from this memory block,
-    // whose contents will have been created by the getStateInformation() call.
-    juce::ignoreUnused (data, sizeInBytes);
+    std::unique_ptr xml(getXmlFromBinary(data, sizeInBytes));
+    if (xml != nullptr && xml->hasTagName(apvts.state.getType()))
+        apvts.replaceState(ValueTree::fromXml(*xml));
 }
-
 //==============================================================================
-// This creates new instances of the plugin..
-juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
+AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new ChronosProcessor();
 }

@@ -5,28 +5,28 @@
 
 namespace MarsDSP::DSP::inline InterpolationTypes
 {
-    struct NoInterpolation
+    struct None
     {
         template<typename T>
         void write(int&, T&)
         {
         }
 
-        template <typename SampleType, typename NumericType, typename StorageType = SampleType>
+        template<typename SampleType, typename NumericType, typename StorageType = SampleType>
         SampleType read(const SampleType *buffer, int delayInt, NumericType = {}, const SampleType& = {})
         {
-            return static_cast<SampleType> (buffer[delayInt]);
+            return static_cast<SampleType>(buffer[delayInt]);
         }
     };
 
-    struct LinearInterpolation
+    struct Linear
     {
         template<typename T>
         void write(int&, T&)
         {
         }
 
-        template <typename SampleType, typename NumericType, typename StorageType = SampleType>
+        template<typename SampleType, typename NumericType, typename StorageType = SampleType>
         SampleType read(const StorageType *buffer, int delayInt, NumericType delayFrac, const SampleType& = {})
         {
             auto idx1 = delayInt;
@@ -39,19 +39,19 @@ namespace MarsDSP::DSP::inline InterpolationTypes
         }
     };
 
-    struct Lagrange3RDInterpolation
+    struct Lagrange3rd
     {
         template<typename T>
         void write(int& delayIntOffset, T& delayFrac)
         {
             if (delayIntOffset >= 1)
             {
-                delayFrac++;
+                ++delayFrac;
                 delayIntOffset--;
             }
         }
 
-        template <typename SampleType, typename NumericType, typename StorageType = SampleType>
+        template<typename SampleType, typename NumericType, typename StorageType = SampleType>
         SampleType read(const StorageType *buffer, int delayInt, NumericType delayFrac, const SampleType& = {})
         {
             auto idx1 = delayInt;
@@ -77,7 +77,7 @@ namespace MarsDSP::DSP::inline InterpolationTypes
         }
     };
 
-    struct Lagrange5THInterpolation
+    struct Lagrange5th
     {
         template<typename T>
         void write(int& delayIntOffset, T& delayFrac)
@@ -89,7 +89,7 @@ namespace MarsDSP::DSP::inline InterpolationTypes
             }
         }
 
-        template <typename SampleType, typename NumericType, typename StorageType = SampleType>
+        template<typename SampleType, typename NumericType, typename StorageType = SampleType>
         SampleType read(const StorageType *buffer, int delayInt, NumericType delayFrac, const SampleType& = {})
         {
             auto idx1 = delayInt;
