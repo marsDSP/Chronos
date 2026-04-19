@@ -279,6 +279,272 @@ namespace MarsDSP::inline FasterMath
         return fasterTanh(xbounded);
     }
 //==============================================================================//
+    // Padé (4,4) approximant of exp(x).
+    //
+    //   exp(x) ≈ (1680 + 840 x + 180 x^2 + 20 x^3 + x^4)
+    //          / (1680 - 840 x + 180 x^2 - 20 x^3 + x^4)
+    //
+    // Accurate near zero; degrades for |x| beyond ~5. Used where the argument
+    // is already known to be bounded (see fastTanhIntegral below) - do not
+    // use as a general-purpose exp for arbitrary-range inputs.
+    inline float fasterExp(const float x) noexcept
+    {
+        const auto numerator   = 1680.0f + x * (840.0f  + x * (180.0f + x * (20.0f  + x)));
+        const auto denominator = 1680.0f + x * (-840.0f + x * (180.0f + x * (-20.0f + x)));
+        return numerator / denominator;
+    }
+
+    inline SIMD_M128 fasterExp(const SIMD_M128 x) noexcept
+    {
+        #define M(a, b) SIMD_MM(mul_ps)(a, b)
+        #define A(a, b) SIMD_MM(add_ps)(a, b)
+        #define F(a)    SIMD_MM(set1_ps)(a)
+
+        const auto m1680   = F(1680.0f);
+        const auto m840    = F(840.0f);
+        const auto mneg840 = F(-840.0f);
+        const auto m180    = F(180.0f);
+        const auto m20     = F(20.0f);
+        const auto mneg20  = F(-20.0f);
+
+        const auto num = A(m1680,
+                         M(x, A(m840,
+                         M(x, A(m180,
+                         M(x, A(m20, x)))))));
+
+        const auto den = A(m1680,
+                         M(x, A(mneg840,
+                         M(x, A(m180,
+                         M(x, A(mneg20, x)))))));
+
+        #undef M
+        #undef A
+        #undef F
+
+        return SIMD_MM(div_ps)(num, den);
+    }
+//==============================================================================//
+    // SIMD log (Cephes-style, ~6 decimal digits for x > 0).
+    // log(x) = n*ln2 + log(m)  with  x = 2^n * m,  m in [sqrt(2)/2, sqrt(2)].
+    // log(m) via a Horner polynomial in (m - 1).
+    inline SIMD_M128 fasterLog(const SIMD_M128 xin) noexcept
+    {
+        // keep inputs strictly positive to avoid NaN on zero/negatives.
+        const auto xMin = SIMD_MM(set1_ps)(1.17549435e-38f);
+        const auto x = SIMD_MM(max_ps)(xin, xMin);
+
+        // exponent e and fraction m of the float.
+        auto e = SIMD_MM(srli_epi32)(SIMD_MM(castps_si128)(x), 23);
+        e      = SIMD_MM(sub_epi32)(e, SIMD_MM(set1_epi32)(127));
+        auto ef = SIMD_MM(cvtepi32_ps)(e);
+
+        const auto mantMask = SIMD_MM(castsi128_ps)(SIMD_MM(set1_epi32)(0x007FFFFF));
+        const auto oneBits  = SIMD_MM(castsi128_ps)(SIMD_MM(set1_epi32)(0x3F800000));
+        auto m = SIMD_MM(or_ps)(SIMD_MM(and_ps)(x, mantMask), oneBits);
+
+        // Mantissa extraction gives m in [1, 2). Fold the upper half down:
+        // if m > sqrt(2), halve it and bump the exponent. That lands m in
+        // (sqrt(2)/2, sqrt(2)] so (m - 1) ~ [-0.293, 0.414] - the design
+        // range of the minimax polynomial below. Without this fold, m-1 can
+        // be as large as ~1.0, which drives the polynomial far outside its
+        // sweet spot and produces audible noise in downstream consumers
+        // like fastTanhIntegral.
+        const auto SQRT2   = SIMD_MM(set1_ps)(1.4142135623730951f);
+        const auto mask    = SIMD_MM(cmpgt_ps)(m, SQRT2);
+        const auto halfM   = SIMD_MM(mul_ps)(m, SIMD_MM(set1_ps)(0.5f));
+        m  = SIMD_MM(or_ps)(SIMD_MM(and_ps)(mask, halfM),
+                            SIMD_MM(andnot_ps)(mask, m));
+        ef = SIMD_MM(add_ps)(ef, SIMD_MM(and_ps)(mask, SIMD_MM(set1_ps)(1.0f)));
+        m  = SIMD_MM(sub_ps)(m, SIMD_MM(set1_ps)(1.0f));
+
+        // minimax polynomial for log(1+m) * m^3 on m in ~[-0.293, 0.414].
+        const auto m2 = SIMD_MM(mul_ps)(m, m);
+        auto poly = SIMD_MM(set1_ps)(7.0376836292E-2f);
+        poly = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(poly, m), SIMD_MM(set1_ps)(-1.1514610310E-1f));
+        poly = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(poly, m), SIMD_MM(set1_ps)( 1.1676998740E-1f));
+        poly = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(poly, m), SIMD_MM(set1_ps)(-1.2420140846E-1f));
+        poly = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(poly, m), SIMD_MM(set1_ps)( 1.4249322787E-1f));
+        poly = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(poly, m), SIMD_MM(set1_ps)(-1.6668057665E-1f));
+        poly = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(poly, m), SIMD_MM(set1_ps)( 2.0000714765E-1f));
+        poly = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(poly, m), SIMD_MM(set1_ps)(-2.4999993993E-1f));
+        poly = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(poly, m), SIMD_MM(set1_ps)( 3.3333331174E-1f));
+        poly = SIMD_MM(mul_ps)(SIMD_MM(mul_ps)(poly, m), m2);
+
+        poly = SIMD_MM(sub_ps)(poly, SIMD_MM(mul_ps)(ef, SIMD_MM(set1_ps)(2.12194440e-4f)));
+        poly = SIMD_MM(sub_ps)(poly, SIMD_MM(mul_ps)(m2, SIMD_MM(set1_ps)(0.5f)));
+
+        auto result = SIMD_MM(add_ps)(m, poly);
+        result = SIMD_MM(add_ps)(result, SIMD_MM(mul_ps)(ef, SIMD_MM(set1_ps)(0.693359375f)));
+        return result;
+    }
+
+    inline float fasterLog(const float x) noexcept
+    {
+        alignas(16) float out[4];
+        SIMD_MM(store_ps)(out, fasterLog(SIMD_MM(set1_ps)(x)));
+        return out[0];
+    }
+//==============================================================================//
+    // Bounded Padé tanh.
+    //
+    //   fastTanh(x) = x (27 + x^2) / (27 + 9 x^2)         for |x| < 3
+    //              = sgn(x)                                for |x| >= 3
+    //
+    // Matches tanh(x) to roughly 1% over [-3, 3]; rails cleanly beyond.
+    template <typename T>
+    T fastTanh(const T x) noexcept
+    {
+        if (x < static_cast<T>(-3)) return static_cast<T>(-1);
+        if (x > static_cast<T>( 3)) return static_cast<T>( 1);
+        const T x2 = x * x;
+        return x * (static_cast<T>(27) + x2)
+             / (static_cast<T>(27) + static_cast<T>(9) * x2);
+    }
+
+    inline SIMD_M128 fastTanh(const SIMD_M128 x) noexcept
+    {
+        const auto three    = SIMD_MM(set1_ps)(3.0f);
+        const auto negThree = SIMD_MM(set1_ps)(-3.0f);
+        const auto twentySeven = SIMD_MM(set1_ps)(27.0f);
+        const auto nine     = SIMD_MM(set1_ps)(9.0f);
+        const auto posOne   = SIMD_MM(set1_ps)(1.0f);
+        const auto negOne   = SIMD_MM(set1_ps)(-1.0f);
+
+        const auto x2   = SIMD_MM(mul_ps)(x, x);
+        const auto num  = SIMD_MM(mul_ps)(x, SIMD_MM(add_ps)(twentySeven, x2));
+        const auto den  = SIMD_MM(add_ps)(twentySeven, SIMD_MM(mul_ps)(nine, x2));
+        const auto body = SIMD_MM(div_ps)(num, den);
+
+        // clamp to saturation rails
+        const auto ge3    = SIMD_MM(cmpge_ps)(x, three);
+        const auto le_neg = SIMD_MM(cmple_ps)(x, negThree);
+        auto result = body;
+        result = SIMD_MM(or_ps)(SIMD_MM(and_ps)(ge3, posOne),
+                                SIMD_MM(andnot_ps)(ge3, result));
+        result = SIMD_MM(or_ps)(SIMD_MM(and_ps)(le_neg, negOne),
+                                SIMD_MM(andnot_ps)(le_neg, result));
+        return result;
+    }
+//==============================================================================//
+    // Antiderivative of fastTanh.
+    //
+    //   |x| <  3:  F(x) = x^2 / 18 + (4/3) log(1 + x^2 / 3)
+    //   |x| >= 3:  F(x) = |x| - c          with c = 2.5 - (8/3) ln 2 ≈ 0.6516075
+    //
+    // c is chosen so the two branches join with matching value at |x| = 3.
+    // Derived by integrating the bounded Padé expression of fastTanh above.
+    // Used by the SIMD ADAA waveshaper; the log argument 1 + x^2/3 lands in
+    // [1, 4] for |x| ≤ 3, which is well inside the fasterLog Padé's sweet spot.
+    inline SIMD_M128 fastTanhIntegral(const SIMD_M128 x) noexcept
+    {
+        const auto ABSMASK = SIMD_MM(castsi128_ps)(SIMD_MM(set1_epi32)(0x7FFFFFFF));
+        const auto absX    = SIMD_MM(and_ps)(x, ABSMASK);
+        const auto x2      = SIMD_MM(mul_ps)(x, x);
+
+        // inner branch
+        const auto logArg  = SIMD_MM(add_ps)(SIMD_MM(set1_ps)(1.0f),
+                                             SIMD_MM(mul_ps)(x2, SIMD_MM(set1_ps)(1.0f / 3.0f)));
+        const auto logPart = fasterLog(logArg);
+        const auto inner   = SIMD_MM(add_ps)(
+            SIMD_MM(mul_ps)(x2,      SIMD_MM(set1_ps)(1.0f / 18.0f)),
+            SIMD_MM(mul_ps)(logPart, SIMD_MM(set1_ps)(4.0f / 3.0f)));
+
+        // outer branch
+        const auto outer = SIMD_MM(sub_ps)(absX, SIMD_MM(set1_ps)(0.6516075f));
+
+        const auto mask  = SIMD_MM(cmpge_ps)(absX, SIMD_MM(set1_ps)(3.0f));
+        return SIMD_MM(or_ps)(SIMD_MM(and_ps)(mask, outer),
+                              SIMD_MM(andnot_ps)(mask, inner));
+    }
+
+    inline float fastTanhIntegral(const float x) noexcept
+    {
+        alignas(16) float out[4];
+        SIMD_MM(store_ps)(out, fastTanhIntegral(SIMD_MM(set1_ps)(x)));
+        return out[0];
+    }
+//==============================================================================//
+    // Antiderivative-antialiased tanh (first-order ADAA).
+    //
+    //   y[n] = (F(x[n]) - F(x[n-1])) / (x[n] - x[n-1])        with F = logcosh
+    //
+    // When |dx| is tiny we substitute the midpoint direct tanh to dodge 0/0.
+    //
+    // The SIMD version processes four consecutive samples per call. The
+    // "previous sample" for lane 0 comes from the carry passed in; lanes 1..3
+    // read from the quad's own earlier lanes via a one-lane left-shift:
+    //
+    //   xPrev = [carryX, x[0], x[1], x[2]]
+    //   FPrev = [carryF, F[0], F[1], F[2]]
+    //
+    // On exit carryX / carryF are updated to lane-3 of the current quad so the
+    // next call picks up where this one left off. Seed both to 0 at reset.
+    inline SIMD_M128 fasterTanhADAA(const SIMD_M128 x, float &carryX, float &carryF) noexcept
+    {
+        // F is the antiderivative of the same bounded tanh used by the
+        // fallback branch below - keeping both from a single primitive keeps
+        // behaviour consistent at the branch transition.
+        const auto F = fastTanhIntegral(x);
+
+        // One-lane left shift (fill lane 0 with 0), then splice carry into lane 0.
+        const auto xShift = SIMD_MM(castsi128_ps)(
+            SIMD_MM(slli_si128)(SIMD_MM(castps_si128)(x), 4));
+        const auto FShift = SIMD_MM(castsi128_ps)(
+            SIMD_MM(slli_si128)(SIMD_MM(castps_si128)(F), 4));
+
+        const auto xPrev = SIMD_MM(add_ss)(xShift, SIMD_MM(set_ss)(carryX));
+        const auto FPrev = SIMD_MM(add_ss)(FShift, SIMD_MM(set_ss)(carryF));
+
+        const auto dx = SIMD_MM(sub_ps)(x, xPrev);
+        const auto dF = SIMD_MM(sub_ps)(F, FPrev);
+
+        // Per-lane fallback when |dx| < eps: use direct tanh at the midpoint.
+        const auto ABSMASK  = SIMD_MM(castsi128_ps)(SIMD_MM(set1_epi32)(0x7FFFFFFF));
+        const auto absDx    = SIMD_MM(and_ps)(dx, ABSMASK);
+        // Threshold chosen well above single-precision subtractive-cancellation
+        // noise floor (~1 ulp of |x|) so lanes whose dx is dominated by round-off
+        // fall into the direct-tanh midpoint branch instead of a noisy dF/dx.
+        const auto tooSmall = SIMD_MM(cmplt_ps)(absDx, SIMD_MM(set1_ps)(1.0e-4f));
+        const auto adaaQ    = SIMD_MM(div_ps)(dF, dx);
+        const auto mid      = SIMD_MM(mul_ps)(SIMD_MM(set1_ps)(0.5f), SIMD_MM(add_ps)(x, xPrev));
+        const auto fallbk   = fasterTanhBounded(mid);
+
+        const auto y = SIMD_MM(or_ps)(SIMD_MM(and_ps)   (tooSmall, fallbk),
+                                      SIMD_MM(andnot_ps)(tooSmall, adaaQ));
+
+        // Persist lane-3 as carry for the next quad.
+        alignas(16) float lanesX[4], lanesF[4];
+        SIMD_MM(store_ps)(lanesX, x);
+        SIMD_MM(store_ps)(lanesF, F);
+        carryX = lanesX[3];
+        carryF = lanesF[3];
+
+        return y;
+    }
+
+    inline float fasterTanhADAA(const float x, float &carryX, float &carryF) noexcept
+    {
+        const float F  = fastTanhIntegral(x);
+        const float dx = x - carryX;
+        float y;
+        if (std::fabs(dx) < 1.0e-4f)
+        {
+            // same midpoint fallback as SIMD path, routed through the SIMD
+            // tanhBounded so scalar/SIMD results stay bit-identical.
+            alignas(16) float out[4];
+            SIMD_MM(store_ps)(out,
+                fasterTanhBounded(SIMD_MM(set1_ps)(0.5f * (x + carryX))));
+            y = out[0];
+        }
+        else
+        {
+            y = (F - carryF) / dx;
+        }
+        carryX = x;
+        carryF = F;
+        return y;
+    }
+//==============================================================================//
     inline float boundToPi(const float angle)
     {
         // fast path: already in canonical range

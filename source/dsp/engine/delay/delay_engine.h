@@ -6,6 +6,7 @@
 #include <cassert>
 #include <JuceHeader.h>
 #include "dsp/math/fastermath.h"
+#include "dsp/engine/delay/waveshaper.h"
 
 namespace MarsDSP::DSP {
     template<typename SampleType, int N_BLOCK = 4112>
@@ -70,6 +71,10 @@ namespace MarsDSP::DSP {
             // Clear biquad state on reset.
             fbLP_L.reset(); fbLP_R.reset();
             fbHP_L.reset(); fbHP_R.reset();
+
+            // Clear ADAA carry state so first samples start from x=0, F=fastTanhIntegral(0)=0.
+            adaaFbL .reset(); adaaFbR .reset();
+            adaaOutL.reset(); adaaOutR.reset();
         }
 
         void prepare(const dsp::ProcessSpec &spec) noexcept
@@ -269,6 +274,10 @@ namespace MarsDSP::DSP {
 
                 // ---------------- PASS 3: SIMD feedback MAC + dry/wet mix -----------
                 {
+                    // Pull carries into locals so ADAA can keep them in registers.
+                    float cxFb  = adaaFbL .getCarryX(), cfFb  = adaaFbL .getCarryF();
+                    float cxOut = adaaOutL.getCarryX(), cfOut = adaaOutL.getCarryF();
+
                     size_t n = 0;
                     for (; n + 3 < numSamplesSize; n += 4)
                     {
@@ -288,13 +297,17 @@ namespace MarsDSP::DSP {
                         const auto vFiltered  = SIMD_MM(load_ps)(&dsL[n]);
                         const auto vDuckedOut = SIMD_MM(mul_ps)(vFiltered, vDuckGain);
 
-                        auto vWriteVal = fasterTanhBounded(
-                            SIMD_MM(add_ps)(vMonoSum, SIMD_MM(mul_ps)(vFb, vDuckedOut)));
+                        // ADAA softclip on the write-feedback branch.
+                        const auto vFbArg = SIMD_MM(add_ps)(vMonoSum,
+                                               SIMD_MM(mul_ps)(vFb, vDuckedOut));
+                        const auto vWriteVal = fasterTanhADAA(vFbArg, cxFb, cfFb);
                         SIMD_MM(storeu_ps)(&wL[n], vWriteVal);
 
-                        auto vOut = fasterTanhBounded(
-                            SIMD_MM(add_ps)(SIMD_MM(mul_ps)(vDuckedOut, vMix),
-                                            SIMD_MM(mul_ps)(vMonoSum,   vOneMinusMix)));
+                        // ADAA softclip on the dry/wet output branch.
+                        const auto vOutArg = SIMD_MM(add_ps)(
+                            SIMD_MM(mul_ps)(vDuckedOut, vMix),
+                            SIMD_MM(mul_ps)(vMonoSum,   vOneMinusMix));
+                        const auto vOut = fasterTanhADAA(vOutArg, cxOut, cfOut);
 
                         if (ch0 != nullptr) SIMD_MM(storeu_ps)(ch0 + n, vOut);
                         if (ch1 != nullptr) SIMD_MM(storeu_ps)(ch1 + n, vOut);
@@ -311,12 +324,18 @@ namespace MarsDSP::DSP {
 
                         const SampleType duckedOut = static_cast<SampleType>(dsL[n]) * duckGain;
 
-                        wL[n] = softClip(monoSum + fbP * duckedOut);
-                        const SampleType out = softClip(duckedOut * mixP + monoSum * oneMinusMx);
+                        wL[n] = static_cast<SampleType>(fasterTanhADAA(
+                            static_cast<float>(monoSum + fbP * duckedOut), cxFb, cfFb));
+                        const SampleType out = static_cast<SampleType>(fasterTanhADAA(
+                            static_cast<float>(duckedOut * mixP + monoSum * oneMinusMx),
+                            cxOut, cfOut));
 
                         if (ch0 != nullptr) ch0[n] = out;
                         if (ch1 != nullptr) ch1[n] = out;
                     }
+
+                    adaaFbL .setCarry(cxFb,  cfFb);
+                    adaaOutL.setCarry(cxOut, cfOut);
                 }
 
                 // Block write & Mirror
@@ -462,6 +481,12 @@ namespace MarsDSP::DSP {
 
                 // ---------------- PASS 3: SIMD feedback MAC + dry/wet mix ---------
                 {
+                    // carry locals for each of the four ADAA softclip streams.
+                    float cxFbL  = adaaFbL .getCarryX(), cfFbL  = adaaFbL .getCarryF();
+                    float cxOutL = adaaOutL.getCarryX(), cfOutL = adaaOutL.getCarryF();
+                    float cxFbR  = adaaFbR .getCarryX(), cfFbR  = adaaFbR .getCarryF();
+                    float cxOutR = adaaOutR.getCarryX(), cfOutR = adaaOutR.getCarryF();
+
                     size_t n = 0;
                     for (; n + 3 < numSamplesSize; n += 4)
                     {
@@ -475,13 +500,15 @@ namespace MarsDSP::DSP {
                             auto vXL = SIMD_MM(loadu_ps)(ch0 + n);
                             auto vYL_ducked = SIMD_MM(mul_ps)(SIMD_MM(load_ps)(&dsL[n]), vDuckGain);
 
-                            auto vWriteValL = fasterTanhBounded(
-                                SIMD_MM(add_ps)(vXL, SIMD_MM(mul_ps)(vFbL, vYL_ducked)));
+                            const auto vFbArgL = SIMD_MM(add_ps)(vXL,
+                                                    SIMD_MM(mul_ps)(vFbL, vYL_ducked));
+                            const auto vWriteValL = fasterTanhADAA(vFbArgL, cxFbL, cfFbL);
                             SIMD_MM(storeu_ps)(&wL[n], vWriteValL);
 
-                            auto vOutL = fasterTanhBounded(
-                                SIMD_MM(add_ps)(SIMD_MM(mul_ps)(vYL_ducked, vMix),
-                                                SIMD_MM(mul_ps)(vXL,        vOneMinusMix)));
+                            const auto vOutArgL = SIMD_MM(add_ps)(
+                                SIMD_MM(mul_ps)(vYL_ducked, vMix),
+                                SIMD_MM(mul_ps)(vXL,        vOneMinusMix));
+                            const auto vOutL = fasterTanhADAA(vOutArgL, cxOutL, cfOutL);
                             SIMD_MM(storeu_ps)(ch0 + n, vOutL);
                         }
 
@@ -491,13 +518,15 @@ namespace MarsDSP::DSP {
                             auto vXR = SIMD_MM(loadu_ps)(ch1 + n);
                             auto vYR_ducked = SIMD_MM(mul_ps)(SIMD_MM(load_ps)(&dsR[n]), vDuckGain);
 
-                            auto vWriteValR = fasterTanhBounded(
-                                SIMD_MM(add_ps)(vXR, SIMD_MM(mul_ps)(vFbR, vYR_ducked)));
+                            const auto vFbArgR = SIMD_MM(add_ps)(vXR,
+                                                    SIMD_MM(mul_ps)(vFbR, vYR_ducked));
+                            const auto vWriteValR = fasterTanhADAA(vFbArgR, cxFbR, cfFbR);
                             SIMD_MM(storeu_ps)(&wR[n], vWriteValR);
 
-                            auto vOutR = fasterTanhBounded(
-                                SIMD_MM(add_ps)(SIMD_MM(mul_ps)(vYR_ducked, vMix),
-                                                SIMD_MM(mul_ps)(vXR,        vOneMinusMix)));
+                            const auto vOutArgR = SIMD_MM(add_ps)(
+                                SIMD_MM(mul_ps)(vYR_ducked, vMix),
+                                SIMD_MM(mul_ps)(vXR,        vOneMinusMix));
+                            const auto vOutR = fasterTanhADAA(vOutArgR, cxOutR, cfOutR);
                             SIMD_MM(storeu_ps)(ch1 + n, vOutR);
                         }
                     }
@@ -511,49 +540,72 @@ namespace MarsDSP::DSP {
                             const SampleType fbLP = static_cast<SampleType>(lFbL.at(static_cast<int>(n)));
                             const SampleType xL   = ch0[n];
                             const SampleType yL_ducked = static_cast<SampleType>(dsL[n]) * duckGain;
-                            wL[n]  = softClip(xL + fbLP * yL_ducked);
-                            ch0[n] = softClip(yL_ducked * mixP + xL * oneMinusMx);
+                            wL[n]  = static_cast<SampleType>(fasterTanhADAA(
+                                static_cast<float>(xL + fbLP * yL_ducked), cxFbL, cfFbL));
+                            ch0[n] = static_cast<SampleType>(fasterTanhADAA(
+                                static_cast<float>(yL_ducked * mixP + xL * oneMinusMx),
+                                cxOutL, cfOutL));
                         }
                         if (ch1 != nullptr)
                         {
                             const SampleType fbRP = static_cast<SampleType>(lFbR.at(static_cast<int>(n)));
                             const SampleType xR   = ch1[n];
                             const SampleType yR_ducked = static_cast<SampleType>(dsR[n]) * duckGain;
-                            wR[n]  = softClip(xR + fbRP * yR_ducked);
-                            ch1[n] = softClip(yR_ducked * mixP + xR * oneMinusMx);
+                            wR[n]  = static_cast<SampleType>(fasterTanhADAA(
+                                static_cast<float>(xR + fbRP * yR_ducked), cxFbR, cfFbR));
+                            ch1[n] = static_cast<SampleType>(fasterTanhADAA(
+                                static_cast<float>(yR_ducked * mixP + xR * oneMinusMx),
+                                cxOutR, cfOutR));
                         }
                     }
+
+                    adaaFbL .setCarry(cxFbL,  cfFbL);
+                    adaaOutL.setCarry(cxOutL, cfOutL);
+                    adaaFbR .setCarry(cxFbR,  cfFbR);
+                    adaaOutR.setCarry(cxOutR, cfOutR);
                 }
 
                 // Block write & Mirror L
-                if (ch0 != nullptr) {
+                if (ch0 != nullptr)
+                {
                     const int oldIdxL = writeIdxL;
                     const bool wrappedL = (oldIdxL + static_cast<int>(numSamplesSize)) > kBufSize;
-                    if (wrappedL) {
+                    if (wrappedL)
+                    {
                         for (size_t k = 0; k < numSamplesSize; ++k)
                             bufferL[(oldIdxL + static_cast<int>(k)) & kBufMask] = wL[k];
-                    } else {
+                    }
+                    else
+                    {
                         std::memcpy(&bufferL[oldIdxL], wL, numSamplesSize * sizeof(SampleType));
                     }
                     writeIdxL = (oldIdxL + static_cast<int>(numSamplesSize)) & kBufMask;
-                    if (wrappedL || oldIdxL < kTail) {
+
+                    if (wrappedL || oldIdxL < kTail)
+                    {
                         for (int k = 0; k < kTail; ++k)
                             bufferL[kBufSize + k] = bufferL[k];
                     }
                 }
 
                 // Block write & Mirror R
-                if (ch1 != nullptr) {
+                if (ch1 != nullptr)
+                {
                     const int oldIdxR = writeIdxR;
                     const bool wrappedR = (oldIdxR + static_cast<int>(numSamplesSize)) > kBufSize;
-                    if (wrappedR) {
+                    if (wrappedR)
+                    {
                         for (size_t k = 0; k < numSamplesSize; ++k)
                             bufferR[(oldIdxR + static_cast<int>(k)) & kBufMask] = wR[k];
-                    } else {
+                    }
+                    else
+                    {
                         std::memcpy(&bufferR[oldIdxR], wR, numSamplesSize * sizeof(SampleType));
                     }
                     writeIdxR = (oldIdxR + static_cast<int>(numSamplesSize)) & kBufMask;
-                    if (wrappedR || oldIdxR < kTail) {
+
+                    if (wrappedR || oldIdxR < kTail)
+                    {
                         for (int k = 0; k < kTail; ++k)
                             bufferR[kBufSize + k] = bufferR[k];
                     }
@@ -656,11 +708,10 @@ namespace MarsDSP::DSP {
             if (fb < 1.0e-4f)
                 return std::min(static_cast<int>(delaySamples) + kMargin, kMaxTail);
 
-            const int repeats = static_cast<int>(std::ceil(
-                std::log(silenceDb) / std::log(fb)));
+            const int repeats = static_cast<int>(std::ceil(std::log(silenceDb) / std::log(fb)));
             const long long tail = static_cast<long long>(delaySamples)
-                                 * static_cast<long long>(std::max(repeats, 1))
-                                 + kMargin;
+                                 * static_cast<long long>(std::max(repeats, 1)) + kMargin;
+
             return static_cast<int>(std::min<long long>(tail, kMaxTail));
         }
 
@@ -878,6 +929,13 @@ namespace MarsDSP::DSP {
 
         LipolSIMD          lMix, lFbL, lFbR, lCrossfeed;
         SurgeLag<float>    lagDelayMs;
+
+        // One ADAA waveshaper per softclip call site.
+        // *Fb*  = the feedback-write softclip; *Out* = the dry/wet-mix output
+        // softclip. L instances are reused by mono; R instances only fire in
+        // stereo mode.
+        Waveshapers::ADAATanh adaaFbL,  adaaFbR;
+        Waveshapers::ADAATanh adaaOutL, adaaOutR;
 
         // Feedback-path filters (per channel): highpass before lowpass.
         Biquad fbLP_L, fbLP_R, fbHP_L, fbHP_R;
