@@ -33,14 +33,34 @@ namespace Chronos
     // --------------------------------------------------------------
     namespace ParamID
     {
-        inline constexpr auto kDelayTime = "delayTime";
-        inline constexpr auto kMix       = "mix";
-        inline constexpr auto kFeedback  = "feedback";
-        inline constexpr auto kLowCut    = "lowCut";
-        inline constexpr auto kHighCut   = "highCut";
-        inline constexpr auto kCrossfeed = "crossfeed";
-        inline constexpr auto kMono      = "mono";
-        inline constexpr auto kBypass    = "bypass";
+        inline constexpr auto kDelayTime        = "delayTime";
+        inline constexpr auto kMix              = "mix";
+        inline constexpr auto kFeedback         = "feedback";
+        inline constexpr auto kLowCut           = "lowCut";
+        inline constexpr auto kHighCut          = "highCut";
+        inline constexpr auto kCrossfeed        = "crossfeed";
+        inline constexpr auto kMono             = "mono";
+        inline constexpr auto kBypass           = "bypass";
+
+        // Diffusion (Dattorro-style 8-channel chain in the feedback path).
+        inline constexpr auto kDiffusionAmount  = "diffusionAmount";
+        inline constexpr auto kDiffusionSizeMs  = "diffusionSizeMs";
+
+        // Feedback delay network (Lexicon-style late tail).
+        inline constexpr auto kFdnAmount        = "fdnAmount";
+        inline constexpr auto kFdnSizeMs        = "fdnSizeMs";
+        inline constexpr auto kFdnDecayMs       = "fdnDecayMs";
+        inline constexpr auto kFdnDampingHz     = "fdnDampingHz";
+
+        // Master bypass for the full reverb chain (diffusion + FDN).
+        // When on, both processors are taken out of the signal flow with a
+        // click-free crossfade; the delay itself keeps running normally.
+        inline constexpr auto kReverbBypass     = "reverbBypass";
+
+        // Tempo-sync (off by default; when on, delay time snaps to
+        // sync interval at the host's BPM).
+        inline constexpr auto kSyncEnabled      = "syncEnabled";
+        inline constexpr auto kSyncInterval     = "syncInterval";
     } // namespace ParamID
 
     // --------------------------------------------------------------
@@ -91,12 +111,10 @@ namespace Chronos
         for (int i = 0; i < tree.getNumChildren(); ++i)
         {
             auto child = tree.getChild(i);
-            if (child.hasProperty(idProp)
-                && child.getProperty(idProp).toString() == oldId)
+            if (child.hasProperty(idProp) && child.getProperty(idProp).toString() == oldId)
             {
                 child.setProperty(idProp, var(newIdStr), nullptr);
             }
         }
     }
-
-} // namespace Chronos
+}

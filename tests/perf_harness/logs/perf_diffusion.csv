@@ -1,0 +1,6 @@
+processor,configuration,ns_per_sample,realtime_factor
+DiffusionChain,8ch x 4 stages,91.4817,227.7323
+DiffusionProcessor,stereo wrap 8ch x 4 stages amount=1,116.2109,179.2717
+FeedbackDelayNetwork,8ch 80ms size,33.3252,625.1526
+FdnStereoProcessor,stereo wrap 8ch amount=1,48.5635,428.9918
+Diffusion -> FDN,stereo tail amount=1 both,176.0964,118.3064

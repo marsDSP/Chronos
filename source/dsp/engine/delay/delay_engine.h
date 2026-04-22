@@ -11,6 +11,9 @@
 #include "dsp/filter/splane_curvefit_lowpass.h"
 #include "dsp/buffers/aligned_simd_buffer.h"
 #include "dsp/buffers/aligned_simd_buffer_view.h"
+#include "dsp/diffusion/diffusion_processor.h"
+#include "dsp/diffusion/fdn_stereo_processor.h"
+#include "dsp/bypass/crossfade_bypass_engine.h"
 
 namespace MarsDSP::DSP {
     template<typename SampleType, int N_BLOCK = 4112>
@@ -81,6 +84,17 @@ namespace MarsDSP::DSP {
             fbLP_L.reset(); fbLP_R.reset();
             fbHP_L.reset(); fbHP_R.reset();
 
+            // Flush the diffusion chain's delay state.
+            stereoDiffusionProcessor.reset();
+
+            // Flush the FDN's delay state + shelf filters.
+            stereoFdnProcessor.reset();
+
+            // Latch current on/off states in the bypass engines so the
+            // first block after reset doesn't trigger a spurious crossfade.
+            masterPluginBypassEngine.reset(!bypassed);
+            fdnReverbSendBypassEngine.reset(stereoFdnProcessor.getFdnAmount() > static_cast<SampleType>(0));
+
             // Clear ADAA carry state so first samples start from x=0, F=fastTanhIntegral(0)=0.
             adaaFbL .reset(); adaaFbR .reset();
             adaaOutL.reset(); adaaOutR.reset();
@@ -102,6 +116,29 @@ namespace MarsDSP::DSP {
             fbLP_L.prepare(sampleRate); fbLP_R.prepare(sampleRate);
             fbHP_L.prepare(sampleRate); fbHP_R.prepare(sampleRate);
 
+            // Prepare the Dattorro-style stereo diffusion processor.
+            // The processor bypasses itself when diffusionAmount is 0, so
+            // this is zero-cost until the user dials the diffusion in.
+            stereoDiffusionProcessor.prepare(sampleRate);
+
+            // Prepare the Householder-mixed FDN processor. Also bypass-when-amount=0.
+            stereoFdnProcessor.prepare(sampleRate);
+
+            // Prepare the crossfade bypass engines. masterPluginBypassEngine
+            // wraps the whole engine for the plugin's Bypass parameter.
+            // fdnReverbSendBypassEngine wraps the post-delay FDN loop so
+            // moving the FDN amount across zero doesn't click.
+            const int preparedMaxBlockSize =
+                std::max(static_cast<int>(spec.maximumBlockSize), 1);
+            const int preparedNumberOfChannels =
+                std::max(static_cast<int>(spec.numChannels), 2);
+            masterPluginBypassEngine.prepare(
+                preparedMaxBlockSize, preparedNumberOfChannels, !bypassed);
+            fdnReverbSendBypassEngine.prepare(
+                preparedMaxBlockSize, preparedNumberOfChannels,
+                stereoFdnProcessor.getFdnAmount()
+                    > static_cast<SampleType>(0));
+
             // Initial filter coefficients.
             updateFilterCoeffs();
             lastLowCutHz  = lowCutHz;
@@ -113,8 +150,22 @@ namespace MarsDSP::DSP {
         void process(const AlignedBuffers::AlignedSIMDBufferView<SampleType> &block,
                      const int numSamples) noexcept
         {
-            if (bypassed)
+            // Master crossfade bypass: captures the dry input on the block
+            // where the Bypass parameter toggles and tells us whether to
+            // run the engine at all. A matching
+            // crossfadeWithCapturedDryInputIfTransitioning call at the end
+            // of process() performs a one-block fade so Bypass never clicks.
+            const bool masterEngineShouldRunThisBlock =
+                masterPluginBypassEngine
+                    .captureDryInputAndDecideWhetherToProcess(block, !bypassed);
+
+            if (!masterEngineShouldRunThisBlock)
+            {
+                // Steady-state bypass: output stays equal to dry input,
+                // skip all processing. No transition in flight so the
+                // crossfade would be a no-op either way; return early.
                 return;
+            }
 
             const int numCh = block.getNumChannels();
             auto *ch0 = numCh > 0 ? block.getChannelPointer(0) : nullptr;
@@ -147,7 +198,7 @@ namespace MarsDSP::DSP {
             lagDelayMs.processN(numSamples);
             const float delayMsNew = lagDelayMs.getValue();
 
-            const size_t numSamplesSize = static_cast<size_t>(numSamples);
+            const auto numSamplesSize = static_cast<size_t>(numSamples);
             assert(numSamplesSize <= N_BLOCK - 8);
 
             auto msToPos = [&](float ms)
@@ -284,7 +335,7 @@ namespace MarsDSP::DSP {
                     }
                     for (; n < numSamplesSize; ++n)
                     {
-                        const SampleType alpha = static_cast<SampleType>(static_cast<float>(n) * invN);
+                        const auto alpha = static_cast<SampleType>(static_cast<float>(n) * invN);
                         const SampleType yN = readInterpolated(tL,  static_cast<int>(n), coeffsN);
                         const SampleType yO = readInterpolated(tL2, static_cast<int>(n), coeffsO);
                         dsL[n] = static_cast<float>(yO + alpha * (yN - yO));
@@ -338,9 +389,9 @@ namespace MarsDSP::DSP {
                     }
                     for (; n < numSamplesSize; ++n)
                     {
-                        const SampleType mixP       = static_cast<SampleType>(lMix.at(static_cast<int>(n)));
+                        const auto mixP       = static_cast<SampleType>(lMix.at(static_cast<int>(n)));
                         const SampleType oneMinusMx = static_cast<SampleType>(1) - mixP;
-                        const SampleType fbP        = static_cast<SampleType>(lFbL.at(static_cast<int>(n)));
+                        const auto fbP        = static_cast<SampleType>(lFbL.at(static_cast<int>(n)));
 
                         SampleType monoSum = ch0 != nullptr ? ch0[n] : static_cast<SampleType>(0);
                         if (ch1 != nullptr)
@@ -349,7 +400,7 @@ namespace MarsDSP::DSP {
                         const SampleType duckedOut = static_cast<SampleType>(dsL[n]) * duckGain;
 
                         wL[n] = static_cast<SampleType>(fasterTanhADAA(static_cast<float>(monoSum + fbP * duckedOut), cxFb, cfFb));
-                        const SampleType out = static_cast<SampleType>(fasterTanhADAA(static_cast<float>(duckedOut * mixP + monoSum * oneMinusMx), cxOut, cfOut));
+                        const auto out = static_cast<SampleType>(fasterTanhADAA(static_cast<float>(duckedOut * mixP + monoSum * oneMinusMx), cxOut, cfOut));
 
                         if (ch0 != nullptr) ch0[n] = out;
                         if (ch1 != nullptr) ch1[n] = out;
@@ -472,7 +523,8 @@ namespace MarsDSP::DSP {
                     }
                     for (; n < numSamplesSize; ++n)
                     {
-                        const SampleType alpha = static_cast<SampleType>(static_cast<float>(n) * invN);
+                        const auto alpha = static_cast<SampleType>(static_cast<float>(n) * invN);
+
                         const SampleType yLN = readInterpolated(tL,  static_cast<int>(n), coeffsN);
                         const SampleType yLO = readInterpolated(tL2, static_cast<int>(n), coeffsO);
                         const SampleType yRN = readInterpolated(tR,  static_cast<int>(n), coeffsN);
@@ -486,7 +538,10 @@ namespace MarsDSP::DSP {
                 // ---------------- PASS 2: scalar filter + crossfeed blend ----------
                 // Each sample: HP → LP per channel, then blend the two filtered
                 // signals with the smoothed crossfeed amount to form the feedback
-                // input. This is the ping-pong path.
+                // input. This is the ping-pong path. After the crossfeed mix,
+                // each sample is driven through the Dattorro-style stereo
+                // diffusion processor; when diffusionAmount is 0 this call is
+                // branch-free pass-through so existing behaviour is preserved.
                 for (size_t k = 0; k < numSamplesSize; ++k)
                 {
                     const float filtL = fbLP_L.processSample(fbHP_L.processSample(dsL[k]));
@@ -494,8 +549,27 @@ namespace MarsDSP::DSP {
                     const float cf    = lCrossfeed.at(static_cast<int>(k));
                     const float cfInv = 1.0f - cf;
 
-                    dsL[k] = cfInv * filtL + cf * filtR;
-                    dsR[k] = cfInv * filtR + cf * filtL;
+                    float feedbackPathLeft  = cfInv * filtL + cf * filtR;
+                    float feedbackPathRight = cfInv * filtR + cf * filtL;
+
+                    // Diffusion lives in the feedback loop (safe: it is
+                    // built from orthogonal mixers + passive delays and is
+                    // always bounded by |H| <= 1 per stage). The whole
+                    // diffusion stage is gated by the Reverb Bypass flag.
+                    if (!reverbChainBypassed)
+                        stereoDiffusionProcessor.processSingleStereoPairInPlace(
+                            feedbackPathLeft, feedbackPathRight);
+
+                    // NOTE: the FDN is NOT applied here. Putting an FDN
+                    // inside another feedback loop produces compound loop
+                    // gains > 1 at non-DC frequencies for long T60 and
+                    // feeds back into infinity. The FDN is applied as a
+                    // post-delay reverb send on the final output buffer
+                    // instead (see the block after the circular-buffer
+                    // writes below).
+
+                    dsL[k] = feedbackPathLeft;
+                    dsR[k] = feedbackPathRight;
                 }
 
                 // ---------------- PASS 3: SIMD feedback MAC + dry/wet mix ---------
@@ -545,13 +619,13 @@ namespace MarsDSP::DSP {
                     }
                     for (; n < numSamplesSize; ++n)
                     {
-                        const SampleType mixP       = static_cast<SampleType>(lMix.at(static_cast<int>(n)));
+                        const auto mixP             = static_cast<SampleType>(lMix.at(static_cast<int>(n)));
                         const SampleType oneMinusMx = static_cast<SampleType>(1) - mixP;
 
                         if (ch0 != nullptr)
                         {
-                            const SampleType fbLP = static_cast<SampleType>(lFbL.at(static_cast<int>(n)));
-                            const SampleType xL   = ch0[n];
+                            const auto fbLP            = static_cast<SampleType>(lFbL.at(static_cast<int>(n)));
+                            const SampleType xL        = ch0[n];
                             const SampleType yL_ducked = static_cast<SampleType>(dsL[n]) * duckGain;
 
                             wL[n]  = static_cast<SampleType>(fasterTanhADAA(static_cast<float>(xL + fbLP * yL_ducked), cxFbL, cfFbL));
@@ -559,8 +633,8 @@ namespace MarsDSP::DSP {
                         }
                         if (ch1 != nullptr)
                         {
-                            const SampleType fbRP = static_cast<SampleType>(lFbR.at(static_cast<int>(n)));
-                            const SampleType xR   = ch1[n];
+                            const auto fbRP            = static_cast<SampleType>(lFbR.at(static_cast<int>(n)));
+                            const SampleType xR        = ch1[n];
                             const SampleType yR_ducked = static_cast<SampleType>(dsR[n]) * duckGain;
 
                             wR[n]  = static_cast<SampleType>(fasterTanhADAA(static_cast<float>(xR + fbRP * yR_ducked), cxFbR, cfFbR));
@@ -619,6 +693,49 @@ namespace MarsDSP::DSP {
                             bufferR[kBufSize + k] = bufferR[k];
                     }
                 }
+
+                // ---------------- POST-DELAY FDN REVERB SEND ----------------
+                // Apply the Householder-mixed FDN strictly downstream of the
+                // delay's feedback loop, so its internal loop gain never
+                // compounds with the delay's feedback gain. Safe because the
+                // FDN's output only reaches the listener - it is NEVER
+                // written back to the delay's circular buffer. Wrapped in
+                // its own CrossfadeBypassEngine instance so moving the FDN
+                // amount across zero produces a click-free transition.
+                if (ch0 != nullptr && ch1 != nullptr)
+                {
+                    // Single reverb-bypass gate: when the user flips the
+                    // Reverb Bypass button we want the FDN to fade out
+                    // click-free via its bypass engine, so fold the flag
+                    // into the 'is active' condition here rather than
+                    // branching around the bypass engine.
+                    const bool fdnReverbIsActiveThisBlock =
+                        !reverbChainBypassed
+                        && stereoFdnProcessor.getFdnAmount()
+                            > static_cast<SampleType>(0);
+
+                    const bool fdnReverbShouldRunThisBlock =
+                        fdnReverbSendBypassEngine
+                            .captureDryInputAndDecideWhetherToProcess(
+                                block, fdnReverbIsActiveThisBlock);
+
+                    if (fdnReverbShouldRunThisBlock)
+                    {
+                        for (size_t k = 0; k < numSamplesSize; ++k)
+                        {
+                            float reverbSendLeft  = ch0[k];
+                            float reverbSendRight = ch1[k];
+                            stereoFdnProcessor.processSingleStereoPairInPlace(
+                                reverbSendLeft, reverbSendRight);
+                            ch0[k] = reverbSendLeft;
+                            ch1[k] = reverbSendRight;
+                        }
+                    }
+
+                    fdnReverbSendBypassEngine
+                        .crossfadeWithCapturedDryInputIfTransitioning(
+                            block, fdnReverbIsActiveThisBlock);
+                }
             }
 
             // advance block-rate ramps so next block starts from this block's target
@@ -626,6 +743,13 @@ namespace MarsDSP::DSP {
             lFbL.advanceBlock();
             lFbR.advanceBlock();
             lCrossfeed.advanceBlock();
+
+            // Close out the master bypass crossfade. When the user toggles
+            // Bypass this block, this is where the one-block linear fade
+            // between the captured dry input and the freshly-processed
+            // output is applied in place to the block.
+            masterPluginBypassEngine
+                .crossfadeWithCapturedDryInputIfTransitioning(block, !bypassed);
         }
 
         void setDelayTimeParam(const float milliseconds) noexcept
@@ -668,6 +792,68 @@ namespace MarsDSP::DSP {
             crossfeed = std::clamp(value, 0.0f, 1.0f);
         }
 
+        // Diffusion amount: 0 = bypassed (default), 1 = full wet through
+        // the Dattorro-style diffusion chain. Applied inside the feedback
+        // loop so it shapes the repeats only.
+        void setDiffusionAmountParam(const float normalisedAmount) noexcept
+        {
+            stereoDiffusionProcessor.setDiffusionAmount(
+                std::clamp(normalisedAmount, 0.0f, 1.0f));
+        }
+
+        // Diffusion size in milliseconds: the overall diffusion window
+        // that the chain spreads its per-stage delays across.
+        void setDiffusionSizeMsParam(const float milliseconds) noexcept
+        {
+            // Clamp high enough to be audible but well below the ring size
+            // of the diffusion delay bank (kDefaultMaxDiffusionDelaySamplesPerChannel).
+            stereoDiffusionProcessor.setDiffusionSizeInMilliseconds(
+                std::clamp(milliseconds, 1.0f, 200.0f));
+        }
+
+        // FDN amount: 0 = bypass, 1 = full Lexicon-style wet.
+        void setFdnAmountParam(const float normalisedAmount) noexcept
+        {
+            stereoFdnProcessor.setFdnAmount(
+                std::clamp(normalisedAmount, 0.0f, 1.0f));
+        }
+
+        // FDN size = longest per-channel delay in the network (ms).
+        void setFdnSizeMsParam(const float milliseconds) noexcept
+        {
+            stereoFdnProcessor.setFdnSizeInMilliseconds(
+                std::clamp(milliseconds, 10.0f, 200.0f));
+        }
+
+        // FDN decay (T60 low-frequency) in ms. High-frequency T60 is
+        // derived internally as 0.6 * this value.
+        void setFdnDecayMsParam(const float milliseconds) noexcept
+        {
+            stereoFdnProcessor.setFdnDecayInMilliseconds(
+                std::clamp(milliseconds, 100.0f, 15000.0f));
+        }
+
+        // FDN damping shelf crossover frequency in Hz.
+        void setFdnDampingHzParam(const float crossoverHz) noexcept
+        {
+            stereoFdnProcessor.setFdnDampingCrossoverInHz(
+                std::clamp(crossoverHz, 200.0f, 18000.0f));
+        }
+
+        // Master bypass for the whole reverb chain (diffusion + FDN). When
+        // true both processors are taken out of the signal path; the main
+        // delay keeps running normally. Transitions are handled click-free
+        // by the diffusion / FDN bypass engines.
+        void setReverbBypassedParam(const bool shouldBypassReverb) noexcept
+        {
+            reverbChainBypassed = shouldBypassReverb;
+        }
+
+        [[nodiscard]] bool isReverbBypassed() const noexcept
+        {
+            return reverbChainBypassed;
+        }
+
         void setBypassed(const bool shouldBypass) noexcept
         {
             bypassed = shouldBypass;
@@ -706,7 +892,7 @@ namespace MarsDSP::DSP {
             if (bypassed) return 0;
 
             const float delayMs      = std::clamp(delayTime, minDelayTime, maxDelayTime);
-            const float delaySamples = static_cast<float>(sampleRate * delayMs * 0.001);
+            const auto delaySamples  = static_cast<float>(sampleRate * delayMs * 0.001);
             const float fb           = std::clamp(std::max(feedbackL, feedbackR), 0.0f, 0.9999f);
 
             constexpr float silenceDb  = 0.001f;  // -60 dB
@@ -764,13 +950,13 @@ namespace MarsDSP::DSP {
             void advanceBlock()       noexcept { current = target;     delta = 0.0f; }
 
             // 4-lane vector for samples [4q, 4q+1, 4q+2, 4q+3] within the block
-            SIMD_M128 quad(int q) const noexcept
+            [[nodiscard]] SIMD_M128 quad(int q) const noexcept
             {
                 const float base = current + delta * static_cast<float>(4 * q);
                 return SIMD_MM(add_ps)(SIMD_MM(set1_ps)(base), SIMD_MM(mul_ps)(SIMD_MM(set1_ps)(delta), SIMD_MM(setr_ps)(0.0f, 1.0f, 2.0f, 3.0f)));
             }
             // scalar value at sample offset i within the block
-            float at(int i) const noexcept
+            [[nodiscard]] float at(int i) const noexcept
             {
                 return current + delta * static_cast<float>(i);
             }
@@ -895,19 +1081,17 @@ namespace MarsDSP::DSP {
         LipolSIMD       lMix, lFbL, lFbR, lCrossfeed;
         SurgeLag<float> lagDelayMs;
 
-        // One ADAA waveshaper per softclip call site.
-        // *Fb*  = the feedback-write softclip; *Out* = the dry/wet-mix output
-        // softclip. L instances are reused by mono; R instances only fire in
-        // stereo mode.
         Waveshapers::ADAATanh adaaFbL,  adaaFbR;
         Waveshapers::ADAATanh adaaOutL, adaaOutR;
 
-        // Feedback-path filters (per channel): highpass before lowpass.
-        // 4th-order Butterworth analog prototype discretised via the
-        // bilinear transform with cutoff pre-warp (see
-        // source/dsp/filter/splane_curvefit_*.h).
         SPlaneCurveFit::SPlaneCurveFitLowpassFilter  fbLP_L, fbLP_R;
         SPlaneCurveFit::SPlaneCurveFitHighpassFilter fbHP_L, fbHP_R;
+
+        Diffusion::DiffusionProcessor<SampleType> stereoDiffusionProcessor{};
+        Diffusion::FdnStereoProcessor<SampleType> stereoFdnProcessor{};
+
+        Bypass::CrossfadeBypassEngine<SampleType> masterPluginBypassEngine{};
+        Bypass::CrossfadeBypassEngine<SampleType> fdnReverbSendBypassEngine{};
 
         // Filter + crossfeed parameter targets. lowCutHz / highCutHz trigger
         // coefficient recomputation at the top of process() when they change.
@@ -931,6 +1115,11 @@ namespace MarsDSP::DSP {
 
         bool mono = false;
         bool bypassed = false;
+
+        // Master bypass for the reverb chain (diffusion + FDN). When true,
+        // the diffusion call in Pass-2 is skipped and the FDN bypass
+        // engine transitions the FDN out. The delay itself is unaffected.
+        bool reverbChainBypassed = false;
     };
 }
 #endif

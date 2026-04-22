@@ -1,6 +1,7 @@
 #include "ChronosProcessor.h"
 #include "ChronosEditor.h"
 #include "PluginParameters.h"
+#include "utils/helpers/tempo_sync.h"
 //==============================================================================
 ChronosProcessor::ChronosProcessor() : AudioProcessor (BusesProperties()
                        .withInput  ("Input",  AudioChannelSet::stereo(), true)
@@ -16,9 +17,7 @@ ChronosProcessor::ChronosProcessor() : AudioProcessor (BusesProperties()
         xorshiftR = rand() * UINT32_MAX;
 }
 
-ChronosProcessor::~ChronosProcessor()
-{
-}
+ChronosProcessor::~ChronosProcessor() = default;
 //=============================================================================
 const String ChronosProcessor::getName() const
 {
@@ -123,6 +122,66 @@ AudioProcessorValueTreeState::ParameterLayout ChronosProcessor::createParameterL
     layout.add(std::make_unique<AudioParameterBool>(
         ParameterID(kBypass, 1), "Bypass", false));
 
+    // ---- Diffusion chain ----------------------------------------------
+    layout.add(std::make_unique<AudioParameterFloat>(
+        ParameterID(kDiffusionAmount, 1), "Diffusion Amount",
+        NormalisableRange(0.0f, 1.0f, 0.01f), 0.0f,
+        AudioParameterFloatAttributes().withLabel("%")));
+
+    layout.add(std::make_unique<AudioParameterFloat>(
+        ParameterID(kDiffusionSizeMs, 1), "Diffusion Size",
+        NormalisableRange(1.0f, 200.0f, 0.1f, 0.5f), 50.0f,
+        AudioParameterFloatAttributes().withLabel("ms")));
+
+    // ---- Feedback delay network (Lexicon-style late tail) ------------
+    layout.add(std::make_unique<AudioParameterFloat>(
+        ParameterID(kFdnAmount, 1), "FDN Amount",
+        NormalisableRange(0.0f, 1.0f, 0.01f), 0.0f,
+        AudioParameterFloatAttributes().withLabel("%")));
+
+    layout.add(std::make_unique<AudioParameterFloat>(
+        ParameterID(kFdnSizeMs, 1), "FDN Size",
+        NormalisableRange(10.0f, 200.0f, 0.1f, 0.5f), 80.0f,
+        AudioParameterFloatAttributes().withLabel("ms")));
+
+    layout.add(std::make_unique<AudioParameterFloat>(
+        ParameterID(kFdnDecayMs, 1), "FDN Decay",
+        NormalisableRange(100.0f, 15000.0f, 1.0f, 0.35f), 1500.0f,
+        AudioParameterFloatAttributes().withLabel("ms")));
+
+    layout.add(std::make_unique<AudioParameterFloat>(
+        ParameterID(kFdnDampingHz, 1), "FDN Damping",
+        NormalisableRange(200.0f, 18000.0f, 1.0f, 0.3f), 2500.0f,
+        AudioParameterFloatAttributes().withLabel("Hz")));
+
+    // Single toggle that bypasses the entire reverb chain (diffusion + FDN).
+    // Off by default so existing sessions behave identically. Transitions
+    // are handled click-free by the engine's bypass helpers.
+    layout.add(std::make_unique<AudioParameterBool>(
+        ParameterID(kReverbBypass, 1), "Reverb Bypass", false));
+
+    // ---- Tempo sync ---------------------------------------------------
+    layout.add(std::make_unique<AudioParameterBool>(
+        ParameterID(kSyncEnabled, 1), "Sync", false));
+
+    {
+        // Build a StringArray from the constexpr label table in
+        // utils/helpers/tempo_sync.h. Default to a straight quarter note.
+        StringArray syncIntervalChoiceLabels;
+        for (int intervalIndex = 0;
+             intervalIndex < MarsDSP::Utils::getNumberOfTempoSyncIntervals();
+             ++intervalIndex)
+        {
+            const auto labelStringView = MarsDSP::Utils::kSyncIntervalDisplayLabels[static_cast<std::size_t>(intervalIndex)];
+            syncIntervalChoiceLabels.add(String(labelStringView.data(), labelStringView.size()));
+        }
+        const int defaultSyncIntervalIndex = static_cast<int>(MarsDSP::Utils::TempoSyncInterval::QuarterNoteStraight);
+
+        layout.add(std::make_unique<AudioParameterChoice>(
+            ParameterID(kSyncInterval, 1), "Sync Interval",
+            syncIntervalChoiceLabels, defaultSyncIntervalIndex));
+    }
+
     return layout;
 }
 //==============================================================================
@@ -174,22 +233,61 @@ void ChronosProcessor::processBlock (AudioBuffer<float> &buffer, MidiBuffer &mid
 
     // read parameters (all IDs funnel through Chronos::ParamID)
     using namespace Chronos::ParamID;
-    delay.setDelayTimeParam(apvts.getRawParameterValue(kDelayTime)->load());
-    delay.setMixParam     (apvts.getRawParameterValue(kMix)->load());
-    delay.setFeedbackParam(apvts.getRawParameterValue(kFeedback)->load());
-    delay.setLowCutParam  (apvts.getRawParameterValue(kLowCut)->load());
-    delay.setHighCutParam (apvts.getRawParameterValue(kHighCut)->load());
-    delay.setCrossfeedParam(apvts.getRawParameterValue(kCrossfeed)->load());
-    delay.setMono    (apvts.getRawParameterValue(kMono)  ->load() >= 0.5f);
-    delay.setBypassed(apvts.getRawParameterValue(kBypass)->load() >= 0.5f);
+
+    // --- Tempo sync: when the sync toggle is ON, override the delay time
+    //     parameter with the musical division mapped to the host BPM. When
+    //     the toggle is OFF, the raw "delayTime" parameter is used as-is
+    //     (classic DAW plugin behaviour: sync does nothing until enabled).
+    const bool syncIsEnabled = apvts.getRawParameterValue(kSyncEnabled)->load() >= 0.5f;
+    float resolvedDelayTimeMilliseconds = apvts.getRawParameterValue(kDelayTime)->load();
+
+    if (syncIsEnabled)
+    {
+        const int syncIntervalChoiceIndex = static_cast<int>(apvts.getRawParameterValue(kSyncInterval)->load());
+        const auto syncIntervalEnumValue = static_cast<MarsDSP::Utils::TempoSyncInterval>(syncIntervalChoiceIndex);
+
+        double hostBeatsPerMinute = 120.0;
+        if (auto* hostPlayHead = getPlayHead())
+        {
+            if (const auto hostPositionInfo = hostPlayHead->getPosition())
+            {
+                if (const auto reportedBpm = hostPositionInfo->getBpm())
+                    hostBeatsPerMinute = *reportedBpm;
+            }
+        }
+
+        const double resolvedMillisecondsFromSync = MarsDSP::Utils::convertTempoSyncIntervalToMilliseconds(
+                                                        syncIntervalEnumValue, hostBeatsPerMinute);
+
+        // Clamp into the engine's accepted delay-time range.
+        resolvedDelayTimeMilliseconds = std::clamp(static_cast<float>(resolvedMillisecondsFromSync), 5.0f, 5000.0f);
+    }
+
+    delay.setDelayTimeParam       (resolvedDelayTimeMilliseconds);
+    delay.setMixParam             (apvts.getRawParameterValue(kMix)->load());
+    delay.setFeedbackParam        (apvts.getRawParameterValue(kFeedback)->load());
+    delay.setLowCutParam          (apvts.getRawParameterValue(kLowCut)->load());
+    delay.setHighCutParam         (apvts.getRawParameterValue(kHighCut)->load());
+    delay.setCrossfeedParam       (apvts.getRawParameterValue(kCrossfeed)->load());
+
+    // Diffusion + FDN parameters.
+    delay.setDiffusionAmountParam (apvts.getRawParameterValue(kDiffusionAmount)->load());
+    delay.setDiffusionSizeMsParam (apvts.getRawParameterValue(kDiffusionSizeMs)->load());
+    delay.setFdnAmountParam       (apvts.getRawParameterValue(kFdnAmount)->load());
+    delay.setFdnSizeMsParam       (apvts.getRawParameterValue(kFdnSizeMs)->load());
+    delay.setFdnDecayMsParam      (apvts.getRawParameterValue(kFdnDecayMs)->load());
+    delay.setFdnDampingHzParam    (apvts.getRawParameterValue(kFdnDampingHz)->load());
+    delay.setReverbBypassedParam  (apvts.getRawParameterValue(kReverbBypass)->load() >= 0.5f);
+
+    delay.setMono                 (apvts.getRawParameterValue(kMono)  ->load() >= 0.5f);
+    delay.setBypassed             (apvts.getRawParameterValue(kBypass)->load() >= 0.5f);
 
     // Wrap the host's JUCE AudioBuffer in an AlignedSIMDBufferView so the
     // DelayEngine can consume it through the xsimd-aligned buffer API
     // without going through juce::dsp::AudioBlock.
-    const MarsDSP::DSP::AlignedBuffers::AlignedSIMDBufferView inOutBlockView(
-        buffer.getArrayOfWritePointers(),
-        buffer.getNumChannels(),
-        buffer.getNumSamples());
+    const MarsDSP::DSP::AlignedBuffers::AlignedSIMDBufferView inOutBlockView(buffer.getArrayOfWritePointers(),
+                                                                             buffer.getNumChannels(),
+                                                                             buffer.getNumSamples());
     delay.process(inOutBlockView, numSamples);
 
     // advance dither state
@@ -221,8 +319,7 @@ void ChronosProcessor::getStateInformation(MemoryBlock &destData)
     // Stamp the current state-tree version so a future build can migrate
     // this state forward if the schema changes.
     auto state = apvts.copyState();
-    state.setProperty(Chronos::kStateVersionProperty,
-                      Chronos::kPluginStateVersion, nullptr);
+    state.setProperty(Chronos::kStateVersionProperty, Chronos::kPluginStateVersion, nullptr);
 
     std::unique_ptr xml(state.createXml());
     copyXmlToBinary(*xml, destData);

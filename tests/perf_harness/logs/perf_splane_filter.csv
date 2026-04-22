@@ -1,0 +1,3 @@
+filter,us_per_block,ns_per_sample,speedup_vs_juce
+juce::dsp::IIR HPF+LPF,3.864439,7.547732,1.0
+Chronos s-plane HPF+LPF (bilinear),7.071972,13.812446,0.546444

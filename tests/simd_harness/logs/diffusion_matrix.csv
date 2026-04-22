@@ -1,0 +1,9 @@
+mixer,channel_count,input_norm_sq,output_norm_sq,relative_delta,passed
+Hadamard,2,1.05731,1.05731,6.1527e-08,1
+Hadamard,4,0.952146,0.952146,1.1703e-08,1
+Hadamard,8,3.59158,3.59158,4.81143e-08,1
+Hadamard,16,5.6974,5.6974,8.34716e-08,1
+Householder,2,0.942038,0.942038,1.66127e-07,1
+Householder,4,1.65551,1.65551,0,1
+Householder,8,4.22283,4.22283,8.15539e-09,1
+Householder,16,3.92706,3.92706,2.25479e-08,1
