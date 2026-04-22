@@ -11,9 +11,10 @@
 #include "dsp/filter/splane_curvefit_lowpass.h"
 #include "dsp/buffers/aligned_simd_buffer.h"
 #include "dsp/buffers/aligned_simd_buffer_view.h"
-#include "dsp/diffusion/diffusion_processor.h"
-#include "dsp/diffusion/fdn_stereo_processor.h"
+#include "dsp/diffusion/stereo_processor.h"
 #include "dsp/bypass/crossfade_bypass_engine.h"
+#include "dsp/modulation/ou_drift_process.h"
+#include "dsp/filter/dc_blocker.h"
 
 namespace MarsDSP::DSP {
     template<typename SampleType, int N_BLOCK = 4112>
@@ -84,16 +85,22 @@ namespace MarsDSP::DSP {
             fbLP_L.reset(); fbLP_R.reset();
             fbHP_L.reset(); fbHP_R.reset();
 
-            // Flush the diffusion chain's delay state.
-            stereoDiffusionProcessor.reset();
+            // Flush the unified reverb processor (predelay, input
+            // diffusers, loop allpasses, damping filters, tapped delay
+            // lines, quadrature LFO).
+            stereoChronosReverbProcessor.reset();
 
-            // Flush the FDN's delay state + shelf filters.
-            stereoFdnProcessor.reset();
+            // Flush the DC blocker state. The OU drift process doesn't
+            // need an explicit state reset - prepareBlock() regenerates
+            // noise and the accumulator state is bounded by the mean-
+            // reversion anyway.
+            feedbackWriteDcBlockerLeft.reset();
+            feedbackWriteDcBlockerRight.reset();
 
             // Latch current on/off states in the bypass engines so the
             // first block after reset doesn't trigger a spurious crossfade.
             masterPluginBypassEngine.reset(!bypassed);
-            fdnReverbSendBypassEngine.reset(stereoFdnProcessor.getFdnAmount() > static_cast<SampleType>(0));
+            reverbSendBypassEngine.reset(reverbIsContributingToWetOutput());
 
             // Clear ADAA carry state so first samples start from x=0, F=fastTanhIntegral(0)=0.
             adaaFbL .reset(); adaaFbR .reset();
@@ -116,28 +123,40 @@ namespace MarsDSP::DSP {
             fbLP_L.prepare(sampleRate); fbLP_R.prepare(sampleRate);
             fbHP_L.prepare(sampleRate); fbHP_R.prepare(sampleRate);
 
-            // Prepare the Dattorro-style stereo diffusion processor.
-            // The processor bypasses itself when diffusionAmount is 0, so
-            // this is zero-cost until the user dials the diffusion in.
-            stereoDiffusionProcessor.prepare(sampleRate);
-
-            // Prepare the Householder-mixed FDN processor. Also bypass-when-amount=0.
-            stereoFdnProcessor.prepare(sampleRate);
-
-            // Prepare the crossfade bypass engines. masterPluginBypassEngine
-            // wraps the whole engine for the plugin's Bypass parameter.
-            // fdnReverbSendBypassEngine wraps the post-delay FDN loop so
-            // moving the FDN amount across zero doesn't click.
+            // Prepare the unified post-delay reverb. Handles its own
+            // per-block size / decay / damping smoothing internally,
+            // so the outer engine just pushes parameter targets and
+            // calls processBlockInPlace() once per block.
             const int preparedMaxBlockSize =
                 std::max(static_cast<int>(spec.maximumBlockSize), 1);
+            stereoChronosReverbProcessor.prepare(sampleRate, preparedMaxBlockSize);
+
+            // Prepare the two OU drift processes. ouDelayPositionDrift
+            // gets 2 channels so left/right Lagrange reads can drift
+            // independently; ouReverbModulationDrift only needs 1
+            // channel - we sample it once per block to bias the
+            // reverb's modulation knob.
+            const int preparedMaxBlockSizeForOu = preparedMaxBlockSize;
+            ouDelayPositionDrift   .prepare(sampleRate, preparedMaxBlockSizeForOu, 2);
+            ouReverbModulationDrift.prepare(sampleRate, preparedMaxBlockSizeForOu, 1);
+
+            // Flush the DC blockers that live on the feedback write-back.
+            feedbackWriteDcBlockerLeft.reset();
+            feedbackWriteDcBlockerRight.reset();
+
+            // Prepare the crossfade bypass engines.
+            // masterPluginBypassEngine wraps the whole engine for the
+            // plugin's Bypass parameter. reverbSendBypassEngine wraps
+            // the post-delay reverb so toggling Reverb Bypass (or
+            // dialling the reverb mix to zero) produces a click-free
+            // transition.
             const int preparedNumberOfChannels =
                 std::max(static_cast<int>(spec.numChannels), 2);
             masterPluginBypassEngine.prepare(
                 preparedMaxBlockSize, preparedNumberOfChannels, !bypassed);
-            fdnReverbSendBypassEngine.prepare(
+            reverbSendBypassEngine.prepare(
                 preparedMaxBlockSize, preparedNumberOfChannels,
-                stereoFdnProcessor.getFdnAmount()
-                    > static_cast<SampleType>(0));
+                reverbIsContributingToWetOutput());
 
             // Initial filter coefficients.
             updateFilterCoeffs();
@@ -193,10 +212,88 @@ namespace MarsDSP::DSP {
                 lastHighCutHz = highCutHz;
             }
 
-            const float delayMsOld = lagDelayMs.getValue();
+            float delayMsOld = lagDelayMs.getValue();
             lagDelayMs.newValue(std::clamp(delayTime, minDelayTime, maxDelayTime));
             lagDelayMs.processN(numSamples);
-            const float delayMsNew = lagDelayMs.getValue();
+            float delayMsNew = lagDelayMs.getValue();
+
+            // --- Ornstein-Uhlenbeck drift ---
+            // Two drift streams, both gated by the same amount / bypass
+            // knobs so the user's single OU control drives both the
+            // main-tap position AND the reverb's tap modulation knob.
+            //
+            // prepareBlock regenerates the noise and sets mean/damping
+            // for the block. When bypassed we still call prepareBlock
+            // on both so the state machine stays consistent, just with
+            // amount = 0 so process(n, ch) returns the mean (==0).
+            const float ouAmountThisBlock = ouBypassed ? 0.0f : ouDriftAmountCached;
+            ouDelayPositionDrift   .prepareBlock(ouAmountThisBlock, numSamples);
+            ouReverbModulationDrift.prepareBlock(ouAmountThisBlock, numSamples);
+
+            // Advance the OU state per sample for this block and sample
+            // each drift stream at useful moments:
+            //   * delay drift is sampled at block start + block end so
+            //     its curve drives posOld / posNew of the main tap's
+            //     Lagrange ramp with per-sample granularity preserved.
+            //   * reverb-modulation drift is sampled once at block end
+            //     and added to the user's reverb-modulation knob before
+            //     it is pushed to the ChronosReverb processor. The
+            //     processor's own block-rate smoother then ramps between
+            //     blocks so the result stays click-free.
+            //
+            // Scale factors map the OU output (unit-amount stdev ~= 0.066):
+            //   delay drift        -> samples of buffer offset
+            //                         (stdev ~= 0.066 * 1200 = 80 samples
+            //                          ~ 1.7 ms @ 48 kHz).
+            //   reverb mod drift   -> additive normalised wobble on the
+            //                         reverb's "modulation" knob
+            //                         (stdev ~= 0.066 * 0.5 = 3.3 percent
+            //                          of the full 0..1 range; clamped
+            //                          into [0, 1] before being pushed).
+            constexpr float kDelayDriftSampleScale      = 1200.0f;
+            constexpr float kReverbModulationDriftScale = 0.5f;
+
+            float ouDelayDriftAtBlockStartSamples    = 0.0f;
+            float ouDelayDriftAtBlockEndSamples      = 0.0f;
+            float ouReverbModulationDriftAtBlockEnd  = 0.0f;
+            for (int ouAdvanceSampleIndex = 0;
+                 ouAdvanceSampleIndex < numSamples;
+                 ++ouAdvanceSampleIndex)
+            {
+                const float perSampleDelayDrift =
+                    ouDelayPositionDrift.process(ouAdvanceSampleIndex, 0);
+                if (ouAdvanceSampleIndex == 0)
+                    ouDelayDriftAtBlockStartSamples =
+                        perSampleDelayDrift * kDelayDriftSampleScale;
+                if (ouAdvanceSampleIndex == numSamples - 1)
+                    ouDelayDriftAtBlockEndSamples =
+                        perSampleDelayDrift * kDelayDriftSampleScale;
+
+                const float perSampleReverbModulationDrift =
+                    ouReverbModulationDrift.process(ouAdvanceSampleIndex, 0);
+                if (ouAdvanceSampleIndex == numSamples - 1)
+                    ouReverbModulationDriftAtBlockEnd =
+                        perSampleReverbModulationDrift * kReverbModulationDriftScale;
+            }
+
+            // Apply delay drift to posOld / posNew in samples. The Lagrange
+            // interpolation smoothly transitions between the two across
+            // the block so the per-sample-granularity OU curve survives.
+            // We add in samples here rather than ms so the scale is tied
+            // directly to the audio buffer.
+            const float sampleIntervalMs = static_cast<float>(1000.0 / sampleRate);
+            delayMsOld += ouDelayDriftAtBlockStartSamples * sampleIntervalMs;
+            delayMsNew += ouDelayDriftAtBlockEndSamples   * sampleIntervalMs;
+
+            // Push the OU-biased reverb modulation knob into the
+            // ChronosReverb processor for this block. The processor's
+            // internal block-rate smoother ramps from the previous
+            // block's value to this one, so block-to-block OU jumps
+            // are smoothed out across the audio rate.
+            const float biasedReverbModulationNormalised = std::clamp(
+                cachedReverbModulationNormalised + ouReverbModulationDriftAtBlockEnd,
+                0.0f, 1.0f);
+            stereoChronosReverbProcessor.setModulation(biasedReverbModulationNormalised);
 
             const auto numSamplesSize = static_cast<size_t>(numSamples);
             assert(numSamplesSize <= N_BLOCK - 8);
@@ -279,10 +376,22 @@ namespace MarsDSP::DSP {
             const auto vInvN    = SIMD_MM(set1_ps)(invN);
             const auto vLaneIdx = SIMD_MM(setr_ps)(0.0f, 1.0f, 2.0f, 3.0f);
 
-            // duck gain update uses the end-of-block position as "current".
-            const SampleType modspeed = std::abs(posNew - prevPos);
-            prevPos = posNew;
+            // duck gain update uses the end-of-block position as "current",
+            // but measures modspeed from the USER-DRIVEN (undrifted) delay
+            // position only. OU drift is designed to produce an audible
+            // chorus-style pitch wobble on the taps; if we folded its
+            // sample-to-sample delta into modspeed, updateDuckGain() would
+            // hit its 0.08 floor immediately and attenuate the taps by
+            // ~22 dB whenever drift is active (which is exactly what the
+            // user was hearing as "taps getting lost"). Ducking now only
+            // responds to user knob / host-automation sweeps of the delay
+            // time, so the OU drift itself survives at full amplitude.
+            const SampleType userDrivenPosAtBlockEnd = static_cast<SampleType>(sampleRate * (lagDelayMs.getValue() * 0.001));
+            const SampleType modspeed = std::abs(userDrivenPosAtBlockEnd - prevPos);
+
+            prevPos = userDrivenPosAtBlockEnd;
             updateDuckGain(modspeed);
+
             const auto vDuckGain = SIMD_MM(set1_ps)(duckGain);
 
             if (isMono()) // mono
@@ -409,6 +518,14 @@ namespace MarsDSP::DSP {
                     adaaFbL .setCarry(cxFb,  cfFb);
                     adaaOutL.setCarry(cxOut, cfOut);
                 }
+
+                // --- Pass 3.5: DC blocker on the feedback write-back ---
+                // Drain any accumulated DC from the ADAA softclip + OU
+                // drift chain before the samples get pushed into the
+                // circular buffer (where a long tail could otherwise
+                // amplify it for seconds).
+                for (size_t k = 0; k < numSamplesSize; ++k)
+                    wL[k] = feedbackWriteDcBlockerLeft.processSingleSample(wL[k]);
 
                 // Block write & Mirror
                 const bool wrapped = (writeIdxL + static_cast<int>(numSamplesSize)) > kBufSize;
@@ -537,11 +654,8 @@ namespace MarsDSP::DSP {
 
                 // ---------------- PASS 2: scalar filter + crossfeed blend ----------
                 // Each sample: HP → LP per channel, then blend the two filtered
-                // signals with the smoothed crossfeed amount to form the feedback
-                // input. This is the ping-pong path. After the crossfeed mix,
-                // each sample is driven through the Dattorro-style stereo
-                // diffusion processor; when diffusionAmount is 0 this call is
-                // branch-free pass-through so existing behaviour is preserved.
+                // signals with the smoothed crossfeed amount to form the
+                // feedback input. This is the ping-pong path.
                 for (size_t k = 0; k < numSamplesSize; ++k)
                 {
                     const float filtL = fbLP_L.processSample(fbHP_L.processSample(dsL[k]));
@@ -549,24 +663,14 @@ namespace MarsDSP::DSP {
                     const float cf    = lCrossfeed.at(static_cast<int>(k));
                     const float cfInv = 1.0f - cf;
 
-                    float feedbackPathLeft  = cfInv * filtL + cf * filtR;
-                    float feedbackPathRight = cfInv * filtR + cf * filtL;
+                    const float feedbackPathLeft  = cfInv * filtL + cf * filtR;
+                    const float feedbackPathRight = cfInv * filtR + cf * filtL;
 
-                    // Diffusion lives in the feedback loop (safe: it is
-                    // built from orthogonal mixers + passive delays and is
-                    // always bounded by |H| <= 1 per stage). The whole
-                    // diffusion stage is gated by the Reverb Bypass flag.
-                    if (!reverbChainBypassed)
-                        stereoDiffusionProcessor.processSingleStereoPairInPlace(
-                            feedbackPathLeft, feedbackPathRight);
-
-                    // NOTE: the FDN is NOT applied here. Putting an FDN
-                    // inside another feedback loop produces compound loop
-                    // gains > 1 at non-DC frequencies for long T60 and
-                    // feeds back into infinity. The FDN is applied as a
-                    // post-delay reverb send on the final output buffer
-                    // instead (see the block after the circular-buffer
-                    // writes below).
+                    // NOTE: no reverb in the feedback path. The unified
+                    // ChronosReverb processor sits strictly downstream
+                    // of the delay's feedback loop (see the post-delay
+                    // send block below) so its internal feedback loops
+                    // never compound with the delay's feedback gain.
 
                     dsL[k] = feedbackPathLeft;
                     dsR[k] = feedbackPathRight;
@@ -648,6 +752,16 @@ namespace MarsDSP::DSP {
                     adaaOutR.setCarry(cxOutR, cfOutR);
                 }
 
+                // --- Pass 3.5: DC blocker on the feedback write-back ---
+                // Drain any accumulated DC from the ADAA softclip + OU
+                // drift chain before the samples get pushed into the
+                // circular buffer. One blocker per channel.
+                for (size_t k = 0; k < numSamplesSize; ++k)
+                {
+                    wL[k] = feedbackWriteDcBlockerLeft .processSingleSample(wL[k]);
+                    wR[k] = feedbackWriteDcBlockerRight.processSingleSample(wR[k]);
+                }
+
                 // Block write & Mirror L
                 if (ch0 != nullptr)
                 {
@@ -694,47 +808,34 @@ namespace MarsDSP::DSP {
                     }
                 }
 
-                // ---------------- POST-DELAY FDN REVERB SEND ----------------
-                // Apply the Householder-mixed FDN strictly downstream of the
-                // delay's feedback loop, so its internal loop gain never
-                // compounds with the delay's feedback gain. Safe because the
-                // FDN's output only reaches the listener - it is NEVER
-                // written back to the delay's circular buffer. Wrapped in
-                // its own CrossfadeBypassEngine instance so moving the FDN
-                // amount across zero produces a click-free transition.
+                // ---------------- POST-DELAY REVERB SEND --------------------
+                // Run the unified ChronosReverb processor strictly
+                // downstream of the delay's feedback loop, so its
+                // internal loop gain never compounds with the delay's
+                // feedback gain. Its output only reaches the listener -
+                // it is NEVER written back to the delay's circular
+                // buffer. Wrapped in reverbSendBypassEngine so flipping
+                // Reverb Bypass (or dialling the reverb mix to 0)
+                // produces a click-free transition.
                 if (ch0 != nullptr && ch1 != nullptr)
                 {
-                    // Single reverb-bypass gate: when the user flips the
-                    // Reverb Bypass button we want the FDN to fade out
-                    // click-free via its bypass engine, so fold the flag
-                    // into the 'is active' condition here rather than
-                    // branching around the bypass engine.
-                    const bool fdnReverbIsActiveThisBlock =
-                        !reverbChainBypassed
-                        && stereoFdnProcessor.getFdnAmount()
-                            > static_cast<SampleType>(0);
+                    const bool reverbIsActiveThisBlock =
+                        reverbIsContributingToWetOutput();
 
-                    const bool fdnReverbShouldRunThisBlock =
-                        fdnReverbSendBypassEngine
+                    const bool reverbShouldRunThisBlock =
+                        reverbSendBypassEngine
                             .captureDryInputAndDecideWhetherToProcess(
-                                block, fdnReverbIsActiveThisBlock);
+                                block, reverbIsActiveThisBlock);
 
-                    if (fdnReverbShouldRunThisBlock)
+                    if (reverbShouldRunThisBlock)
                     {
-                        for (size_t k = 0; k < numSamplesSize; ++k)
-                        {
-                            float reverbSendLeft  = ch0[k];
-                            float reverbSendRight = ch1[k];
-                            stereoFdnProcessor.processSingleStereoPairInPlace(
-                                reverbSendLeft, reverbSendRight);
-                            ch0[k] = reverbSendLeft;
-                            ch1[k] = reverbSendRight;
-                        }
+                        stereoChronosReverbProcessor.processBlockInPlace(
+                            ch0, ch1, static_cast<int>(numSamplesSize));
                     }
 
-                    fdnReverbSendBypassEngine
+                    reverbSendBypassEngine
                         .crossfadeWithCapturedDryInputIfTransitioning(
-                            block, fdnReverbIsActiveThisBlock);
+                            block, reverbIsActiveThisBlock);
                 }
             }
 
@@ -792,58 +893,108 @@ namespace MarsDSP::DSP {
             crossfeed = std::clamp(value, 0.0f, 1.0f);
         }
 
-        // Diffusion amount: 0 = bypassed (default), 1 = full wet through
-        // the Dattorro-style diffusion chain. Applied inside the feedback
-        // loop so it shapes the repeats only.
-        void setDiffusionAmountParam(const float normalisedAmount) noexcept
+        // ------------------------------------------------------------------
+        //  Unified ChronosReverb knobs. All of these just forward to the
+        //  embedded processor; the processor handles its own smoothing,
+        //  clamping and delay-length recalculation internally.
+        // ------------------------------------------------------------------
+
+        // Reverb mix (0..1). The reverb is applied as a post-delay send,
+        // so this knob also drives reverbSendBypassEngine: a value of 0
+        // takes the reverb cleanly out of the signal path via a
+        // one-block crossfade. We cache the value here for the bypass
+        // gate below.
+        void setReverbMixParam(const float normalisedAmount) noexcept
         {
-            stereoDiffusionProcessor.setDiffusionAmount(
+            cachedReverbMixNormalised = std::clamp(normalisedAmount, 0.0f, 1.0f);
+            stereoChronosReverbProcessor.setMix(cachedReverbMixNormalised);
+        }
+
+        // Reverb room size as a bipolar log2 multiplier. 0 = default
+        // size, +1 = 2x, -1 = 0.5x. The ChronosReverb processor
+        // recomputes every internal delay length from this value every
+        // block so updates are seamless.
+        void setReverbRoomSizeParam(const float bipolarLog2Size) noexcept
+        {
+            stereoChronosReverbProcessor.setRoomSize(
+                std::clamp(bipolarLog2Size, -2.0f, 2.0f));
+        }
+
+        // Reverb decay time as log2-seconds: -4..6 corresponds to
+        // ~62.5 ms .. 64 s of T60.
+        void setReverbDecayTimeParam(const float log2Seconds) noexcept
+        {
+            stereoChronosReverbProcessor.setDecayTime(
+                std::clamp(log2Seconds, -4.0f, 6.0f));
+        }
+
+        // Reverb predelay as log2-seconds: -8..1 corresponds to
+        // ~4 ms .. 2 s of predelay.
+        void setReverbPredelayParam(const float log2Seconds) noexcept
+        {
+            stereoChronosReverbProcessor.setPredelayTime(
+                std::clamp(log2Seconds, -8.0f, 1.0f));
+        }
+
+        // Reverb input-diffuser coefficient (0..1). The processor scales
+        // this internally by 0.7 to keep the input allpasses stable.
+        void setReverbDiffusionParam(const float normalisedAmount) noexcept
+        {
+            stereoChronosReverbProcessor.setDiffusion(
                 std::clamp(normalisedAmount, 0.0f, 1.0f));
         }
 
-        // Diffusion size in milliseconds: the overall diffusion window
-        // that the chain spreads its per-stage delays across.
-        void setDiffusionSizeMsParam(const float milliseconds) noexcept
+        // Reverb loop-allpass coefficient / buildup (0..1).
+        void setReverbBuildupParam(const float normalisedAmount) noexcept
         {
-            // Clamp high enough to be audible but well below the ring size
-            // of the diffusion delay bank (kDefaultMaxDiffusionDelaySamplesPerChannel).
-            stereoDiffusionProcessor.setDiffusionSizeInMilliseconds(
-                std::clamp(milliseconds, 1.0f, 200.0f));
-        }
-
-        // FDN amount: 0 = bypass, 1 = full Lexicon-style wet.
-        void setFdnAmountParam(const float normalisedAmount) noexcept
-        {
-            stereoFdnProcessor.setFdnAmount(
+            stereoChronosReverbProcessor.setBuildup(
                 std::clamp(normalisedAmount, 0.0f, 1.0f));
         }
 
-        // FDN size = longest per-channel delay in the network (ms).
-        void setFdnSizeMsParam(const float milliseconds) noexcept
+        // Reverb tap-modulation depth (0..1). Cached here so the OU
+        // drift can add its per-block wobble before process() pushes
+        // the combined value to the processor.
+        void setReverbModulationParam(const float normalisedAmount) noexcept
         {
-            stereoFdnProcessor.setFdnSizeInMilliseconds(
-                std::clamp(milliseconds, 10.0f, 200.0f));
+            cachedReverbModulationNormalised = std::clamp(normalisedAmount, 0.0f, 1.0f);
         }
 
-        // FDN decay (T60 low-frequency) in ms. High-frequency T60 is
-        // derived internally as 0.6 * this value.
-        void setFdnDecayMsParam(const float milliseconds) noexcept
+        // Reverb HF damping (0..1). The processor scales by 0.8 before
+        // using it as the lowpass memory coefficient.
+        void setReverbHighFrequencyDampingParam(const float normalisedAmount) noexcept
         {
-            stereoFdnProcessor.setFdnDecayInMilliseconds(
-                std::clamp(milliseconds, 100.0f, 15000.0f));
+            stereoChronosReverbProcessor.setHighFrequencyDamping(
+                std::clamp(normalisedAmount, 0.0f, 1.0f));
         }
 
-        // FDN damping shelf crossover frequency in Hz.
-        void setFdnDampingHzParam(const float crossoverHz) noexcept
+        // Reverb LF damping (0..1). The processor scales by 0.2 before
+        // using it as the highpass memory coefficient.
+        void setReverbLowFrequencyDampingParam(const float normalisedAmount) noexcept
         {
-            stereoFdnProcessor.setFdnDampingCrossoverInHz(
-                std::clamp(crossoverHz, 200.0f, 18000.0f));
+            stereoChronosReverbProcessor.setLowFrequencyDamping(
+                std::clamp(normalisedAmount, 0.0f, 1.0f));
         }
 
-        // Master bypass for the whole reverb chain (diffusion + FDN). When
-        // true both processors are taken out of the signal path; the main
-        // delay keeps running normally. Transitions are handled click-free
-        // by the diffusion / FDN bypass engines.
+        // Ornstein-Uhlenbeck drift intensity (0..1). setOuAmountParam
+        // caches the knob value; both OU processes (delay-position and
+        // reverb-modulation) are re-seeded via prepareBlock() each
+        // processBlock() call using
+        //     (ouBypassed ? 0.0 : ouDriftAmountCached).
+        void setOuAmountParam(const float normalisedAmount) noexcept
+        {
+            ouDriftAmountCached = std::clamp(normalisedAmount, 0.0f, 1.0f);
+        }
+
+        // Toggle the OU drift entirely off without losing the user's
+        // amount knob position.
+        void setOuBypassedParam(const bool shouldBypassOu) noexcept
+        {
+            ouBypassed = shouldBypassOu;
+        }
+
+        // Master bypass for the reverb send. When true the ChronosReverb
+        // processor is taken out of the signal path via a click-free
+        // crossfade; the main delay keeps running normally.
         void setReverbBypassedParam(const bool shouldBypassReverb) noexcept
         {
             reverbChainBypassed = shouldBypassReverb;
@@ -896,7 +1047,14 @@ namespace MarsDSP::DSP {
             const float fb           = std::clamp(std::max(feedbackL, feedbackR), 0.0f, 0.9999f);
 
             constexpr float silenceDb  = 0.001f;  // -60 dB
-            constexpr int   kMargin    = 2048;    // s-plane filter ring-down + smoothers
+            // Margin budget that has to cover every component's own
+            // post-silence ring-down, as measured at the engine output:
+            //   - s-plane HP at 20 Hz (Butterworth 4th order): ~2400 smp
+            //   - DC blocker (pole 0.995): ~1250 smp
+            //   - lagDelayMs + APVTS smoothers:               ~ 512 smp
+            // Rounded up with a safety factor so ringoutSamples() stays a
+            // reliable "host can suspend the plugin" signal.
+            constexpr int   kMargin    = 4096;
             constexpr int   kMaxTail   = 1 << 20; // clamp (~21.8 s @ 48 kHz)
 
             if (fb < 1.0e-4f) return std::min(static_cast<int>(delaySamples) + kMargin, kMaxTail);
@@ -1016,8 +1174,8 @@ namespace MarsDSP::DSP {
             T lp{0}, lpinv{0};
         };
 
-        // Ported from sst-basic-blocks dsp/Lag.h
-        // SurgeLag: legacy-named alias with newValue/instantize aliases.
+        // OnePoleLag with legacy newValue / instantize / startValue alias
+        // names so older call sites continue to compile.
         template <typename T, bool first_run_checks = true>
         struct SurgeLag : OnePoleLag<T, first_run_checks>
         {
@@ -1044,6 +1202,20 @@ namespace MarsDSP::DSP {
         SampleType softClip(SampleType x) noexcept
         {
             return fasterTanhBounded(x);
+        }
+
+        // ------------------------------------------------------------------
+        //  reverbIsContributingToWetOutput: single gate used by
+        //  reverbSendBypassEngine. The reverb is "active this block" iff:
+        //    - the user hasn't flipped Reverb Bypass on, AND
+        //    - the cached reverb mix is > 0 (dialing mix to zero should
+        //      fully take the reverb out of the signal path so downstream
+        //      CPU savings can be realised).
+        // ------------------------------------------------------------------
+        [[nodiscard]] bool reverbIsContributingToWetOutput() const noexcept
+        {
+            return !reverbChainBypassed
+                 && cachedReverbMixNormalised > static_cast<float>(0);
         }
 
         // Circular delay buffer. 2 channels x (kBufSize + kTail) samples,
@@ -1087,11 +1259,32 @@ namespace MarsDSP::DSP {
         SPlaneCurveFit::SPlaneCurveFitLowpassFilter  fbLP_L, fbLP_R;
         SPlaneCurveFit::SPlaneCurveFitHighpassFilter fbHP_L, fbHP_R;
 
-        Diffusion::DiffusionProcessor<SampleType> stereoDiffusionProcessor{};
-        Diffusion::FdnStereoProcessor<SampleType> stereoFdnProcessor{};
+        // Unified post-delay reverb processor: predelay -> 4 input
+        // allpass diffusers -> 4 loop blocks, each with their own
+        // allpasses + shelf damping + LFO-modulated tapped delay.
+        ChronosReverb::ChronosReverbStereoProcessor<SampleType> stereoChronosReverbProcessor{};
 
         Bypass::CrossfadeBypassEngine<SampleType> masterPluginBypassEngine{};
-        Bypass::CrossfadeBypassEngine<SampleType> fdnReverbSendBypassEngine{};
+        Bypass::CrossfadeBypassEngine<SampleType> reverbSendBypassEngine{};
+
+        // Two independent Ornstein-Uhlenbeck drift processes:
+        //   ouDelayPositionDrift       - modulates the main circular
+        //                                buffer read position with slow
+        //                                tape-style wow/flutter.
+        //   ouReverbModulationDrift    - adds an extra per-block wobble
+        //                                to the ChronosReverb's own
+        //                                tap-modulation knob so the
+        //                                reverb tail also gets OU
+        //                                character when the user
+        //                                engages the OU processor.
+        Modulation::OuDriftProcess ouDelayPositionDrift;
+        Modulation::OuDriftProcess ouReverbModulationDrift;
+
+        // Per-channel DC blockers for the feedback write-back path. Drain
+        // any slow DC the ADAA softclipper + FDN + OU drift chain might
+        // introduce before it can accumulate in the circular buffer.
+        Filters::DcBlocker<SampleType> feedbackWriteDcBlockerLeft{};
+        Filters::DcBlocker<SampleType> feedbackWriteDcBlockerRight{};
 
         // Filter + crossfeed parameter targets. lowCutHz / highCutHz trigger
         // coefficient recomputation at the top of process() when they change.
@@ -1120,6 +1313,25 @@ namespace MarsDSP::DSP {
         // the diffusion call in Pass-2 is skipped and the FDN bypass
         // engine transitions the FDN out. The delay itself is unaffected.
         bool reverbChainBypassed = false;
+
+        // OU drift state. The engine's internal noiseAmplitudeFactor is
+        // derived from (ouBypassed ? 0 : ouDriftAmountCached) each time
+        // either setter is called. When engaged, OU drift modulates
+        // BOTH the main tap read position AND the ChronosReverb
+        // processor's tap-modulation knob so the reverb tail also
+        // picks up the tape-wow character.
+        float ouDriftAmountCached = 0.0f;
+        bool  ouBypassed          = true;
+
+        // User's reverb mix knob, cached so the reverb-send bypass gate
+        // below can crossfade-out click-free whenever the user drops
+        // the mix to zero.
+        float cachedReverbMixNormalised = 0.33f;
+
+        // User's reverb tap-modulation knob, cached so process() can
+        // add the per-block OU drift on top of it before pushing the
+        // combined target value into the ChronosReverb processor.
+        float cachedReverbModulationNormalised = 0.5f;
     };
 }
 #endif

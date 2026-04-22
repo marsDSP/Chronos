@@ -42,20 +42,34 @@ namespace Chronos
         inline constexpr auto kMono             = "mono";
         inline constexpr auto kBypass           = "bypass";
 
-        // Diffusion (Dattorro-style 8-channel chain in the feedback path).
-        inline constexpr auto kDiffusionAmount  = "diffusionAmount";
-        inline constexpr auto kDiffusionSizeMs  = "diffusionSizeMs";
+        // ChronosReverb - unified post-delay reverb (predelay + 4 input
+        // diffusers + 4 loop blocks with allpasses, damping, tapped
+        // modulated delay). Replaces the old split Diffusion + FDN pair;
+        // every knob below forwards to DelayEngine::setReverb*Param
+        // which in turn drives ChronosReverbStereoProcessor.
+        inline constexpr auto kReverbMix                  = "reverbMix";
+        inline constexpr auto kReverbRoomSize             = "reverbRoomSize";
+        inline constexpr auto kReverbDecayTime            = "reverbDecayTime";
+        inline constexpr auto kReverbPredelay             = "reverbPredelay";
+        inline constexpr auto kReverbDiffusion            = "reverbDiffusion";
+        inline constexpr auto kReverbBuildup              = "reverbBuildup";
+        inline constexpr auto kReverbModulation           = "reverbModulation";
+        inline constexpr auto kReverbHighFrequencyDamping = "reverbHighFrequencyDamping";
+        inline constexpr auto kReverbLowFrequencyDamping  = "reverbLowFrequencyDamping";
 
-        // Feedback delay network (Lexicon-style late tail).
-        inline constexpr auto kFdnAmount        = "fdnAmount";
-        inline constexpr auto kFdnSizeMs        = "fdnSizeMs";
-        inline constexpr auto kFdnDecayMs       = "fdnDecayMs";
-        inline constexpr auto kFdnDampingHz     = "fdnDampingHz";
-
-        // Master bypass for the full reverb chain (diffusion + FDN).
-        // When on, both processors are taken out of the signal flow with a
-        // click-free crossfade; the delay itself keeps running normally.
+        // Master bypass for the reverb send. When on, the reverb is
+        // taken out of the signal flow via a click-free crossfade; the
+        // delay itself keeps running normally.
         inline constexpr auto kReverbBypass     = "reverbBypass";
+
+        // Ornstein-Uhlenbeck mean-reversion drift. Applies slow tape-
+        // style wow/flutter to the main delay read position AND to the
+        // reverb's internal tap-modulation knob, so both the delay taps
+        // and the reverb tail pick up OU character when engaged.
+        // Bypass toggle is separate from the amount so users can leave a
+        // preferred amount dialled in and just toggle the modulation.
+        inline constexpr auto kOuAmount         = "ouAmount";
+        inline constexpr auto kOuBypass         = "ouBypass";
 
         // Tempo-sync (off by default; when on, delay time snaps to
         // sync interval at the host's BPM).

@@ -113,20 +113,21 @@ add_library(SharedCode INTERFACE
         source/utils/helpers/conversion.h
         source/utils/helpers/overload.h
         source/dsp/engine/delay/delay_engine.h
-        source/utils/helpers/temposync.h
         source/dsp/math/fastermath.h
         source/dsp/math/simd/simd_config.h
         source/dsp/engine/delay/delay_interpolator.h
-        source/dsp/diffusion/orthogonal_mixing_matrices.h
-        source/dsp/diffusion/multichannel_static_delay_bank.h
-        source/dsp/diffusion/diffusion_stage.h
-        source/dsp/diffusion/diffusion_chain.h
-        source/dsp/diffusion/stereo_multichannel_bridge.h
-        source/dsp/diffusion/diffusion_processor.h
-        source/dsp/diffusion/feedback_shelf_filter.h
-        source/dsp/diffusion/feedback_delay_network.h
-        source/dsp/diffusion/fdn_stereo_processor.h
+        source/dsp/diffusion/schroeder_allpass.h
+        source/dsp/diffusion/damping_filter.h
+        source/dsp/diffusion/predelay_buffer.h
+        source/dsp/diffusion/quadrature_oscillator.h
+        source/dsp/diffusion/blockrate_smoother.h
+        source/dsp/diffusion/modulated_delayline.h
+        source/dsp/diffusion/stereo_processor.h
         source/dsp/bypass/crossfade_bypass_engine.h
+        source/dsp/buffers/static_delay_buffer.h
+        source/dsp/modulation/noise_generator_engine.h
+        source/dsp/modulation/ou_drift_process.h
+        source/dsp/filter/dc_blocker.h
         source/utils/helpers/tempo_sync.h)
 
 # Set compile features for SharedCode

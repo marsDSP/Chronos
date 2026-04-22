@@ -6,15 +6,14 @@
 // ============================================================================
 //  splane_curvefit_lowpass.h
 // ----------------------------------------------------------------------------
-//  4th-order curve-fit lowpass filter. Uses a Butterworth analog prototype
-//  as its default "target curve". Replace buildAnalogPrototype() with
-//  fitted coefficients if you want a measured analog response (e.g., the
-//  BBD output filter's partial-fraction decomposition ported from
-//  MemoryBoy's brigade_filterbank.h -> OutputFilterBank).
+//  4th-order curve-fit lowpass filter. Uses a Butterworth analog
+//  prototype as its default "target curve" - replace
+//  buildAnalogPrototype() with fitted coefficients to model a measured
+//  analog response.
 //
-//  Used on the feedback path of the delay engine in place of the old RBJ
-//  biquad lowpass; the feedback-path LPF softens the high-frequency
-//  content of successive repeats and avoids ultrasonic build-up.
+//  Used on the feedback path of the delay engine: the feedback-path LPF
+//  softens the high-frequency content of successive repeats and avoids
+//  ultrasonic build-up.
 // ============================================================================
 
 #include "splane_curvefit_core.h"

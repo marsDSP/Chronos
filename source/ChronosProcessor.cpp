@@ -122,43 +122,69 @@ AudioProcessorValueTreeState::ParameterLayout ChronosProcessor::createParameterL
     layout.add(std::make_unique<AudioParameterBool>(
         ParameterID(kBypass, 1), "Bypass", false));
 
-    // ---- Diffusion chain ----------------------------------------------
+    // ---- ChronosReverb (unified post-delay reverb) --------------------
+    // All of these map one-to-one onto DelayEngine::setReverb*Param,
+    // which in turn drives the embedded ChronosReverbStereoProcessor.
+    // Defaults are picked so the reverb is musically useful out of the
+    // box (medium hall, low HF damping, moderate modulation) while the
+    // mix defaults to 0 (post-delay send off until the user dials in).
     layout.add(std::make_unique<AudioParameterFloat>(
-        ParameterID(kDiffusionAmount, 1), "Diffusion Amount",
+        ParameterID(kReverbMix, 1), "Reverb Mix",
         NormalisableRange(0.0f, 1.0f, 0.01f), 0.0f,
         AudioParameterFloatAttributes().withLabel("%")));
 
     layout.add(std::make_unique<AudioParameterFloat>(
-        ParameterID(kDiffusionSizeMs, 1), "Diffusion Size",
-        NormalisableRange(1.0f, 200.0f, 0.1f, 0.5f), 50.0f,
-        AudioParameterFloatAttributes().withLabel("ms")));
+        ParameterID(kReverbRoomSize, 1), "Reverb Room Size",
+        NormalisableRange(-2.0f, 2.0f, 0.01f), 0.0f));
 
-    // ---- Feedback delay network (Lexicon-style late tail) ------------
     layout.add(std::make_unique<AudioParameterFloat>(
-        ParameterID(kFdnAmount, 1), "FDN Amount",
-        NormalisableRange(0.0f, 1.0f, 0.01f), 0.0f,
+        ParameterID(kReverbDecayTime, 1), "Reverb Decay Time",
+        NormalisableRange(-4.0f, 6.0f, 0.01f), 0.75f));
+
+    layout.add(std::make_unique<AudioParameterFloat>(
+        ParameterID(kReverbPredelay, 1), "Reverb Predelay",
+        NormalisableRange(-8.0f, 1.0f, 0.01f), -4.0f));
+
+    layout.add(std::make_unique<AudioParameterFloat>(
+        ParameterID(kReverbDiffusion, 1), "Reverb Diffusion",
+        NormalisableRange(0.0f, 1.0f, 0.01f), 1.0f,
         AudioParameterFloatAttributes().withLabel("%")));
 
     layout.add(std::make_unique<AudioParameterFloat>(
-        ParameterID(kFdnSizeMs, 1), "FDN Size",
-        NormalisableRange(10.0f, 200.0f, 0.1f, 0.5f), 80.0f,
-        AudioParameterFloatAttributes().withLabel("ms")));
+        ParameterID(kReverbBuildup, 1), "Reverb Buildup",
+        NormalisableRange(0.0f, 1.0f, 0.01f), 1.0f,
+        AudioParameterFloatAttributes().withLabel("%")));
 
     layout.add(std::make_unique<AudioParameterFloat>(
-        ParameterID(kFdnDecayMs, 1), "FDN Decay",
-        NormalisableRange(100.0f, 15000.0f, 1.0f, 0.35f), 1500.0f,
-        AudioParameterFloatAttributes().withLabel("ms")));
+        ParameterID(kReverbModulation, 1), "Reverb Modulation",
+        NormalisableRange(0.0f, 1.0f, 0.01f), 0.5f,
+        AudioParameterFloatAttributes().withLabel("%")));
 
     layout.add(std::make_unique<AudioParameterFloat>(
-        ParameterID(kFdnDampingHz, 1), "FDN Damping",
-        NormalisableRange(200.0f, 18000.0f, 1.0f, 0.3f), 2500.0f,
-        AudioParameterFloatAttributes().withLabel("Hz")));
+        ParameterID(kReverbHighFrequencyDamping, 1), "Reverb HF Damping",
+        NormalisableRange(0.0f, 1.0f, 0.01f), 0.2f,
+        AudioParameterFloatAttributes().withLabel("%")));
 
-    // Single toggle that bypasses the entire reverb chain (diffusion + FDN).
-    // Off by default so existing sessions behave identically. Transitions
-    // are handled click-free by the engine's bypass helpers.
+    layout.add(std::make_unique<AudioParameterFloat>(
+        ParameterID(kReverbLowFrequencyDamping, 1), "Reverb LF Damping",
+        NormalisableRange(0.0f, 1.0f, 0.01f), 0.2f,
+        AudioParameterFloatAttributes().withLabel("%")));
+
+    // Single toggle that bypasses the reverb send cleanly via the
+    // engine's CrossfadeBypassEngine. Off by default.
     layout.add(std::make_unique<AudioParameterBool>(
         ParameterID(kReverbBypass, 1), "Reverb Bypass", false));
+
+    // ---- Ornstein-Uhlenbeck drift -------------------------------------
+    // Amount scales the drift intensity; the Bypass toggle zeroes the
+    // engine's internal drift without losing the amount knob's state.
+    layout.add(std::make_unique<AudioParameterFloat>(
+        ParameterID(kOuAmount, 1), "OU Amount",
+        NormalisableRange(0.0f, 1.0f, 0.01f), 0.0f,
+        AudioParameterFloatAttributes().withLabel("%")));
+
+    layout.add(std::make_unique<AudioParameterBool>(
+        ParameterID(kOuBypass, 1), "OU Bypass", true));
 
     // ---- Tempo sync ---------------------------------------------------
     layout.add(std::make_unique<AudioParameterBool>(
@@ -270,14 +296,23 @@ void ChronosProcessor::processBlock (AudioBuffer<float> &buffer, MidiBuffer &mid
     delay.setHighCutParam         (apvts.getRawParameterValue(kHighCut)->load());
     delay.setCrossfeedParam       (apvts.getRawParameterValue(kCrossfeed)->load());
 
-    // Diffusion + FDN parameters.
-    delay.setDiffusionAmountParam (apvts.getRawParameterValue(kDiffusionAmount)->load());
-    delay.setDiffusionSizeMsParam (apvts.getRawParameterValue(kDiffusionSizeMs)->load());
-    delay.setFdnAmountParam       (apvts.getRawParameterValue(kFdnAmount)->load());
-    delay.setFdnSizeMsParam       (apvts.getRawParameterValue(kFdnSizeMs)->load());
-    delay.setFdnDecayMsParam      (apvts.getRawParameterValue(kFdnDecayMs)->load());
-    delay.setFdnDampingHzParam    (apvts.getRawParameterValue(kFdnDampingHz)->load());
-    delay.setReverbBypassedParam  (apvts.getRawParameterValue(kReverbBypass)->load() >= 0.5f);
+    // ChronosReverb parameters - unified post-delay reverb.
+    delay.setReverbMixParam                 (apvts.getRawParameterValue(kReverbMix)->load());
+    delay.setReverbRoomSizeParam            (apvts.getRawParameterValue(kReverbRoomSize)->load());
+    delay.setReverbDecayTimeParam           (apvts.getRawParameterValue(kReverbDecayTime)->load());
+    delay.setReverbPredelayParam            (apvts.getRawParameterValue(kReverbPredelay)->load());
+    delay.setReverbDiffusionParam           (apvts.getRawParameterValue(kReverbDiffusion)->load());
+    delay.setReverbBuildupParam             (apvts.getRawParameterValue(kReverbBuildup)->load());
+    delay.setReverbModulationParam          (apvts.getRawParameterValue(kReverbModulation)->load());
+    delay.setReverbHighFrequencyDampingParam(apvts.getRawParameterValue(kReverbHighFrequencyDamping)->load());
+    delay.setReverbLowFrequencyDampingParam (apvts.getRawParameterValue(kReverbLowFrequencyDamping)->load());
+    delay.setReverbBypassedParam            (apvts.getRawParameterValue(kReverbBypass)->load() >= 0.5f);
+
+    // OU drift amount + bypass. Order matters: push the amount first so
+    // the engine caches it, then the bypass toggle so the final state
+    // applied to the drift engine reflects the toggle.
+    delay.setOuAmountParam  (apvts.getRawParameterValue(kOuAmount)->load());
+    delay.setOuBypassedParam(apvts.getRawParameterValue(kOuBypass)->load() >= 0.5f);
 
     delay.setMono                 (apvts.getRawParameterValue(kMono)  ->load() >= 0.5f);
     delay.setBypassed             (apvts.getRawParameterValue(kBypass)->load() >= 0.5f);

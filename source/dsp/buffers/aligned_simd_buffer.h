@@ -11,9 +11,6 @@
 //  sample counts are rounded up to a whole batch so every channel pointer is
 //  xsimd-load/store-safe even when the caller asks for a sample count that
 //  isn't a multiple of the vector width.
-//
-//  Replaces the JUCE default buffer (std::vector<SampleType>) used for the
-//  delay line's circular buffer in ChronosProcessor / DelayEngine.
 // ============================================================================
 
 #include <array>
@@ -106,7 +103,7 @@ namespace MarsDSP::DSP::AlignedBuffers
 
         // ------------------------------------------------------------------
         //  Change the "in-use" region of a buffer whose max size is already
-        //  sufficient. Zero-fills any newly-exposed channels / samples so
+        //  enough. Zero-fills any newly-exposed channels / samples so
         //  growing a region never leaves stale data in the tail.
         // ------------------------------------------------------------------
         void setCurrentSize(int desiredNumberOfChannels, int desiredNumberOfSamples) noexcept
@@ -159,7 +156,7 @@ namespace MarsDSP::DSP::AlignedBuffers
 
         // Per-channel samples actually allocated in memory (>= getNumSamples()
         // because of SIMD padding). Exposed so code that wants to write
-        // past the logical end (e.g. Lagrange tail mirrors in the delay
+        // past the logical end (e.g., Lagrange tail mirrors in the delay
         // engine) can know how much slack it has.
         [[nodiscard]] int getPaddedNumSamplesPerChannel() const noexcept
         {

@@ -343,8 +343,7 @@ namespace MarsDSP::DSP::SPlaneCurveFit
         //     r_k = pole_k^N / prod_{j != k}(pole_k - pole_j).
         //
         inline std::array<std::complex<float>, kNumParallelComplexPoles>
-        computeHighpassResiduesAtUnitCutoff(
-            const std::array<std::complex<float>, kNumParallelComplexPoles> &analogPoles) noexcept
+        computeHighpassResiduesAtUnitCutoff(const std::array<std::complex<float>, kNumParallelComplexPoles> &analogPoles) noexcept
         {
             std::array<std::complex<float>, kNumParallelComplexPoles> residues {};
 
