@@ -68,16 +68,17 @@
 //    wetR = diffusedDirectRight + loopTailRight
 //    networkState = recirculating
 //
-//    // --- additive send: mix is the master reverb-intensity control ---
-//    outL = dryInputLeft  + mix * wetL
-//    outR = dryInputRight + mix * wetR
+//    // --- crossfade: mix controls dry/wet balance ---
+//    outL = dryInputLeft  * (1 - mix) + wetL * mix
+//    outR = dryInputRight * (1 - mix) + wetR * mix
 //
-//  Because the final stage is a PURE SEND (dry is passed through
-//  unattenuated, and the wet contribution is scaled by mix), the mix
-//  knob is the only knob that can make the reverb audible: at mix = 0
-//  the output is bit-identical to the input regardless of every other
-//  reverb parameter (roomSize, decayTime, diffusion, buildup,
-//  modulation, damping, predelay). Combined with the engine-level
+//  Because mix = 0 fully attenuates the wet and restores the dry
+//  unmodified, the mix knob is the only knob that can make the reverb
+//  audible: at mix = 0 the output is bit-identical to the input
+//  regardless of every other reverb parameter (roomSize, decayTime,
+//  diffusion, buildup, modulation, damping, predelay). At mix = 1
+//  the output is purely the wet signal (diffused direct + loop tail)
+//  with no dry passthrough. Combined with the engine-level
 //  reverbSendBypassEngine - which short-circuits the whole
 //  processBlockInPlace call when the Reverb Bypass flag is on OR
 //  mix == 0 - this means the reverb is fully removable with either
@@ -554,17 +555,20 @@ namespace MarsDSP::DSP::ChronosReverb
                 //     delay tap + loop-reverb tail) is ADDED on top of
                 //     the untouched dry input, scaled by the mix
                 //     smoother's ramped output. Consequences:
-                //       * mix = 0 -> output == input exactly, so no
+        //       * mix = 0 -> output == input exactly, so no
                 //         other reverb parameter can affect the delay
                 //         taps (diffusion, buildup, roomSize,
                 //         decayTime, damping, modulation, predelay
                 //         are all bypassable by the mix knob alone).
+                //       * mix = 1 -> output is purely wet (diffused
+                //         direct + loop tail), no dry passthrough.
                 //       * DelayEngine wraps this call in
                 //         reverbSendBypassEngine with the gate
                 //         (!reverbBypassed && mix > 0), so the
                 //         Reverb Bypass flag removes the reverb
                 //         entirely.
                 const SampleType wetWeight = wetDryMixSmoother.currentValue;
+                const SampleType dryWeight = static_cast<SampleType>(1) - wetWeight;
 
                 const SampleType wetLeftSample =
                     stereoDiffusedLeftSample  + leftAccumulatedWet;
@@ -572,9 +576,9 @@ namespace MarsDSP::DSP::ChronosReverb
                     stereoDiffusedRightSample + rightAccumulatedWet;
 
                 leftChannelInOut [sampleIndexInBlock] =
-                    dryLeftInputSample  + wetLeftSample  * wetWeight;
+                    dryLeftInputSample  * dryWeight + wetLeftSample  * wetWeight;
                 rightChannelInOut[sampleIndexInBlock] =
-                    dryRightInputSample + wetRightSample * wetWeight;
+                    dryRightInputSample * dryWeight + wetRightSample * wetWeight;
 
                 // 2e) Per-sample advance for all the smoothers + the LFO.
                 decayPerBlockMultiplierSmoother.advanceByOneSample();
