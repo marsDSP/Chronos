@@ -68,6 +68,21 @@
 //    wetR = diffusedDirectRight + loopTailRight
 //    networkState = recirculating
 //
+//    // --- additive send: mix is the master reverb-intensity control ---
+//    outL = dryInputLeft  + mix * wetL
+//    outR = dryInputRight + mix * wetR
+//
+//  Because the final stage is a PURE SEND (dry is passed through
+//  unattenuated, and the wet contribution is scaled by mix), the mix
+//  knob is the only knob that can make the reverb audible: at mix = 0
+//  the output is bit-identical to the input regardless of every other
+//  reverb parameter (roomSize, decayTime, diffusion, buildup,
+//  modulation, damping, predelay). Combined with the engine-level
+//  reverbSendBypassEngine - which short-circuits the whole
+//  processBlockInPlace call when the Reverb Bypass flag is on OR
+//  mix == 0 - this means the reverb is fully removable with either
+//  the mix knob at zero or the Reverb Bypass toggle.
+//
 //  Parameter meanings (verbose names used in this class's public setters;
 //  see setter comments for the exact legal ranges):
 //
@@ -85,8 +100,12 @@
 //    hfDamping      - 0..1 knob. Lowpass memory coefficient in the loop
 //                     is 0.8 * this.
 //    lfDamping      - 0..1 knob. Highpass memory coefficient is 0.2 * this.
-//    mix            - 0..1 knob. Dry/wet crossfade inside
-//                     processBlockInPlace(). 0 = dry, 1 = wet.
+//    mix            - 0..1 knob. Master reverb-send level. 0 = no
+//                     reverb contribution (output == input exactly),
+//                     1 = full reverb contribution added on top of
+//                     dry. This is the only knob (besides the Reverb
+//                     Bypass toggle) that can introduce reverb into
+//                     the output.
 //    width          - -1..1 (signed percent). Mid/side rotation applied
 //                     to the wet signal before the mix.
 //
@@ -320,15 +339,31 @@ namespace MarsDSP::DSP::ChronosReverb
 
         // ------------------------------------------------------------------
         //  processBlockInPlace: run 'numSamplesInBlock' stereo samples
-        //  through the reverb in place. The wet / dry crossfade is applied
-        //  per sample using wetDryMixSmoother's ramped output so the mix
-        //  knob itself smoothly cross-fades as well.
+        //  through the reverb in place. The wet signal (stereo-diffused
+        //  delay tap + loop tail) is ADDED on top of dry with a mix-
+        //  scaled gain, so the mix knob is the sole master intensity
+        //  control. mix = 0 returns the input unchanged regardless of
+        //  every other reverb parameter.
         // ------------------------------------------------------------------
         void processBlockInPlace(SampleType* __restrict leftChannelInOut,
                                  SampleType* __restrict rightChannelInOut,
                                  int                    numSamplesInBlock) noexcept
         {
             assert(numSamplesInBlock <= cachedMaximumBlockSizeInSamples);
+
+            // Hard short-circuit: mix = 0 means "no reverb contribution
+            // whatsoever". Skip every internal update so none of the
+            // other reverb parameters (roomSize, decayTime, diffusion,
+            // buildup, modulation, damping, predelay) can modify the
+            // internal state OR the output buffer. The buffer passes
+            // through bit-exact, and when the user ramps mix back up
+            // the wet-dry smoother starts from zero rather than an
+            // orphan positive value.
+            if (userMixNormalised <= static_cast<SampleType>(0))
+            {
+                wetDryMixSmoother.snapToValue(static_cast<SampleType>(0));
+                return;
+            }
 
             // 1) Refresh per-block state from the cached user parameters.
             const SampleType sizeScale =
@@ -515,14 +550,21 @@ namespace MarsDSP::DSP::ChronosReverb
                 // Commit new network state for next sample.
                 runningRecirculatingNetworkStateSample = recirculatingSample;
 
-                // 2d) Dry/wet mix. The wet signal is the stereo-diffused
-                //     delay tap PLUS the loop-reverb tail; crossfading
-                //     against dry with the same mix knob therefore
-                //     behaves as a diffusor on the delay taps (the
-                //     diffused component dominates at low mix values)
-                //     with the tail blending in on top at higher mix.
+                // 2d) Additive send. The wet signal (stereo-diffused
+                //     delay tap + loop-reverb tail) is ADDED on top of
+                //     the untouched dry input, scaled by the mix
+                //     smoother's ramped output. Consequences:
+                //       * mix = 0 -> output == input exactly, so no
+                //         other reverb parameter can affect the delay
+                //         taps (diffusion, buildup, roomSize,
+                //         decayTime, damping, modulation, predelay
+                //         are all bypassable by the mix knob alone).
+                //       * DelayEngine wraps this call in
+                //         reverbSendBypassEngine with the gate
+                //         (!reverbBypassed && mix > 0), so the
+                //         Reverb Bypass flag removes the reverb
+                //         entirely.
                 const SampleType wetWeight = wetDryMixSmoother.currentValue;
-                const SampleType dryWeight = static_cast<SampleType>(1) - wetWeight;
 
                 const SampleType wetLeftSample =
                     stereoDiffusedLeftSample  + leftAccumulatedWet;
@@ -530,9 +572,9 @@ namespace MarsDSP::DSP::ChronosReverb
                     stereoDiffusedRightSample + rightAccumulatedWet;
 
                 leftChannelInOut [sampleIndexInBlock] =
-                    dryLeftInputSample  * dryWeight + wetLeftSample  * wetWeight;
+                    dryLeftInputSample  + wetLeftSample  * wetWeight;
                 rightChannelInOut[sampleIndexInBlock] =
-                    dryRightInputSample * dryWeight + wetRightSample * wetWeight;
+                    dryRightInputSample + wetRightSample * wetWeight;
 
                 // 2e) Per-sample advance for all the smoothers + the LFO.
                 decayPerBlockMultiplierSmoother.advanceByOneSample();

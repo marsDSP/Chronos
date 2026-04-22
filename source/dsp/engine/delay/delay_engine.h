@@ -809,14 +809,27 @@ namespace MarsDSP::DSP {
                 }
 
                 // ---------------- POST-DELAY REVERB SEND --------------------
-                // Run the unified ChronosReverb processor strictly
-                // downstream of the delay's feedback loop, so its
-                // internal loop gain never compounds with the delay's
-                // feedback gain. Its output only reaches the listener -
-                // it is NEVER written back to the delay's circular
-                // buffer. Wrapped in reverbSendBypassEngine so flipping
-                // Reverb Bypass (or dialling the reverb mix to 0)
-                // produces a click-free transition.
+                // Run the ChronosReverb processor strictly downstream
+                // of the delay's feedback loop, so its internal loop
+                // gain never compounds with the delay's feedback gain.
+                // Its output only reaches the listener - it is NEVER
+                // written back to the delay's circular buffer.
+                //
+                // The reverb mix and Reverb Bypass parameters are the
+                // ONLY two controls that are allowed to make the
+                // reverb audible: we call processBlockInPlace if and
+                // only if `reverbIsActiveThisBlock` is true
+                // (= !bypass && mix > 0). On the transition block
+                // going OFF we deliberately SKIP the processor call
+                // too, so that none of the other reverb parameters
+                // (roomSize, decayTime, diffusion, buildup,
+                // modulation, damping, predelay) can ever leak into
+                // the delay taps via a one-block fade-out. The
+                // bypass engine's captureDryInput / crossfade pair
+                // still runs either way so transitions stay click-
+                // free - on the "going off" edge it simply fades the
+                // dry snapshot into the dry current block, which is
+                // a no-op on the audio itself.
                 if (ch0 != nullptr && ch1 != nullptr)
                 {
                     const bool reverbIsActiveThisBlock =
@@ -827,7 +840,13 @@ namespace MarsDSP::DSP {
                             .captureDryInputAndDecideWhetherToProcess(
                                 block, reverbIsActiveThisBlock);
 
-                    if (reverbShouldRunThisBlock)
+                    // Only call the processor when the reverb is
+                    // actively contributing this block. The bypass
+                    // engine may still return 'true' here on the
+                    // transition block going OFF, but we refuse to
+                    // run the reverb in that case so other reverb
+                    // parameters cannot touch the delay taps.
+                    if (reverbShouldRunThisBlock && reverbIsActiveThisBlock)
                     {
                         stereoChronosReverbProcessor.processBlockInPlace(
                             ch0, ch1, static_cast<int>(numSamplesSize));
