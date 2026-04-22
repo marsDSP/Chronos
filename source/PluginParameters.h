@@ -26,7 +26,7 @@ namespace Chronos
     // Bump whenever a migration is required. Keep in lockstep with
     // MarsDSP::DSP::DelayEngine<float>::streamingVersion when the engine's
     // schema changes.
-    inline constexpr int kPluginStateVersion = 1;
+    inline constexpr int kPluginStateVersion = 2;
 
     // --------------------------------------------------------------
     // Parameter IDs (stable across the plugin's lifetime)
@@ -62,14 +62,16 @@ namespace Chronos
         // delay itself keeps running normally.
         inline constexpr auto kReverbBypass     = "reverbBypass";
 
-        // Ornstein-Uhlenbeck mean-reversion drift. Applies slow tape-
-        // style wow/flutter to the main delay read position AND to the
-        // reverb's internal tap-modulation knob, so both the delay taps
-        // and the reverb tail pick up OU character when engaged.
-        // Bypass toggle is separate from the amount so users can leave a
-        // preferred amount dialled in and just toggle the modulation.
-        inline constexpr auto kOuAmount         = "ouAmount";
-        inline constexpr auto kOuBypass         = "ouBypass";
+        // Tape-style wow and flutter. Wow is a slow single-cosine
+        // drift with per-block rate perturbation; flutter is a sum of
+        // three cosines at f, 2f, 3f approximating tape capstan
+        // wobble. Both modulate the main delay read position.
+        inline constexpr auto kWowRate          = "wowRate";
+        inline constexpr auto kWowDepth         = "wowDepth";
+        inline constexpr auto kWowDrift         = "wowDrift";
+        inline constexpr auto kFlutterOnOff     = "flutterOnOff";
+        inline constexpr auto kFlutterRate      = "flutterRate";
+        inline constexpr auto kFlutterDepth     = "flutterDepth";
 
         // Tempo-sync (off by default; when on, delay time snaps to
         // sync interval at the host's BPM).
@@ -107,6 +109,16 @@ namespace Chronos
         {
             // No-op. Example for the future:
             // renameParam(tree, "oldName", ParamID::kSomething);
+        }
+
+        // === v1 -> v2 ===
+        // v1 carried ouAmount / ouBypass knobs. v2 retires those in
+        // favour of the wow / flutter knobs. Any stored values for the
+        // retired IDs are just dropped - APVTS::replaceState() leaves
+        // new wow/flutter params at their defaults on load.
+        if (fromVersion < 2)
+        {
+            // No-op beyond dropping retired IDs.
         }
 
         tree.setProperty(kStateVersionProperty, kPluginStateVersion, nullptr);

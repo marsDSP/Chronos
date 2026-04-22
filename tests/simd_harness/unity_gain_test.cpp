@@ -1,14 +1,14 @@
 // Delay-engine unity-gain test.
 //
-// Sweeps four things that used to attenuate the delay taps and verifies
-// the stereo output stays within a sensible RMS window of the dry input:
+// Sweeps a handful of parameters that historically attenuated the delay
+// taps and verifies the stereo output stays within a sensible RMS window
+// of the dry input:
 //
-//   1) OU drift amount [0..1]       - used to drop taps by ~22 dB via the
-//                                     modulation ducker hitting its floor.
-//   2) Diffusion amount [0..1]      - used to lose -3 dB at 0.5 via the
-//                                     plain (1-a, a) dry/wet crossfade.
-//   3) FDN amount [0..1]            - same crossfade issue as diffusion.
-//   4) Mix (dry/wet) [0..1]         - sanity check that the underlying
+//   1) Wow + flutter depth [0..1]   - ensures LFO-driven tap-position
+//                                     modulation does not drop level.
+//   2) Reverb mix [0..1]            - verifies the post-delay reverb send
+//                                     is bounded as mix is cranked.
+//   3) Mix (dry/wet) [0..1]         - sanity check that the underlying
 //                                     delay path itself is unity.
 //
 // Signal:  fs = 48 kHz, 440 Hz sine, 2.0 seconds, unit amplitude per channel.
@@ -118,15 +118,15 @@ namespace
     };
 
     // Configure a DelayEngine with the test's baseline topology. The
-    // caller can then override one parameter per sweep. 'reverbMix' is
-    // the unified ChronosReverb mix knob (wet contribution of the
-    // post-delay reverb send); 'ouDriftAmount' drives the OU drift
-    // that modulates both the main tap AND the reverb's tap modulation.
+    // caller can then override one parameter per sweep.
+    //   reverbMix  - unified ChronosReverb mix knob.
+    //   wowDepth   - wow LFO depth [0..1].
+    //   flutterDepth - flutter LFO depth [0..1], gated by a flutter on/off.
     void configureEngineForUnityGainSweep(DelayEngine<float>& engine,
                                           float               mixValue,
                                           float               reverbMix,
-                                          float               ouDriftAmount,
-                                          bool                ouIsBypassed)
+                                          float               wowDepth,
+                                          float               flutterDepth)
     {
         juce::dsp::ProcessSpec spec{};
         spec.sampleRate       = kSampleRate;
@@ -155,8 +155,12 @@ namespace
         engine.setReverbHighFrequencyDampingParam(0.2f);
         engine.setReverbLowFrequencyDampingParam (0.2f);
 
-        engine.setOuAmountParam(ouDriftAmount);
-        engine.setOuBypassedParam(ouIsBypassed);
+        engine.setWowRateParam    (0.5f);
+        engine.setWowDepthParam   (wowDepth);
+        engine.setWowDriftParam   (0.0f);
+        engine.setFlutterOnOffParam(flutterDepth > 0.0f);
+        engine.setFlutterRateParam (0.5f);
+        engine.setFlutterDepthParam(flutterDepth);
 
         engine.setReverbBypassedParam(false);
         engine.setBypassed(false);
@@ -260,20 +264,20 @@ int main()
     std::ofstream csvSink(kLogDir / "unity_gain.csv");
     csvSink << "sweep,parameter_value,output_rms,reference_rms,deviation_db,tolerance_db,passed\n";
 
-    std::cout << "\n[unity gain] measuring reference (delay bypassed, mix=0, OU off)\n";
+    std::cout << "\n[unity gain] measuring reference (delay bypassed, mix=0, wow/flutter off)\n";
 
     // ------------------------------------------------------------------
     // Reference:  delay engine with mix = 0 (pure dry pass-through), no
-    // reverb send, no OU. This is our "unity" ground truth.
+    // reverb send, no modulation. This is our "unity" ground truth.
     // ------------------------------------------------------------------
     const double referenceDryRms = [&]
     {
         DelayEngine<float> refEngine;
         configureEngineForUnityGainSweep(refEngine,
-                                         /*mix*/        0.0f,
-                                         /*reverbMix*/  0.0f,
-                                         /*ouAmount*/   0.0f,
-                                         /*ouBypassed*/ true);
+                                         /*mix*/          0.0f,
+                                         /*reverbMix*/    0.0f,
+                                         /*wowDepth*/     0.0f,
+                                         /*flutterDepth*/ 0.0f);
         return measureStereoRmsOfSteadyStateOutput(refEngine);
     }();
     std::cout << "  reference dry RMS = " << referenceDryRms
@@ -304,24 +308,25 @@ int main()
     const std::vector<float> sweepValues{0.0f, 0.25f, 0.5f, 0.75f, 1.0f};
 
     // ------------------------------------------------------------------
-    // Sweep 1: OU drift amount at mix = 1 (full wet). Checks the duck-
-    // gain-on-drift bug (taps were attenuated by ~22 dB when OU was on).
+    // Sweep 1: Wow + flutter depth at mix = 1 (full wet). Both engines
+    // modulate the main tap position in lockstep; this exercises the
+    // SIMD posOld/posNew crossfade with meaningful modulation.
     // ------------------------------------------------------------------
-    std::cout << "\n[unity gain] OU drift amount sweep (mix = 1, reverb mix = 0)\n";
-    for (const float amountValue : sweepValues)
+    std::cout << "\n[unity gain] wow + flutter depth sweep (mix = 1, reverb mix = 0)\n";
+    for (const float depthValue : sweepValues)
     {
         auto r = runOneSweepPoint(
-            "ou_drift_sweep",
-            amountValue,
+            "wow_flutter_sweep",
+            depthValue,
             referenceDryRms,
             kEnergyPreservingTolDb,
             [&](DelayEngine<float>& engine)
             {
                 configureEngineForUnityGainSweep(engine,
-                                                 /*mix*/        1.0f,
-                                                 /*reverbMix*/  0.0f,
-                                                 /*ouAmount*/   amountValue,
-                                                 /*ouBypassed*/ amountValue == 0.0f);
+                                                 /*mix*/          1.0f,
+                                                 /*reverbMix*/    0.0f,
+                                                 /*wowDepth*/     depthValue,
+                                                 /*flutterDepth*/ depthValue);
             });
         logAndTally(r);
     }
@@ -332,7 +337,7 @@ int main()
     // stereo RMS. The reverb's internal equal-power dry/wet crossfade
     // keeps this within the energy-preserving tolerance.
     // ------------------------------------------------------------------
-    std::cout << "\n[unity gain] reverb mix sweep (delay mix = 1, ou off)\n";
+    std::cout << "\n[unity gain] reverb mix sweep (delay mix = 1, modulation off)\n";
     for (const float reverbMixValue : sweepValues)
     {
         auto r = runOneSweepPoint(
@@ -343,10 +348,10 @@ int main()
             [&](DelayEngine<float>& engine)
             {
                 configureEngineForUnityGainSweep(engine,
-                                                 /*mix*/        1.0f,
-                                                 /*reverbMix*/  reverbMixValue,
-                                                 /*ouAmount*/   0.0f,
-                                                 /*ouBypassed*/ true);
+                                                 /*mix*/          1.0f,
+                                                 /*reverbMix*/    reverbMixValue,
+                                                 /*wowDepth*/     0.0f,
+                                                 /*flutterDepth*/ 0.0f);
             });
         logAndTally(r);
     }
@@ -359,7 +364,7 @@ int main()
     // this remains a sanity check on the mix path itself rather than
     // an equal-power fight.
     // ------------------------------------------------------------------
-    std::cout << "\n[unity gain] delay mix sweep (reverb / ou off)\n";
+    std::cout << "\n[unity gain] delay mix sweep (reverb / modulation off)\n";
     for (const float mixValue : sweepValues)
     {
         auto r = runOneSweepPoint(
@@ -370,21 +375,19 @@ int main()
             [&](DelayEngine<float>& engine)
             {
                 configureEngineForUnityGainSweep(engine,
-                                                 /*mix*/        mixValue,
-                                                 /*reverbMix*/  0.0f,
-                                                 /*ouAmount*/   0.0f,
-                                                 /*ouBypassed*/ true);
+                                                 /*mix*/          mixValue,
+                                                 /*reverbMix*/    0.0f,
+                                                 /*wowDepth*/     0.0f,
+                                                 /*flutterDepth*/ 0.0f);
             });
         logAndTally(r);
     }
 
     // ------------------------------------------------------------------
-    // Sweep 4: combined - OU 1.0 + reverb mix 0.5 at delay mix = 1.
-    // This is the worst-case of the original bug report (OU + reverb
-    // simultaneously active - taps previously got lost / reverb
-    // exploded).
+    // Sweep 4: combined worst case - wow/flutter fully up, reverb mix
+    // 0.5, delay mix 1. Every modulation and send is active at once.
     // ------------------------------------------------------------------
-    std::cout << "\n[unity gain] combined worst-case (delay mix=1, ou=1, reverbMix=0.5)\n";
+    std::cout << "\n[unity gain] combined worst-case (delay mix=1, wow+flutter=1, reverbMix=0.5)\n";
     {
         auto r = runOneSweepPoint(
             "combined_worst_case",
@@ -394,10 +397,10 @@ int main()
             [&](DelayEngine<float>& engine)
             {
                 configureEngineForUnityGainSweep(engine,
-                                                 /*mix*/        1.0f,
-                                                 /*reverbMix*/  0.5f,
-                                                 /*ouAmount*/   1.0f,
-                                                 /*ouBypassed*/ false);
+                                                 /*mix*/          1.0f,
+                                                 /*reverbMix*/    0.5f,
+                                                 /*wowDepth*/     1.0f,
+                                                 /*flutterDepth*/ 1.0f);
             });
         logAndTally(r);
     }

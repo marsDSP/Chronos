@@ -127,6 +127,8 @@ add_library(SharedCode INTERFACE
         source/dsp/buffers/static_delay_buffer.h
         source/dsp/modulation/noise_generator_engine.h
         source/dsp/modulation/ou_drift_process.h
+        source/dsp/modulation/wow_engine.h
+        source/dsp/modulation/flutter_engine.h
         source/dsp/filter/dc_blocker.h
         source/utils/helpers/tempo_sync.h)
 

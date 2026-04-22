@@ -175,16 +175,36 @@ AudioProcessorValueTreeState::ParameterLayout ChronosProcessor::createParameterL
     layout.add(std::make_unique<AudioParameterBool>(
         ParameterID(kReverbBypass, 1), "Reverb Bypass", false));
 
-    // ---- Ornstein-Uhlenbeck drift -------------------------------------
-    // Amount scales the drift intensity; the Bypass toggle zeroes the
-    // engine's internal drift without losing the amount knob's state.
+    // ---- Wow and flutter ----------------------------------------------
+    // Wow: slow cosine drift with per-block random rate perturbation.
+    // Flutter: sum of three cosines (f, 2f, 3f). Flutter has its own
+    // on/off switch because it is meaningful to crank wow without
+    // adding the capstan wobble on top.
     layout.add(std::make_unique<AudioParameterFloat>(
-        ParameterID(kOuAmount, 1), "OU Amount",
+        ParameterID(kWowRate, 1), "Wow Rate",
+        NormalisableRange(0.0f, 1.0f, 0.01f), 0.5f));
+
+    layout.add(std::make_unique<AudioParameterFloat>(
+        ParameterID(kWowDepth, 1), "Wow Depth",
+        NormalisableRange(0.0f, 1.0f, 0.01f), 0.0f,
+        AudioParameterFloatAttributes().withLabel("%")));
+
+    layout.add(std::make_unique<AudioParameterFloat>(
+        ParameterID(kWowDrift, 1), "Wow Drift",
         NormalisableRange(0.0f, 1.0f, 0.01f), 0.0f,
         AudioParameterFloatAttributes().withLabel("%")));
 
     layout.add(std::make_unique<AudioParameterBool>(
-        ParameterID(kOuBypass, 1), "OU Bypass", true));
+        ParameterID(kFlutterOnOff, 1), "Flutter", false));
+
+    layout.add(std::make_unique<AudioParameterFloat>(
+        ParameterID(kFlutterRate, 1), "Flutter Rate",
+        NormalisableRange(0.0f, 1.0f, 0.01f), 0.5f));
+
+    layout.add(std::make_unique<AudioParameterFloat>(
+        ParameterID(kFlutterDepth, 1), "Flutter Depth",
+        NormalisableRange(0.0f, 1.0f, 0.01f), 0.0f,
+        AudioParameterFloatAttributes().withLabel("%")));
 
     // ---- Tempo sync ---------------------------------------------------
     layout.add(std::make_unique<AudioParameterBool>(
@@ -308,11 +328,13 @@ void ChronosProcessor::processBlock (AudioBuffer<float> &buffer, MidiBuffer &mid
     delay.setReverbLowFrequencyDampingParam (apvts.getRawParameterValue(kReverbLowFrequencyDamping)->load());
     delay.setReverbBypassedParam            (apvts.getRawParameterValue(kReverbBypass)->load() >= 0.5f);
 
-    // OU drift amount + bypass. Order matters: push the amount first so
-    // the engine caches it, then the bypass toggle so the final state
-    // applied to the drift engine reflects the toggle.
-    delay.setOuAmountParam  (apvts.getRawParameterValue(kOuAmount)->load());
-    delay.setOuBypassedParam(apvts.getRawParameterValue(kOuBypass)->load() >= 0.5f);
+    // Wow and flutter: push knob values into the engine every block.
+    delay.setWowRateParam     (apvts.getRawParameterValue(kWowRate)->load());
+    delay.setWowDepthParam    (apvts.getRawParameterValue(kWowDepth)->load());
+    delay.setWowDriftParam    (apvts.getRawParameterValue(kWowDrift)->load());
+    delay.setFlutterOnOffParam(apvts.getRawParameterValue(kFlutterOnOff)->load() >= 0.5f);
+    delay.setFlutterRateParam (apvts.getRawParameterValue(kFlutterRate)->load());
+    delay.setFlutterDepthParam(apvts.getRawParameterValue(kFlutterDepth)->load());
 
     delay.setMono                 (apvts.getRawParameterValue(kMono)  ->load() >= 0.5f);
     delay.setBypassed             (apvts.getRawParameterValue(kBypass)->load() >= 0.5f);

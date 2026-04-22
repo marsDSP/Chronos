@@ -140,8 +140,12 @@ namespace
         engine.setReverbHighFrequencyDampingParam(0.2f);
         engine.setReverbLowFrequencyDampingParam (0.2f);
 
-        engine.setOuAmountParam  (0.0f);
-        engine.setOuBypassedParam(true);
+        engine.setWowRateParam    (0.5f);
+        engine.setWowDepthParam   (0.0f);
+        engine.setWowDriftParam   (0.0f);
+        engine.setFlutterOnOffParam(false);
+        engine.setFlutterRateParam (0.5f);
+        engine.setFlutterDepthParam(0.0f);
 
         engine.setReverbBypassedParam(false);
         engine.setBypassed(false);

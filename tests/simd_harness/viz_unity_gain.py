@@ -25,15 +25,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CSV_PATH  = REPO_ROOT / "tests" / "simd_harness" / "logs" / "unity_gain.csv"
 OUT_PATH  = REPO_ROOT / "tests" / "simd_harness" / "logs" / "unity_gain.png"
 
-# Panel ordering and titles. Order matches the narrative of the bug-fix
-# (OU first because that was the originally-broken sweep, then the two
-# decorrelating-chain sweeps, then the raw mix path, then the combined
-# worst case).
+# Panel ordering and titles. Wow/flutter modulation sweep first, then
+# the reverb send sweep, then the raw delay mix sweep.
 PANEL_ORDER = [
-    ("ou_drift_sweep",      "OU drift amount  (mix = 1,  diffusion/FDN off)"),
-    ("diffusion_sweep",     "Diffusion amount (mix = 1,  OU/FDN off)"),
-    ("fdn_sweep",           "FDN amount       (mix = 1,  OU/diffusion off)"),
-    ("mix_sweep",           "Dry/wet mix      (OU / diffusion / FDN off)"),
+    ("wow_flutter_sweep",   "Wow + flutter depth  (mix = 1,  reverb mix = 0)"),
+    ("reverb_mix_sweep",    "Reverb mix           (mix = 1,  modulation off)"),
+    ("mix_sweep",           "Dry/wet mix          (reverb / modulation off)"),
 ]
 
 
@@ -112,7 +109,7 @@ def draw_combined_worst_case(figure, combined_rows: list[dict]) -> None:
 
     figure.text(
         0.5, 0.015,
-        f"combined worst-case  (mix=1, OU=1, diffusion=0.5, FDN=0.5):  "
+        f"combined worst-case  (mix=1, wow+flutter=1, reverbMix=0.5):  "
         f"{deviation:+.2f} dB  [tolerance +/-{tolerance:.1f} dB]  -> {verdict_label}",
         ha="center", va="bottom",
         fontsize=11, color=verdict_color,
@@ -124,7 +121,7 @@ def main() -> None:
     rows = load_rows()
     sweeps = group_by_sweep(rows)
 
-    fig, axes = plt.subplots(2, 2, figsize=(14, 9), constrained_layout=True)
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6), constrained_layout=True)
     fig.suptitle("Chronos delay-engine unity-gain sweeps  (wideband white-noise input)",
                  fontsize=14, weight="bold")
 

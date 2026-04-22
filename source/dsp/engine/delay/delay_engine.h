@@ -13,7 +13,8 @@
 #include "dsp/buffers/aligned_simd_buffer_view.h"
 #include "dsp/diffusion/stereo_processor.h"
 #include "dsp/bypass/crossfade_bypass_engine.h"
-#include "dsp/modulation/ou_drift_process.h"
+#include "dsp/modulation/wow_engine.h"
+#include "dsp/modulation/flutter_engine.h"
 #include "dsp/filter/dc_blocker.h"
 
 namespace MarsDSP::DSP {
@@ -90,12 +91,17 @@ namespace MarsDSP::DSP {
             // lines, quadrature LFO).
             stereoChronosReverbProcessor.reset();
 
-            // Flush the DC blocker state. The OU drift process doesn't
-            // need an explicit state reset - prepareBlock() regenerates
-            // noise and the accumulator state is bounded by the mean-
-            // reversion anyway.
+            // Flush the feedback write-back DC blockers.
             feedbackWriteDcBlockerLeft.reset();
             feedbackWriteDcBlockerRight.reset();
+
+            // Flush the wow / flutter LFO phase and depth state, along
+            // with the cached previous-block end values used as posOld.
+            wowEngine.reset();
+            flutterEngine.reset();
+            lastWowBlockEndSample = 0.0f;
+            lastFlutterBlockEndAc = 0.0f;
+            lastFlutterBlockEndDc = 0.0f;
 
             // Latch current on/off states in the bypass engines so the
             // first block after reset doesn't trigger a spurious crossfade.
@@ -131,14 +137,11 @@ namespace MarsDSP::DSP {
                 std::max(static_cast<int>(spec.maximumBlockSize), 1);
             stereoChronosReverbProcessor.prepare(sampleRate, preparedMaxBlockSize);
 
-            // Prepare the two OU drift processes. ouDelayPositionDrift
-            // gets 2 channels so left/right Lagrange reads can drift
-            // independently; ouReverbModulationDrift only needs 1
-            // channel - we sample it once per block to bias the
-            // reverb's modulation knob.
-            const int preparedMaxBlockSizeForOu = preparedMaxBlockSize;
-            ouDelayPositionDrift   .prepare(sampleRate, preparedMaxBlockSizeForOu, 2);
-            ouReverbModulationDrift.prepare(sampleRate, preparedMaxBlockSizeForOu, 1);
+            // Prepare the wow and flutter modulation engines with two
+            // channels so left/right Lagrange reads can drift
+            // independently.
+            wowEngine    .prepare(sampleRate, preparedMaxBlockSize, 2);
+            flutterEngine.prepare(sampleRate, preparedMaxBlockSize, 2);
 
             // Flush the DC blockers that live on the feedback write-back.
             feedbackWriteDcBlockerLeft.reset();
@@ -217,83 +220,26 @@ namespace MarsDSP::DSP {
             lagDelayMs.processN(numSamples);
             float delayMsNew = lagDelayMs.getValue();
 
-            // --- Ornstein-Uhlenbeck drift ---
-            // Two drift streams, both gated by the same amount / bypass
-            // knobs so the user's single OU control drives both the
-            // main-tap position AND the reverb's tap modulation knob.
-            //
-            // prepareBlock regenerates the noise and sets mean/damping
-            // for the block. When bypassed we still call prepareBlock
-            // on both so the state machine stays consistent, just with
-            // amount = 0 so process(n, ch) returns the mean (==0).
-            const float ouAmountThisBlock = ouBypassed ? 0.0f : ouDriftAmountCached;
-            ouDelayPositionDrift   .prepareBlock(ouAmountThisBlock, numSamples);
-            ouReverbModulationDrift.prepareBlock(ouAmountThisBlock, numSamples);
+            // --- Wow and flutter modulation ---
+            // The modulation targets are updated once per host block, but
+            // the tap position is resampled at a smaller sub-block rate so
+            // the SIMD Lagrange crossfade between posOld and posNew only
+            // spans a small modulation delta. This mirrors the "block
+            // target + per-sample ramp" idea used in the reference
+            // flanger, without sacrificing the vectorised delay reader.
+            const bool  flutterOn         = flutterOnOffCached;
+            const float wowRateThisBlock  = wowRateCached;
+            const float wowDepthThisBlock = wowDepthCached;
+            const float wowDriftThisBlock = wowDriftCached;
+            const float flutterRateBlock  = flutterRateCached;
+            const float flutterDepthBlock = flutterOn ? flutterDepthCached : 0.0f;
 
-            // Advance the OU state per sample for this block and sample
-            // each drift stream at useful moments:
-            //   * delay drift is sampled at block start + block end so
-            //     its curve drives posOld / posNew of the main tap's
-            //     Lagrange ramp with per-sample granularity preserved.
-            //   * reverb-modulation drift is sampled once at block end
-            //     and added to the user's reverb-modulation knob before
-            //     it is pushed to the ChronosReverb processor. The
-            //     processor's own block-rate smoother then ramps between
-            //     blocks so the result stays click-free.
-            //
-            // Scale factors map the OU output (unit-amount stdev ~= 0.066):
-            //   delay drift        -> samples of buffer offset
-            //                         (stdev ~= 0.066 * 1200 = 80 samples
-            //                          ~ 1.7 ms @ 48 kHz).
-            //   reverb mod drift   -> additive normalised wobble on the
-            //                         reverb's "modulation" knob
-            //                         (stdev ~= 0.066 * 0.5 = 3.3 percent
-            //                          of the full 0..1 range; clamped
-            //                          into [0, 1] before being pushed).
-            constexpr float kDelayDriftSampleScale      = 1200.0f;
-            constexpr float kReverbModulationDriftScale = 0.5f;
+            wowEngine    .prepareBlock(wowRateThisBlock, wowDepthThisBlock, wowDriftThisBlock);
+            flutterEngine.prepareBlock(flutterRateBlock, flutterDepthBlock);
 
-            float ouDelayDriftAtBlockStartSamples    = 0.0f;
-            float ouDelayDriftAtBlockEndSamples      = 0.0f;
-            float ouReverbModulationDriftAtBlockEnd  = 0.0f;
-            for (int ouAdvanceSampleIndex = 0;
-                 ouAdvanceSampleIndex < numSamples;
-                 ++ouAdvanceSampleIndex)
-            {
-                const float perSampleDelayDrift =
-                    ouDelayPositionDrift.process(ouAdvanceSampleIndex, 0);
-                if (ouAdvanceSampleIndex == 0)
-                    ouDelayDriftAtBlockStartSamples =
-                        perSampleDelayDrift * kDelayDriftSampleScale;
-                if (ouAdvanceSampleIndex == numSamples - 1)
-                    ouDelayDriftAtBlockEndSamples =
-                        perSampleDelayDrift * kDelayDriftSampleScale;
-
-                const float perSampleReverbModulationDrift =
-                    ouReverbModulationDrift.process(ouAdvanceSampleIndex, 0);
-                if (ouAdvanceSampleIndex == numSamples - 1)
-                    ouReverbModulationDriftAtBlockEnd =
-                        perSampleReverbModulationDrift * kReverbModulationDriftScale;
-            }
-
-            // Apply delay drift to posOld / posNew in samples. The Lagrange
-            // interpolation smoothly transitions between the two across
-            // the block so the per-sample-granularity OU curve survives.
-            // We add in samples here rather than ms so the scale is tied
-            // directly to the audio buffer.
-            const float sampleIntervalMs = static_cast<float>(1000.0 / sampleRate);
-            delayMsOld += ouDelayDriftAtBlockStartSamples * sampleIntervalMs;
-            delayMsNew += ouDelayDriftAtBlockEndSamples   * sampleIntervalMs;
-
-            // Push the OU-biased reverb modulation knob into the
-            // ChronosReverb processor for this block. The processor's
-            // internal block-rate smoother ramps from the previous
-            // block's value to this one, so block-to-block OU jumps
-            // are smoothed out across the audio rate.
-            const float biasedReverbModulationNormalised = std::clamp(
-                cachedReverbModulationNormalised + ouReverbModulationDriftAtBlockEnd,
-                0.0f, 1.0f);
-            stereoChronosReverbProcessor.setModulation(biasedReverbModulationNormalised);
+            // Reverb modulation knob is a straight passthrough of the
+            // user's value.
+            stereoChronosReverbProcessor.setModulation(cachedReverbModulationNormalised);
 
             const auto numSamplesSize = static_cast<size_t>(numSamples);
             assert(numSamplesSize <= N_BLOCK - 8);
@@ -304,36 +250,15 @@ namespace MarsDSP::DSP {
                 return std::max(s, static_cast<SampleType>(numSamplesSize + 1));
             };
 
-            const SampleType posOld = msToPos(delayMsOld);
-            const SampleType posNew = msToPos(delayMsNew);
+            // Ducking stays block-rate; LFO motion is intentionally
+            // excluded so modulation doesn't trip the duck floor.
+            const SampleType userDrivenPosAtBlockEnd =
+                static_cast<SampleType>(sampleRate * (lagDelayMs.getValue() * 0.001));
+            const SampleType modspeed = std::abs(userDrivenPosAtBlockEnd - prevPos);
+            prevPos = userDrivenPosAtBlockEnd;
+            updateDuckGain(modspeed);
+            const auto vDuckGain = SIMD_MM(set1_ps)(duckGain);
 
-            const int offsetOld = static_cast<int>(std::floor(static_cast<double>(posOld)));
-            const int offsetNew = static_cast<int>(std::floor(static_cast<double>(posNew)));
-
-            const SampleType fracOld = posOld - static_cast<SampleType>(offsetOld);
-            const SampleType fracNew = posNew - static_cast<SampleType>(offsetNew);
-
-            // Dual scratch pre-read (memcpy with tail-mirror trick from earlier design).
-            const int total = static_cast<int>(numSamplesSize) + kTail;
-            auto readScratch = [&](const SampleType* src, SampleType* dst, int rpos)
-            {
-                const int first = std::min(total, kBufSize + kTail - rpos);
-                std::memcpy(dst, src + rpos, first * sizeof(SampleType));
-
-                if (first < total)
-                    std::memcpy(dst + first, src + kTail, (total - first) * sizeof(SampleType));
-            };
-
-            readScratch(bufferL, tL,  (writeIdxL - offsetNew) & kBufMask);
-            readScratch(bufferL, tL2, (writeIdxL - offsetOld) & kBufMask);
-
-            if (!isMono() && ch1 != nullptr)
-            {
-                readScratch(bufferR, tR,  (writeIdxR - offsetNew) & kBufMask);
-                readScratch(bufferR, tR2, (writeIdxR - offsetOld) & kBufMask);
-            }
-
-            // Dual Lagrange coefficient set: N for new frac, O for old frac.
             auto computeCoeffs = [](SampleType frac, LagrangeCoeffs& c)
             {
                 const float d1 = frac - 1.0f;
@@ -350,59 +275,120 @@ namespace MarsDSP::DSP {
                 c.frac = frac;
             };
 
-            LagrangeCoeffs coeffsN, coeffsO;
-            computeCoeffs(fracNew, coeffsN);
-            computeCoeffs(fracOld, coeffsO);
-
-            // SIMD broadcast of both coefficient sets (N = new, O = old).
-            const auto vC1N = SIMD_MM(set1_ps)(coeffsN.c[0]);
-            const auto vC2N = SIMD_MM(set1_ps)(coeffsN.c[1]);
-            const auto vC3N = SIMD_MM(set1_ps)(coeffsN.c[2]);
-            const auto vC4N = SIMD_MM(set1_ps)(coeffsN.c[3]);
-            const auto vC5N = SIMD_MM(set1_ps)(coeffsN.c[4]);
-            const auto vC6N = SIMD_MM(set1_ps)(coeffsN.c[5]);
-            const auto vFracN = SIMD_MM(set1_ps)(fracNew);
-
-            const auto vC1O = SIMD_MM(set1_ps)(coeffsO.c[0]);
-            const auto vC2O = SIMD_MM(set1_ps)(coeffsO.c[1]);
-            const auto vC3O = SIMD_MM(set1_ps)(coeffsO.c[2]);
-            const auto vC4O = SIMD_MM(set1_ps)(coeffsO.c[3]);
-            const auto vC5O = SIMD_MM(set1_ps)(coeffsO.c[4]);
-            const auto vC6O = SIMD_MM(set1_ps)(coeffsO.c[5]);
-            const auto vFracO = SIMD_MM(set1_ps)(fracOld);
-
-            // Alpha ramp: 0 at block start, 1 at block end. Applied per SIMD lane.
-            const float invN = (numSamplesSize > 0) ? 1.0f / static_cast<float>(numSamplesSize) : 0.0f;
-            const auto vInvN    = SIMD_MM(set1_ps)(invN);
-            const auto vLaneIdx = SIMD_MM(setr_ps)(0.0f, 1.0f, 2.0f, 3.0f);
-
-            // duck gain update uses the end-of-block position as "current",
-            // but measures modspeed from the USER-DRIVEN (undrifted) delay
-            // position only. OU drift is designed to produce an audible
-            // chorus-style pitch wobble on the taps; if we folded its
-            // sample-to-sample delta into modspeed, updateDuckGain() would
-            // hit its 0.08 floor immediately and attenuate the taps by
-            // ~22 dB whenever drift is active (which is exactly what the
-            // user was hearing as "taps getting lost"). Ducking now only
-            // responds to user knob / host-automation sweeps of the delay
-            // time, so the OU drift itself survives at full amplitude.
-            const SampleType userDrivenPosAtBlockEnd = static_cast<SampleType>(sampleRate * (lagDelayMs.getValue() * 0.001));
-            const SampleType modspeed = std::abs(userDrivenPosAtBlockEnd - prevPos);
-
-            prevPos = userDrivenPosAtBlockEnd;
-            updateDuckGain(modspeed);
-
-            const auto vDuckGain = SIMD_MM(set1_ps)(duckGain);
-
-            if (isMono()) // mono
+            auto readScratch = [&](const SampleType* src, SampleType* dst,
+                                   int rpos, int readLen)
             {
-                // ---------------- PASS 1: SIMD Lagrange blend → dsL[] ----------------
+                const int first = std::min(readLen, kBufSize + kTail - rpos);
+                std::memcpy(dst, src + rpos, first * sizeof(SampleType));
+
+                if (first < readLen)
+                    std::memcpy(dst + first, src + kTail, (readLen - first) * sizeof(SampleType));
+            };
+
+            const auto vLaneIdx = SIMD_MM(setr_ps)(0.0f, 1.0f, 2.0f, 3.0f);
+            const bool monoMode = isMono();
+
+            float prevSubLfoOffsetSamples =
+                lastWowBlockEndSample + lastFlutterBlockEndAc
+              + (flutterOn ? lastFlutterBlockEndDc : 0.0f);
+
+            const float sampleIntervalMs = static_cast<float>(1000.0 / sampleRate);
+            const float delayMsDelta     = delayMsNew - delayMsOld;
+
+            // 16 samples = 3 kHz resampling of the modulation path at
+            // 48 kHz, which is comfortably above the fastest flutter
+            // setting while staying aligned to the 4-wide SIMD lanes.
+            constexpr int kTapModulationSubBlockSize = 16;
+
+            int sampleOffset = 0;
+            while (sampleOffset < numSamples)
+            {
+                const int subN = std::min(kTapModulationSubBlockSize,
+                                          numSamples - sampleOffset);
+                const size_t subNs = static_cast<size_t>(subN);
+                const int scratchLen = subN + kTail;
+
+                const float wowEndSubSample = wowEngine.processBlock(subN, 0);
+                const auto  [flutterEndSubAc, flutterEndSubDcRaw] =
+                    flutterEngine.processBlock(subN, 0);
+                const float flutterEndSubDc =
+                    flutterOn ? flutterEndSubDcRaw : 0.0f;
+                const float currSubLfoOffsetSamples =
+                    wowEndSubSample + flutterEndSubAc + flutterEndSubDc;
+
+                const float subFracStart =
+                    static_cast<float>(sampleOffset) / static_cast<float>(numSamples);
+                const float subFracEnd =
+                    static_cast<float>(sampleOffset + subN) / static_cast<float>(numSamples);
+                const float subBaseMsStart =
+                    delayMsOld + subFracStart * delayMsDelta;
+                const float subBaseMsEnd =
+                    delayMsOld + subFracEnd * delayMsDelta;
+
+                const SampleType posOld =
+                    msToPos(subBaseMsStart + prevSubLfoOffsetSamples * sampleIntervalMs);
+                const SampleType posNew =
+                    msToPos(subBaseMsEnd + currSubLfoOffsetSamples * sampleIntervalMs);
+
+                const int offsetOld =
+                    static_cast<int>(std::floor(static_cast<double>(posOld)));
+                const int offsetNew =
+                    static_cast<int>(std::floor(static_cast<double>(posNew)));
+                const SampleType fracOld =
+                    posOld - static_cast<SampleType>(offsetOld);
+                const SampleType fracNew =
+                    posNew - static_cast<SampleType>(offsetNew);
+
+                LagrangeCoeffs coeffsN, coeffsO;
+                computeCoeffs(fracNew, coeffsN);
+                computeCoeffs(fracOld, coeffsO);
+
+                const auto vC1N   = SIMD_MM(set1_ps)(coeffsN.c[0]);
+                const auto vC2N   = SIMD_MM(set1_ps)(coeffsN.c[1]);
+                const auto vC3N   = SIMD_MM(set1_ps)(coeffsN.c[2]);
+                const auto vC4N   = SIMD_MM(set1_ps)(coeffsN.c[3]);
+                const auto vC5N   = SIMD_MM(set1_ps)(coeffsN.c[4]);
+                const auto vC6N   = SIMD_MM(set1_ps)(coeffsN.c[5]);
+                const auto vFracN = SIMD_MM(set1_ps)(fracNew);
+
+                const auto vC1O   = SIMD_MM(set1_ps)(coeffsO.c[0]);
+                const auto vC2O   = SIMD_MM(set1_ps)(coeffsO.c[1]);
+                const auto vC3O   = SIMD_MM(set1_ps)(coeffsO.c[2]);
+                const auto vC4O   = SIMD_MM(set1_ps)(coeffsO.c[3]);
+                const auto vC5O   = SIMD_MM(set1_ps)(coeffsO.c[4]);
+                const auto vC6O   = SIMD_MM(set1_ps)(coeffsO.c[5]);
+                const auto vFracO = SIMD_MM(set1_ps)(fracOld);
+
+                const float invSubN =
+                    (subN > 0) ? 1.0f / static_cast<float>(subN) : 0.0f;
+                const auto vInvSubN = SIMD_MM(set1_ps)(invSubN);
+
+                // The scratch window for this sub-block starts at the
+                // circular buffer position corresponding to sample
+                // (sampleOffset) of the current block, not sample 0.
+                // Without the sampleOffset term the SIMD inner loop
+                // would re-read the same first 16 samples of the delay
+                // line every sub-block and produce a strong ring at the
+                // sub-block rate.
+                const int readBaseL = (writeIdxL + sampleOffset) & kBufMask;
+                const int readBaseR = (writeIdxR + sampleOffset) & kBufMask;
+
+                readScratch(bufferL, tL,  (readBaseL - offsetNew) & kBufMask, scratchLen);
+                readScratch(bufferL, tL2, (readBaseL - offsetOld) & kBufMask, scratchLen);
+
+                if (!monoMode && ch1 != nullptr)
+                {
+                    readScratch(bufferR, tR,  (readBaseR - offsetNew) & kBufMask, scratchLen);
+                    readScratch(bufferR, tR2, (readBaseR - offsetOld) & kBufMask, scratchLen);
+                }
+
+                if (monoMode)
                 {
                     size_t n = 0;
-                    for (; n + 3 < numSamplesSize; n += 4)
+                    for (; n + 3 < subNs; n += 4)
                     {
                         const auto vNf    = SIMD_MM(set1_ps)(static_cast<float>(n));
-                        const auto vAlpha = SIMD_MM(mul_ps)(vInvN, SIMD_MM(add_ps)(vNf, vLaneIdx));
+                        const auto vAlpha = SIMD_MM(mul_ps)(vInvSubN, SIMD_MM(add_ps)(vNf, vLaneIdx));
 
                         SIMD_M128 vYN;
                         {
@@ -418,7 +404,8 @@ namespace MarsDSP::DSP {
                                         SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v4, vC5N),
                                                         SIMD_MM(mul_ps)(v5, vC6N)))));
 
-                            vYN = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v0, vC1N), SIMD_MM(mul_ps)(vFracN, vSum));
+                            vYN = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v0, vC1N),
+                                                  SIMD_MM(mul_ps)(vFracN, vSum));
                         }
 
                         SIMD_M128 vYO;
@@ -435,21 +422,152 @@ namespace MarsDSP::DSP {
                                         SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v4, vC5O),
                                                         SIMD_MM(mul_ps)(v5, vC6O)))));
 
-                            vYO = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v0, vC1O), SIMD_MM(mul_ps)(vFracO, vSum));
+                            vYO = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v0, vC1O),
+                                                  SIMD_MM(mul_ps)(vFracO, vSum));
                         }
 
-                        const auto vDelayedOut = SIMD_MM(add_ps)(vYO, SIMD_MM(mul_ps)(vAlpha, SIMD_MM(sub_ps)(vYN, vYO)));
+                        const auto vDelayedOut =
+                            SIMD_MM(add_ps)(vYO,
+                                            SIMD_MM(mul_ps)(vAlpha,
+                                                            SIMD_MM(sub_ps)(vYN, vYO)));
 
-                        SIMD_MM(store_ps)(&dsL[n], vDelayedOut);
+                        SIMD_MM(store_ps)(&dsL[sampleOffset + n], vDelayedOut);
                     }
-                    for (; n < numSamplesSize; ++n)
+                    for (; n < subNs; ++n)
                     {
-                        const auto alpha = static_cast<SampleType>(static_cast<float>(n) * invN);
-                        const SampleType yN = readInterpolated(tL,  static_cast<int>(n), coeffsN);
-                        const SampleType yO = readInterpolated(tL2, static_cast<int>(n), coeffsO);
-                        dsL[n] = static_cast<float>(yO + alpha * (yN - yO));
+                        const auto alpha =
+                            static_cast<SampleType>(static_cast<float>(n) * invSubN);
+                        const SampleType yN =
+                            readInterpolated(tL, static_cast<int>(n), coeffsN);
+                        const SampleType yO =
+                            readInterpolated(tL2, static_cast<int>(n), coeffsO);
+                        dsL[sampleOffset + n] =
+                            static_cast<float>(yO + alpha * (yN - yO));
                     }
                 }
+                else
+                {
+                    size_t n = 0;
+                    for (; n + 3 < subNs; n += 4)
+                    {
+                        const auto vNf    = SIMD_MM(set1_ps)(static_cast<float>(n));
+                        const auto vAlpha = SIMD_MM(mul_ps)(vInvSubN, SIMD_MM(add_ps)(vNf, vLaneIdx));
+
+                        SIMD_M128 vYL_N;
+                        {
+                            auto v0 = SIMD_MM(load_ps) (tL + n);
+                            auto v1 = SIMD_MM(loadu_ps)(tL + n + 1);
+                            auto v2 = SIMD_MM(loadu_ps)(tL + n + 2);
+                            auto v3 = SIMD_MM(loadu_ps)(tL + n + 3);
+                            auto v4 = SIMD_MM(loadu_ps)(tL + n + 4);
+                            auto v5 = SIMD_MM(loadu_ps)(tL + n + 5);
+                            auto vSum = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v1, vC2N),
+                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v2, vC3N),
+                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v3, vC4N),
+                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v4, vC5N),
+                                                        SIMD_MM(mul_ps)(v5, vC6N)))));
+
+                            vYL_N = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v0, vC1N),
+                                                    SIMD_MM(mul_ps)(vFracN, vSum));
+                        }
+                        SIMD_M128 vYL_O;
+                        {
+                            auto v0 = SIMD_MM(load_ps) (tL2 + n);
+                            auto v1 = SIMD_MM(loadu_ps)(tL2 + n + 1);
+                            auto v2 = SIMD_MM(loadu_ps)(tL2 + n + 2);
+                            auto v3 = SIMD_MM(loadu_ps)(tL2 + n + 3);
+                            auto v4 = SIMD_MM(loadu_ps)(tL2 + n + 4);
+                            auto v5 = SIMD_MM(loadu_ps)(tL2 + n + 5);
+                            auto vSum = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v1, vC2O),
+                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v2, vC3O),
+                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v3, vC4O),
+                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v4, vC5O),
+                                                        SIMD_MM(mul_ps)(v5, vC6O)))));
+
+                            vYL_O = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v0, vC1O),
+                                                    SIMD_MM(mul_ps)(vFracO, vSum));
+                        }
+                        const auto vDelL =
+                            SIMD_MM(add_ps)(vYL_O,
+                                            SIMD_MM(mul_ps)(vAlpha,
+                                                            SIMD_MM(sub_ps)(vYL_N, vYL_O)));
+                        SIMD_MM(store_ps)(&dsL[sampleOffset + n], vDelL);
+
+                        SIMD_M128 vYR_N;
+                        {
+                            auto v0 = SIMD_MM(load_ps) (tR + n);
+                            auto v1 = SIMD_MM(loadu_ps)(tR + n + 1);
+                            auto v2 = SIMD_MM(loadu_ps)(tR + n + 2);
+                            auto v3 = SIMD_MM(loadu_ps)(tR + n + 3);
+                            auto v4 = SIMD_MM(loadu_ps)(tR + n + 4);
+                            auto v5 = SIMD_MM(loadu_ps)(tR + n + 5);
+                            auto vSum = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v1, vC2N),
+                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v2, vC3N),
+                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v3, vC4N),
+                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v4, vC5N),
+                                                        SIMD_MM(mul_ps)(v5, vC6N)))));
+
+                            vYR_N = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v0, vC1N),
+                                                    SIMD_MM(mul_ps)(vFracN, vSum));
+                        }
+                        SIMD_M128 vYR_O;
+                        {
+                            auto v0 = SIMD_MM(load_ps) (tR2 + n);
+                            auto v1 = SIMD_MM(loadu_ps)(tR2 + n + 1);
+                            auto v2 = SIMD_MM(loadu_ps)(tR2 + n + 2);
+                            auto v3 = SIMD_MM(loadu_ps)(tR2 + n + 3);
+                            auto v4 = SIMD_MM(loadu_ps)(tR2 + n + 4);
+                            auto v5 = SIMD_MM(loadu_ps)(tR2 + n + 5);
+                            auto vSum = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v1, vC2O),
+                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v2, vC3O),
+                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v3, vC4O),
+                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v4, vC5O),
+                                                        SIMD_MM(mul_ps)(v5, vC6O)))));
+
+                            vYR_O = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v0, vC1O),
+                                                    SIMD_MM(mul_ps)(vFracO, vSum));
+                        }
+                        const auto vDelR =
+                            SIMD_MM(add_ps)(vYR_O,
+                                            SIMD_MM(mul_ps)(vAlpha,
+                                                            SIMD_MM(sub_ps)(vYR_N, vYR_O)));
+                        SIMD_MM(store_ps)(&dsR[sampleOffset + n], vDelR);
+                    }
+                    for (; n < subNs; ++n)
+                    {
+                        const auto alpha =
+                            static_cast<SampleType>(static_cast<float>(n) * invSubN);
+
+                        const SampleType yLN =
+                            readInterpolated(tL, static_cast<int>(n), coeffsN);
+                        const SampleType yLO =
+                            readInterpolated(tL2, static_cast<int>(n), coeffsO);
+                        const SampleType yRN =
+                            readInterpolated(tR, static_cast<int>(n), coeffsN);
+                        const SampleType yRO =
+                            readInterpolated(tR2, static_cast<int>(n), coeffsO);
+
+                        dsL[sampleOffset + n] =
+                            static_cast<float>(yLO + alpha * (yLN - yLO));
+                        dsR[sampleOffset + n] =
+                            static_cast<float>(yRO + alpha * (yRN - yRO));
+                    }
+                }
+
+                prevSubLfoOffsetSamples = currSubLfoOffsetSamples;
+                sampleOffset += subN;
+            }
+
+            lastWowBlockEndSample = wowEngine.getBlockEndSample(0);
+            lastFlutterBlockEndAc = flutterEngine.getBlockEndAc(0);
+            lastFlutterBlockEndDc = flutterEngine.getDcOffsetInSamples();
+            wowEngine.wrapPhase(0);
+            flutterEngine.wrapPhase(0);
+
+            if (isMono()) // mono
+            {
+                // ---------------- PASS 1: tap modulation -----------------------------
+                // Filled above in SIMD-friendly sub-blocks.
 
                 // ---------------- PASS 2: scalar HP → LP on dsL[] -------------------
                 // The s-plane filter sections are stateful so this pass is intrinsically
@@ -520,10 +638,8 @@ namespace MarsDSP::DSP {
                 }
 
                 // --- Pass 3.5: DC blocker on the feedback write-back ---
-                // Drain any accumulated DC from the ADAA softclip + OU
-                // drift chain before the samples get pushed into the
-                // circular buffer (where a long tail could otherwise
-                // amplify it for seconds).
+                // Drain DC from the ADAA softclip + modulation chain
+                // before samples get pushed into the circular buffer.
                 for (size_t k = 0; k < numSamplesSize; ++k)
                     wL[k] = feedbackWriteDcBlockerLeft.processSingleSample(wL[k]);
 
@@ -558,99 +674,8 @@ namespace MarsDSP::DSP {
             }
             else // stereo
             {
-                // ---------------- PASS 1: SIMD fill dsL[] and dsR[] ----------------
-                {
-                    size_t n = 0;
-                    for (; n + 3 < numSamplesSize; n += 4)
-                    {
-                        const auto vNf    = SIMD_MM(set1_ps)(static_cast<float>(n));
-                        const auto vAlpha = SIMD_MM(mul_ps)(vInvN, SIMD_MM(add_ps)(vNf, vLaneIdx));
-
-                        // L: Lagrange N + O, blend → dsL[n..n+3]
-                        SIMD_M128 vYL_N;
-                        {
-                            auto v0 = SIMD_MM(load_ps) (tL + n);
-                            auto v1 = SIMD_MM(loadu_ps)(tL + n + 1);
-                            auto v2 = SIMD_MM(loadu_ps)(tL + n + 2);
-                            auto v3 = SIMD_MM(loadu_ps)(tL + n + 3);
-                            auto v4 = SIMD_MM(loadu_ps)(tL + n + 4);
-                            auto v5 = SIMD_MM(loadu_ps)(tL + n + 5);
-                            auto vSum = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v1, vC2N),
-                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v2, vC3N),
-                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v3, vC4N),
-                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v4, vC5N),
-                                                        SIMD_MM(mul_ps)(v5, vC6N)))));
-
-                            vYL_N = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v0, vC1N), SIMD_MM(mul_ps)(vFracN, vSum));
-                        }
-                        SIMD_M128 vYL_O;
-                        {
-                            auto v0 = SIMD_MM(load_ps) (tL2 + n);
-                            auto v1 = SIMD_MM(loadu_ps)(tL2 + n + 1);
-                            auto v2 = SIMD_MM(loadu_ps)(tL2 + n + 2);
-                            auto v3 = SIMD_MM(loadu_ps)(tL2 + n + 3);
-                            auto v4 = SIMD_MM(loadu_ps)(tL2 + n + 4);
-                            auto v5 = SIMD_MM(loadu_ps)(tL2 + n + 5);
-                            auto vSum = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v1, vC2O),
-                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v2, vC3O),
-                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v3, vC4O),
-                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v4, vC5O),
-                                                        SIMD_MM(mul_ps)(v5, vC6O)))));
-
-                            vYL_O = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v0, vC1O), SIMD_MM(mul_ps)(vFracO, vSum));
-                        }
-                        const auto vDelL = SIMD_MM(add_ps)(vYL_O, SIMD_MM(mul_ps)(vAlpha, SIMD_MM(sub_ps)(vYL_N, vYL_O)));
-                        SIMD_MM(store_ps)(&dsL[n], vDelL);
-
-                        // R: Lagrange N + O, blend → dsR[n..n+3]
-                        SIMD_M128 vYR_N;
-                        {
-                            auto v0 = SIMD_MM(load_ps) (tR + n);
-                            auto v1 = SIMD_MM(loadu_ps)(tR + n + 1);
-                            auto v2 = SIMD_MM(loadu_ps)(tR + n + 2);
-                            auto v3 = SIMD_MM(loadu_ps)(tR + n + 3);
-                            auto v4 = SIMD_MM(loadu_ps)(tR + n + 4);
-                            auto v5 = SIMD_MM(loadu_ps)(tR + n + 5);
-                            auto vSum = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v1, vC2N),
-                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v2, vC3N),
-                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v3, vC4N),
-                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v4, vC5N),
-                                                        SIMD_MM(mul_ps)(v5, vC6N)))));
-
-                            vYR_N = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v0, vC1N), SIMD_MM(mul_ps)(vFracN, vSum));
-                        }
-                        SIMD_M128 vYR_O;
-                        {
-                            auto v0 = SIMD_MM(load_ps) (tR2 + n);
-                            auto v1 = SIMD_MM(loadu_ps)(tR2 + n + 1);
-                            auto v2 = SIMD_MM(loadu_ps)(tR2 + n + 2);
-                            auto v3 = SIMD_MM(loadu_ps)(tR2 + n + 3);
-                            auto v4 = SIMD_MM(loadu_ps)(tR2 + n + 4);
-                            auto v5 = SIMD_MM(loadu_ps)(tR2 + n + 5);
-                            auto vSum = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v1, vC2O),
-                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v2, vC3O),
-                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v3, vC4O),
-                                        SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v4, vC5O),
-                                                        SIMD_MM(mul_ps)(v5, vC6O)))));
-
-                            vYR_O = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v0, vC1O), SIMD_MM(mul_ps)(vFracO, vSum));
-                        }
-                        const auto vDelR = SIMD_MM(add_ps)(vYR_O, SIMD_MM(mul_ps)(vAlpha, SIMD_MM(sub_ps)(vYR_N, vYR_O)));
-                        SIMD_MM(store_ps)(&dsR[n], vDelR);
-                    }
-                    for (; n < numSamplesSize; ++n)
-                    {
-                        const auto alpha = static_cast<SampleType>(static_cast<float>(n) * invN);
-
-                        const SampleType yLN = readInterpolated(tL,  static_cast<int>(n), coeffsN);
-                        const SampleType yLO = readInterpolated(tL2, static_cast<int>(n), coeffsO);
-                        const SampleType yRN = readInterpolated(tR,  static_cast<int>(n), coeffsN);
-                        const SampleType yRO = readInterpolated(tR2, static_cast<int>(n), coeffsO);
-
-                        dsL[n] = static_cast<float>(yLO + alpha * (yLN - yLO));
-                        dsR[n] = static_cast<float>(yRO + alpha * (yRN - yRO));
-                    }
-                }
+                // ---------------- PASS 1: tap modulation -----------------------------
+                // Filled above in SIMD-friendly sub-blocks.
 
                 // ---------------- PASS 2: scalar filter + crossfeed blend ----------
                 // Each sample: HP → LP per channel, then blend the two filtered
@@ -753,9 +778,9 @@ namespace MarsDSP::DSP {
                 }
 
                 // --- Pass 3.5: DC blocker on the feedback write-back ---
-                // Drain any accumulated DC from the ADAA softclip + OU
-                // drift chain before the samples get pushed into the
-                // circular buffer. One blocker per channel.
+                // Drain DC from the ADAA softclip + modulation chain
+                // before samples get pushed into the circular buffer.
+                // One blocker per channel.
                 for (size_t k = 0; k < numSamplesSize; ++k)
                 {
                     wL[k] = feedbackWriteDcBlockerLeft .processSingleSample(wL[k]);
@@ -970,9 +995,8 @@ namespace MarsDSP::DSP {
                 std::clamp(normalisedAmount, 0.0f, 1.0f));
         }
 
-        // Reverb tap-modulation depth (0..1). Cached here so the OU
-        // drift can add its per-block wobble before process() pushes
-        // the combined value to the processor.
+        // Reverb tap-modulation depth (0..1). Cached so process() can
+        // push it to the ChronosReverb processor every block.
         void setReverbModulationParam(const float normalisedAmount) noexcept
         {
             cachedReverbModulationNormalised = std::clamp(normalisedAmount, 0.0f, 1.0f);
@@ -994,21 +1018,40 @@ namespace MarsDSP::DSP {
                 std::clamp(normalisedAmount, 0.0f, 1.0f));
         }
 
-        // Ornstein-Uhlenbeck drift intensity (0..1). setOuAmountParam
-        // caches the knob value; both OU processes (delay-position and
-        // reverb-modulation) are re-seeded via prepareBlock() each
-        // processBlock() call using
-        //     (ouBypassed ? 0.0 : ouDriftAmountCached).
-        void setOuAmountParam(const float normalisedAmount) noexcept
+        // ------------------------------------------------------------------
+        //  Wow and flutter modulation knobs. The engines run every block
+        //  regardless of knob position so the phase stays continuous; any
+        //  knob at zero simply produces zero contribution to the main
+        //  tap position.
+        // ------------------------------------------------------------------
+        void setWowRateParam(const float normalisedAmount) noexcept
         {
-            ouDriftAmountCached = std::clamp(normalisedAmount, 0.0f, 1.0f);
+            wowRateCached = std::clamp(normalisedAmount, 0.0f, 1.0f);
         }
 
-        // Toggle the OU drift entirely off without losing the user's
-        // amount knob position.
-        void setOuBypassedParam(const bool shouldBypassOu) noexcept
+        void setWowDepthParam(const float normalisedAmount) noexcept
         {
-            ouBypassed = shouldBypassOu;
+            wowDepthCached = std::clamp(normalisedAmount, 0.0f, 1.0f);
+        }
+
+        void setWowDriftParam(const float normalisedAmount) noexcept
+        {
+            wowDriftCached = std::clamp(normalisedAmount, 0.0f, 1.0f);
+        }
+
+        void setFlutterOnOffParam(const bool flutterIsOn) noexcept
+        {
+            flutterOnOffCached = flutterIsOn;
+        }
+
+        void setFlutterRateParam(const float normalisedAmount) noexcept
+        {
+            flutterRateCached = std::clamp(normalisedAmount, 0.0f, 1.0f);
+        }
+
+        void setFlutterDepthParam(const float normalisedAmount) noexcept
+        {
+            flutterDepthCached = std::clamp(normalisedAmount, 0.0f, 1.0f);
         }
 
         // Master bypass for the reverb send. When true the ChronosReverb
@@ -1286,21 +1329,15 @@ namespace MarsDSP::DSP {
         Bypass::CrossfadeBypassEngine<SampleType> masterPluginBypassEngine{};
         Bypass::CrossfadeBypassEngine<SampleType> reverbSendBypassEngine{};
 
-        // Two independent Ornstein-Uhlenbeck drift processes:
-        //   ouDelayPositionDrift       - modulates the main circular
-        //                                buffer read position with slow
-        //                                tape-style wow/flutter.
-        //   ouReverbModulationDrift    - adds an extra per-block wobble
-        //                                to the ChronosReverb's own
-        //                                tap-modulation knob so the
-        //                                reverb tail also gets OU
-        //                                character when the user
-        //                                engages the OU processor.
-        Modulation::OuDriftProcess ouDelayPositionDrift;
-        Modulation::OuDriftProcess ouReverbModulationDrift;
+        // Wow and flutter LFO generators. Wow is a slow single-cosine
+        // drift with per-block rate perturbation; flutter is the
+        // three-sinusoid tape capstan wobble. Both produce per-sample
+        // offsets in samples of the delay read position.
+        Modulation::WowEngine     wowEngine;
+        Modulation::FlutterEngine flutterEngine;
 
         // Per-channel DC blockers for the feedback write-back path. Drain
-        // any slow DC the ADAA softclipper + FDN + OU drift chain might
+        // any slow DC the ADAA softclipper + modulation chain may
         // introduce before it can accumulate in the circular buffer.
         Filters::DcBlocker<SampleType> feedbackWriteDcBlockerLeft{};
         Filters::DcBlocker<SampleType> feedbackWriteDcBlockerRight{};
@@ -1333,14 +1370,21 @@ namespace MarsDSP::DSP {
         // engine transitions the FDN out. The delay itself is unaffected.
         bool reverbChainBypassed = false;
 
-        // OU drift state. The engine's internal noiseAmplitudeFactor is
-        // derived from (ouBypassed ? 0 : ouDriftAmountCached) each time
-        // either setter is called. When engaged, OU drift modulates
-        // BOTH the main tap read position AND the ChronosReverb
-        // processor's tap-modulation knob so the reverb tail also
-        // picks up the tape-wow character.
-        float ouDriftAmountCached = 0.0f;
-        bool  ouBypassed          = true;
+        // Cached wow / flutter knob values. process() reads these once
+        // per block and pushes them into the generators.
+        float wowRateCached       = 0.0f;
+        float wowDepthCached      = 0.0f;
+        float wowDriftCached      = 0.0f;
+        float flutterRateCached   = 0.0f;
+        float flutterDepthCached  = 0.0f;
+        bool  flutterOnOffCached  = false;
+
+        // Previous block's block-end LFO values. Reused as this block's
+        // posOld so the SIMD Lagrange crossfade is continuous across
+        // block boundaries.
+        float lastWowBlockEndSample = 0.0f;
+        float lastFlutterBlockEndAc = 0.0f;
+        float lastFlutterBlockEndDc = 0.0f;
 
         // User's reverb mix knob, cached so the reverb-send bypass gate
         // below can crossfade-out click-free whenever the user drops
@@ -1348,8 +1392,7 @@ namespace MarsDSP::DSP {
         float cachedReverbMixNormalised = 0.33f;
 
         // User's reverb tap-modulation knob, cached so process() can
-        // add the per-block OU drift on top of it before pushing the
-        // combined target value into the ChronosReverb processor.
+        // push it to the ChronosReverb processor every block.
         float cachedReverbModulationNormalised = 0.5f;
     };
 }
