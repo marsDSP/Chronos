@@ -29,7 +29,13 @@ namespace MarsDSP::DSP::Modulation
             juce::ignoreUnused (maxBlockSize);
 
             sampleRate = static_cast<float>(sampleRateHz);
-            amplitudeInSamples = 1000.0f * 1000.0f / sampleRate;
+            // Max depth target: 5 ms of delay modulation, scaled to samples.
+            // The original formula (1e6 / sampleRate) was an inverted unit
+            // conversion that produced only ~21 samples (~0.43 ms) at 48 kHz,
+            // yielding <0.15% pitch deviation – below the perception threshold
+            // at slow rates. 5 ms gives ~1.5% at max rate, consistent with
+            // audible tape wow.
+            amplitudeInSamples = 5.0f * sampleRate / 1000.0f;
 
             depthSlew.resize (static_cast<size_t>(numChannels));
             for (auto& slew : depthSlew)
@@ -50,7 +56,10 @@ namespace MarsDSP::DSP::Modulation
                            float depthNormalised,
                            float driftNormalised) noexcept
         {
-            const float depthCurve = depthNormalised * depthNormalised * depthNormalised;
+            // Quadratic taper: depth^3 left the lower half of the knob nearly
+            // silent (0.5 knob → 0.125 depth). Squaring still provides a
+            // gentle concave feel while keeping the effect audible mid-range.
+            const float depthCurve = depthNormalised * depthNormalised;
             for (auto& slew : depthSlew)
                 slew.setTargetValue (juce::jmax (kDepthFloor, depthCurve));
 

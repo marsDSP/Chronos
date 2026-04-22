@@ -53,7 +53,12 @@ namespace MarsDSP::DSP::Modulation
         // depthNormalised in [0, 1] maps to the aggregate flutter amplitude.
         void prepareBlock (float rateNormalised, float depthNormalised) noexcept
         {
-            const float skewedDepth = std::pow (depthNormalised, 3.0f) * (81.0f / 625.0f);
+            // depth^2 * 0.5 → depthTarget = depth * sqrt(0.5) ≈ depth * 0.707.
+            // The previous formula (depth^3 * 81/625) capped depthTarget at
+            // 0.36 at full knob (depth^1.5 * 0.36), leaving the effect at
+            // <13% of amplitude at 50% knob. The new curve is linear in depth
+            // with a 0.707 ceiling, doubling audibility across the whole range.
+            const float skewedDepth = std::pow (depthNormalised, 2.0f) * 0.5f;
             const float depthTarget = std::sqrt (juce::jmax (0.0f, skewedDepth));
             for (auto& slew : depthSlew)
                 slew.setTargetValue (juce::jmax (kDepthFloor, depthTarget));
