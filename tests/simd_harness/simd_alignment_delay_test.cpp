@@ -84,7 +84,8 @@ int main()
             for (int i = 0; i < nSamples; ++i) {
                 juce::AudioBuffer<float> buf(1, 1);
                 buf.setSample(0, 0, inputBuffer[offset + i]);
-                juce::dsp::AudioBlock<float> block(buf);
+                AlignedBuffers::AlignedSIMDBufferView<float> block(
+                    buf.getArrayOfWritePointers(), buf.getNumChannels(), buf.getNumSamples());
                 engineScalar.process(block, 1);
                 outScalar[i] = buf.getSample(0, 0);
             }
@@ -94,7 +95,8 @@ int main()
             for (int i = 0; i < nSamples; ++i) bufSIMD.setSample(0, i, inputBuffer[offset + i]);
             
             auto start = std::chrono::high_resolution_clock::now();
-            juce::dsp::AudioBlock<float> blockSIMD(bufSIMD);
+            AlignedBuffers::AlignedSIMDBufferView<float> blockSIMD(
+                bufSIMD.getArrayOfWritePointers(), bufSIMD.getNumChannels(), bufSIMD.getNumSamples());
             engineSIMD.process(blockSIMD, nSamples);
             auto end = std::chrono::high_resolution_clock::now();
             

@@ -6,6 +6,7 @@
     <mapping directory="$PROJECT_DIR$/libs/gcem" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/libs/kfr" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/libs/simde" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/libs/simde/test/munit" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/libs/tracy" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/libs/xsimd" vcs="Git" />
   </component>

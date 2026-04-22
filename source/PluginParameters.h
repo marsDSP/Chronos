@@ -60,7 +60,7 @@ namespace Chronos
     // `fromVersion` is whatever was stored in kStateVersionProperty (0 when
     // the tree was saved by a pre-versioning build).
     // --------------------------------------------------------------
-    inline void migrateStateTree(juce::ValueTree& tree, int fromVersion)
+    inline void migrateStateTree(ValueTree& tree, int fromVersion)
     {
         if (fromVersion >= kPluginStateVersion) return;
 
@@ -82,19 +82,19 @@ namespace Chronos
     // Helper for future migrations: rewrite every PARAM child whose `id`
     // matches oldId to newId, preserving the value.
     // --------------------------------------------------------------
-    inline void renameParam(juce::ValueTree& tree,
-                            const juce::Identifier& idProp,
-                            juce::StringRef oldId,
-                            juce::StringRef newId)
+    inline void renameParam(const ValueTree& tree,
+                            const Identifier& idProp,
+                            const StringRef oldId,
+                            const StringRef newId)
     {
-        const juce::String newIdStr (newId);
+        const String newIdStr (newId);
         for (int i = 0; i < tree.getNumChildren(); ++i)
         {
             auto child = tree.getChild(i);
             if (child.hasProperty(idProp)
                 && child.getProperty(idProp).toString() == oldId)
             {
-                child.setProperty(idProp, juce::var(newIdStr), nullptr);
+                child.setProperty(idProp, var(newIdStr), nullptr);
             }
         }
     }

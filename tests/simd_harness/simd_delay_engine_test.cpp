@@ -94,7 +94,8 @@ TestResult runTest(const std::string& name, bool isMono)
         for (int ch = 0; ch < spec.numChannels; ++ch)
             subBuffer.copyFrom(ch, 0, bufferSIMD, ch, i, curN);
         
-        juce::dsp::AudioBlock<float> block(subBuffer);
+        AlignedBuffers::AlignedSIMDBufferView<float> block(
+            subBuffer.getArrayOfWritePointers(), subBuffer.getNumChannels(), subBuffer.getNumSamples());
         engineSIMD.process(block, curN);
         
         for (int ch = 0; ch < spec.numChannels; ++ch)
@@ -109,7 +110,8 @@ TestResult runTest(const std::string& name, bool isMono)
         for (int ch = 0; ch < spec.numChannels; ++ch)
             subBuffer.copyFrom(ch, 0, input.data() + i, curN);
         
-        juce::dsp::AudioBlock<float> block(subBuffer);
+        AlignedBuffers::AlignedSIMDBufferView<float> block(
+            subBuffer.getArrayOfWritePointers(), subBuffer.getNumChannels(), subBuffer.getNumSamples());
         engineScalar.process(block, curN);
         for (int j = 0; j < curN; ++j) outputScalar[i + j] = subBuffer.getSample(0, j);
     }
@@ -184,7 +186,8 @@ int main()
             int curN = std::min(blockSize, numSamples - i);
             juce::AudioBuffer<float> subBuffer(2, curN);
             for (int ch = 0; ch < 2; ++ch) subBuffer.copyFrom(ch, 0, bufferSIMD, ch, i, curN);
-            juce::dsp::AudioBlock<float> block(subBuffer);
+            AlignedBuffers::AlignedSIMDBufferView<float> block(
+                subBuffer.getArrayOfWritePointers(), subBuffer.getNumChannels(), subBuffer.getNumSamples());
             engineSIMD.process(block, curN);
             for (int ch = 0; ch < 2; ++ch) bufferSIMD.copyFrom(ch, i, subBuffer, ch, 0, curN);
         }
@@ -193,7 +196,8 @@ int main()
             int curN = std::min(blockSize, numSamples - i);
             juce::AudioBuffer<float> subBuffer(2, curN);
             for (int ch = 0; ch < 2; ++ch) subBuffer.copyFrom(ch, 0, input.data() + i, curN);
-            juce::dsp::AudioBlock<float> block(subBuffer);
+            AlignedBuffers::AlignedSIMDBufferView<float> block(
+                subBuffer.getArrayOfWritePointers(), subBuffer.getNumChannels(), subBuffer.getNumSamples());
             engineScalar.process(block, curN);
             for (int j = 0; j < curN; ++j) resR.scalarOut[i + j] = subBuffer.getSample(1, j);
         }

@@ -7,6 +7,10 @@
 #include <JuceHeader.h>
 #include "dsp/math/fastermath.h"
 #include "dsp/engine/delay/waveshaper.h"
+#include "dsp/filter/splane_curvefit_highpass.h"
+#include "dsp/filter/splane_curvefit_lowpass.h"
+#include "dsp/buffers/aligned_simd_buffer.h"
+#include "dsp/buffers/aligned_simd_buffer_view.h"
 
 namespace MarsDSP::DSP {
     template<typename SampleType, int N_BLOCK = 4112>
@@ -16,10 +20,16 @@ namespace MarsDSP::DSP {
 
         void AllocBuffer() noexcept
         {
-            if (bufferL.size() < static_cast<size_t>(kBufSize + kTail))
+            // The circular buffer holds stereo samples in an xsimd-aligned
+            // backing store. setMaxSize() is idempotent if the requested
+            // size is already <= the allocated size, but we re-check
+            // explicitly so resizing only happens on first prepare() call.
+            if (circularDelayBuffer.getNumChannels() < 2
+                || circularDelayBuffer.getNumSamples() < (kBufSize + kTail))
             {
-                bufferL.assign(static_cast<size_t>(kBufSize + kTail), SampleType(0));
-                bufferR.assign(static_cast<size_t>(kBufSize + kTail), SampleType(0));
+                circularDelayBuffer.setMaxSize(2, kBufSize + kTail);
+                circularDelayBuffer.setCurrentSize(2, kBufSize + kTail);
+                circularDelayBuffer.clearAllSamples();
             }
         }
 
@@ -57,18 +67,17 @@ namespace MarsDSP::DSP {
             writeIdxL = writeIdxR = 0;
             prevPos   = SampleType(0);
             duckGain  = SampleType(1);
-            if (!bufferL.empty()) std::fill(bufferL.begin(), bufferL.end(), SampleType(0));
-            if (!bufferR.empty()) std::fill(bufferR.begin(), bufferR.end(), SampleType(0));
+            circularDelayBuffer.clearAllSamples();
 
             // snap smoothers so the first block after reset doesn't ramp from 0.
-            lMix.instantize(std::clamp(mix,       0.0f, 1.0f));
-            lFbL.instantize(std::clamp(feedbackL, 0.0f, 0.99f));
-            lFbR.instantize(std::clamp(feedbackR, 0.0f, 0.99f));
+            lMix.instantize(std::clamp(mix,             0.0f, 1.0f));
+            lFbL.instantize(std::clamp(feedbackL,       0.0f, 0.99f));
+            lFbR.instantize(std::clamp(feedbackR,       0.0f, 0.99f));
             lCrossfeed.instantize(std::clamp(crossfeed, 0.0f, 1.0f));
-            lagDelayMs.newValue(std::clamp(delayTime, minDelayTime, maxDelayTime));
+            lagDelayMs.newValue(std::clamp(delayTime,   minDelayTime, maxDelayTime));
             lagDelayMs.instantize();
 
-            // Clear biquad state on reset.
+            // Clear s-plane feedback-path filter state on reset.
             fbLP_L.reset(); fbLP_R.reset();
             fbHP_L.reset(); fbHP_R.reset();
 
@@ -82,11 +91,16 @@ namespace MarsDSP::DSP {
             sampleRate = spec.sampleRate;
             AllocBuffer();
 
-            // 10ms attack, 100ms release for ducking response
+            // 10ms attack, 50ms release for ducking response
             duckAtkCoeff = static_cast<SampleType>(1.0 - std::exp(-1.0 / (0.010 * sampleRate)));
-            duckRelCoeff = static_cast<SampleType>(1.0 - std::exp(-1.0 / (0.100 * sampleRate)));
+            duckRelCoeff = static_cast<SampleType>(1.0 - std::exp(-1.0 / (0.050 * sampleRate)));
 
             lagDelayMs.setRateInMilliseconds(150.0, sampleRate, 1.0);
+
+            // Push the sample rate into each s-plane feedback-path filter
+            // before computing cutoff-dependent coefficients.
+            fbLP_L.prepare(sampleRate); fbLP_R.prepare(sampleRate);
+            fbHP_L.prepare(sampleRate); fbHP_R.prepare(sampleRate);
 
             // Initial filter coefficients.
             updateFilterCoeffs();
@@ -96,21 +110,29 @@ namespace MarsDSP::DSP {
             reset();
         }
 
-        void process(const dsp::AudioBlock<SampleType> &block, const int numSamples) noexcept
+        void process(const AlignedBuffers::AlignedSIMDBufferView<SampleType> &block,
+                     const int numSamples) noexcept
         {
             if (bypassed)
                 return;
 
-            const size_t numCh = block.getNumChannels();
+            const int numCh = block.getNumChannels();
             auto *ch0 = numCh > 0 ? block.getChannelPointer(0) : nullptr;
             auto *ch1 = numCh > 1 ? block.getChannelPointer(1) : nullptr;
 
+            // Pull the circular buffer's raw per-channel pointers once per
+            // block so the hot loops below still see the same plain
+            // SampleType* they had before the std::vector -> AlignedSIMDBuffer
+            // migration.
+            auto* const bufferL = circularDelayBuffer.getWritePointer(0);
+            auto* const bufferR = circularDelayBuffer.getWritePointer(1);
+
             // push targets into block-rate linear ramp smoothers
             // SIMD inner loops consume per-quad vectors via .quad(q).
-            lMix.setTarget(std::clamp(mix,       0.0f, 1.0f),  numSamples);
-            lFbL.setTarget(std::clamp(feedbackL, 0.0f, 0.99f), numSamples);
-            lFbR.setTarget(std::clamp(feedbackR, 0.0f, 0.99f), numSamples);
-            lCrossfeed.setTarget(std::clamp(crossfeed, 0.0f, 1.0f), numSamples);
+            lMix.setTarget(std::clamp(mix,             0.0f, 1.0f),  numSamples);
+            lFbL.setTarget(std::clamp(feedbackL,       0.0f, 0.99f), numSamples);
+            lFbR.setTarget(std::clamp(feedbackR,       0.0f, 0.99f), numSamples);
+            lCrossfeed.setTarget(std::clamp(crossfeed, 0.0f, 1.0f),  numSamples);
 
             // Recompute feedback-path filter coefficients only when cutoffs change.
             if (lowCutHz != lastLowCutHz || highCutHz != lastHighCutHz)
@@ -128,26 +150,30 @@ namespace MarsDSP::DSP {
             const size_t numSamplesSize = static_cast<size_t>(numSamples);
             assert(numSamplesSize <= N_BLOCK - 8);
 
-            auto msToPos = [&](float ms) {
+            auto msToPos = [&](float ms)
+            {
                 const auto s = static_cast<SampleType>(sampleRate * (ms * 0.001));
                 return std::max(s, static_cast<SampleType>(numSamplesSize + 1));
             };
+
             const SampleType posOld = msToPos(delayMsOld);
             const SampleType posNew = msToPos(delayMsNew);
 
             const int offsetOld = static_cast<int>(std::floor(static_cast<double>(posOld)));
             const int offsetNew = static_cast<int>(std::floor(static_cast<double>(posNew)));
+
             const SampleType fracOld = posOld - static_cast<SampleType>(offsetOld);
             const SampleType fracNew = posNew - static_cast<SampleType>(offsetNew);
 
             // Dual scratch pre-read (memcpy with tail-mirror trick from earlier design).
             const int total = static_cast<int>(numSamplesSize) + kTail;
-            auto readScratch = [&](const std::vector<SampleType>& src,
-                                   SampleType* dst, int rpos) {
+            auto readScratch = [&](const SampleType* src, SampleType* dst, int rpos)
+            {
                 const int first = std::min(total, kBufSize + kTail - rpos);
-                std::memcpy(dst, &src[rpos], first * sizeof(SampleType));
+                std::memcpy(dst, src + rpos, first * sizeof(SampleType));
+
                 if (first < total)
-                    std::memcpy(dst + first, &src[kTail], (total - first) * sizeof(SampleType));
+                    std::memcpy(dst + first, src + kTail, (total - first) * sizeof(SampleType));
             };
 
             readScratch(bufferL, tL,  (writeIdxL - offsetNew) & kBufMask);
@@ -160,18 +186,19 @@ namespace MarsDSP::DSP {
             }
 
             // Dual Lagrange coefficient set: N for new frac, O for old frac.
-            auto computeCoeffs = [](SampleType frac, LagrangeCoeffs& c) {
+            auto computeCoeffs = [](SampleType frac, LagrangeCoeffs& c)
+            {
                 const float d1 = frac - 1.0f;
                 const float d2 = frac - 2.0f;
                 const float d3 = frac - 3.0f;
                 const float d4 = frac - 4.0f;
                 const float d5 = frac - 5.0f;
                 c.c[0] = -d1 * d2 * d3 * d4 * d5 / 120.0f;
-                c.c[1] =  d2 * d3 * d4 * d5       /  24.0f;
-                c.c[2] = -d1 * d3 * d4 * d5       /  12.0f;
-                c.c[3] =  d1 * d2 * d4 * d5       /  12.0f;
-                c.c[4] = -d1 * d2 * d3 * d5       /  24.0f;
-                c.c[5] =  d1 * d2 * d3 * d4       / 120.0f;
+                c.c[1] =  d2 * d3 * d4 * d5      /  24.0f;
+                c.c[2] = -d1 * d3 * d4 * d5      /  12.0f;
+                c.c[3] =  d1 * d2 * d4 * d5      /  12.0f;
+                c.c[4] = -d1 * d2 * d3 * d5      /  24.0f;
+                c.c[5] =  d1 * d2 * d3 * d4      / 120.0f;
                 c.frac = frac;
             };
 
@@ -197,8 +224,7 @@ namespace MarsDSP::DSP {
             const auto vFracO = SIMD_MM(set1_ps)(fracOld);
 
             // Alpha ramp: 0 at block start, 1 at block end. Applied per SIMD lane.
-            const float invN = (numSamplesSize > 0)
-                               ? 1.0f / static_cast<float>(numSamplesSize) : 0.0f;
+            const float invN = (numSamplesSize > 0) ? 1.0f / static_cast<float>(numSamplesSize) : 0.0f;
             const auto vInvN    = SIMD_MM(set1_ps)(invN);
             const auto vLaneIdx = SIMD_MM(setr_ps)(0.0f, 1.0f, 2.0f, 3.0f);
 
@@ -231,8 +257,8 @@ namespace MarsDSP::DSP {
                                         SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v3, vC4N),
                                         SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v4, vC5N),
                                                         SIMD_MM(mul_ps)(v5, vC6N)))));
-                            vYN = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v0, vC1N),
-                                                  SIMD_MM(mul_ps)(vFracN, vSum));
+
+                            vYN = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v0, vC1N), SIMD_MM(mul_ps)(vFracN, vSum));
                         }
 
                         SIMD_M128 vYO;
@@ -248,13 +274,12 @@ namespace MarsDSP::DSP {
                                         SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v3, vC4O),
                                         SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v4, vC5O),
                                                         SIMD_MM(mul_ps)(v5, vC6O)))));
-                            vYO = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v0, vC1O),
-                                                  SIMD_MM(mul_ps)(vFracO, vSum));
+
+                            vYO = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v0, vC1O), SIMD_MM(mul_ps)(vFracO, vSum));
                         }
 
-                        const auto vDelayedOut = SIMD_MM(add_ps)(vYO,
-                                                    SIMD_MM(mul_ps)(vAlpha,
-                                                                    SIMD_MM(sub_ps)(vYN, vYO)));
+                        const auto vDelayedOut = SIMD_MM(add_ps)(vYO, SIMD_MM(mul_ps)(vAlpha, SIMD_MM(sub_ps)(vYN, vYO)));
+
                         SIMD_MM(store_ps)(&dsL[n], vDelayedOut);
                     }
                     for (; n < numSamplesSize; ++n)
@@ -267,8 +292,8 @@ namespace MarsDSP::DSP {
                 }
 
                 // ---------------- PASS 2: scalar HP → LP on dsL[] -------------------
-                // Biquads are stateful so this pass is intrinsically scalar, but it's
-                // a tight sequential loop over ~4KB in L1 so it's cheap.
+                // The s-plane filter sections are stateful so this pass is intrinsically
+                // scalar, but it's a tight sequential loop over ~4KB in L1 so it's cheap.
                 for (size_t k = 0; k < numSamplesSize; ++k)
                     dsL[k] = fbLP_L.processSample(fbHP_L.processSample(dsL[k]));
 
@@ -287,10 +312,12 @@ namespace MarsDSP::DSP {
                         const auto vFb          = lFbL.quad(q);
 
                         auto vMonoSum = SIMD_MM(setzero_ps)();
+
                         if (ch0 != nullptr && ch1 != nullptr)
                             vMonoSum = SIMD_MM(mul_ps)(SIMD_MM(set1_ps)(0.5f),
-                                                       SIMD_MM(add_ps)(SIMD_MM(loadu_ps)(ch0 + n),
-                                                                       SIMD_MM(loadu_ps)(ch1 + n)));
+                                       SIMD_MM(add_ps)(SIMD_MM(loadu_ps)(ch0 + n),
+                                       SIMD_MM(loadu_ps)(ch1 + n)));
+
                         else if (ch0 != nullptr) vMonoSum = SIMD_MM(loadu_ps)(ch0 + n);
                         else if (ch1 != nullptr) vMonoSum = SIMD_MM(loadu_ps)(ch1 + n);
 
@@ -298,15 +325,12 @@ namespace MarsDSP::DSP {
                         const auto vDuckedOut = SIMD_MM(mul_ps)(vFiltered, vDuckGain);
 
                         // ADAA softclip on the write-feedback branch.
-                        const auto vFbArg = SIMD_MM(add_ps)(vMonoSum,
-                                               SIMD_MM(mul_ps)(vFb, vDuckedOut));
+                        const auto vFbArg = SIMD_MM(add_ps)(vMonoSum, SIMD_MM(mul_ps)(vFb, vDuckedOut));
                         const auto vWriteVal = fasterTanhADAA(vFbArg, cxFb, cfFb);
                         SIMD_MM(storeu_ps)(&wL[n], vWriteVal);
 
                         // ADAA softclip on the dry/wet output branch.
-                        const auto vOutArg = SIMD_MM(add_ps)(
-                            SIMD_MM(mul_ps)(vDuckedOut, vMix),
-                            SIMD_MM(mul_ps)(vMonoSum,   vOneMinusMix));
+                        const auto vOutArg = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(vDuckedOut, vMix), SIMD_MM(mul_ps)(vMonoSum, vOneMinusMix));
                         const auto vOut = fasterTanhADAA(vOutArg, cxOut, cfOut);
 
                         if (ch0 != nullptr) SIMD_MM(storeu_ps)(ch0 + n, vOut);
@@ -324,11 +348,8 @@ namespace MarsDSP::DSP {
 
                         const SampleType duckedOut = static_cast<SampleType>(dsL[n]) * duckGain;
 
-                        wL[n] = static_cast<SampleType>(fasterTanhADAA(
-                            static_cast<float>(monoSum + fbP * duckedOut), cxFb, cfFb));
-                        const SampleType out = static_cast<SampleType>(fasterTanhADAA(
-                            static_cast<float>(duckedOut * mixP + monoSum * oneMinusMx),
-                            cxOut, cfOut));
+                        wL[n] = static_cast<SampleType>(fasterTanhADAA(static_cast<float>(monoSum + fbP * duckedOut), cxFb, cfFb));
+                        const SampleType out = static_cast<SampleType>(fasterTanhADAA(static_cast<float>(duckedOut * mixP + monoSum * oneMinusMx), cxOut, cfOut));
 
                         if (ch0 != nullptr) ch0[n] = out;
                         if (ch1 != nullptr) ch1[n] = out;
@@ -391,8 +412,8 @@ namespace MarsDSP::DSP {
                                         SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v3, vC4N),
                                         SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v4, vC5N),
                                                         SIMD_MM(mul_ps)(v5, vC6N)))));
-                            vYL_N = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v0, vC1N),
-                                                    SIMD_MM(mul_ps)(vFracN, vSum));
+
+                            vYL_N = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v0, vC1N), SIMD_MM(mul_ps)(vFracN, vSum));
                         }
                         SIMD_M128 vYL_O;
                         {
@@ -407,12 +428,10 @@ namespace MarsDSP::DSP {
                                         SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v3, vC4O),
                                         SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v4, vC5O),
                                                         SIMD_MM(mul_ps)(v5, vC6O)))));
-                            vYL_O = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v0, vC1O),
-                                                    SIMD_MM(mul_ps)(vFracO, vSum));
+
+                            vYL_O = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v0, vC1O), SIMD_MM(mul_ps)(vFracO, vSum));
                         }
-                        const auto vDelL = SIMD_MM(add_ps)(vYL_O,
-                                              SIMD_MM(mul_ps)(vAlpha,
-                                                              SIMD_MM(sub_ps)(vYL_N, vYL_O)));
+                        const auto vDelL = SIMD_MM(add_ps)(vYL_O, SIMD_MM(mul_ps)(vAlpha, SIMD_MM(sub_ps)(vYL_N, vYL_O)));
                         SIMD_MM(store_ps)(&dsL[n], vDelL);
 
                         // R: Lagrange N + O, blend → dsR[n..n+3]
@@ -429,8 +448,8 @@ namespace MarsDSP::DSP {
                                         SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v3, vC4N),
                                         SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v4, vC5N),
                                                         SIMD_MM(mul_ps)(v5, vC6N)))));
-                            vYR_N = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v0, vC1N),
-                                                    SIMD_MM(mul_ps)(vFracN, vSum));
+
+                            vYR_N = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v0, vC1N), SIMD_MM(mul_ps)(vFracN, vSum));
                         }
                         SIMD_M128 vYR_O;
                         {
@@ -445,12 +464,10 @@ namespace MarsDSP::DSP {
                                         SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v3, vC4O),
                                         SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v4, vC5O),
                                                         SIMD_MM(mul_ps)(v5, vC6O)))));
-                            vYR_O = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v0, vC1O),
-                                                    SIMD_MM(mul_ps)(vFracO, vSum));
+
+                            vYR_O = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(v0, vC1O), SIMD_MM(mul_ps)(vFracO, vSum));
                         }
-                        const auto vDelR = SIMD_MM(add_ps)(vYR_O,
-                                              SIMD_MM(mul_ps)(vAlpha,
-                                                              SIMD_MM(sub_ps)(vYR_N, vYR_O)));
+                        const auto vDelR = SIMD_MM(add_ps)(vYR_O, SIMD_MM(mul_ps)(vAlpha, SIMD_MM(sub_ps)(vYR_N, vYR_O)));
                         SIMD_MM(store_ps)(&dsR[n], vDelR);
                     }
                     for (; n < numSamplesSize; ++n)
@@ -460,6 +477,7 @@ namespace MarsDSP::DSP {
                         const SampleType yLO = readInterpolated(tL2, static_cast<int>(n), coeffsO);
                         const SampleType yRN = readInterpolated(tR,  static_cast<int>(n), coeffsN);
                         const SampleType yRO = readInterpolated(tR2, static_cast<int>(n), coeffsO);
+
                         dsL[n] = static_cast<float>(yLO + alpha * (yLN - yLO));
                         dsR[n] = static_cast<float>(yRO + alpha * (yRN - yRO));
                     }
@@ -475,6 +493,7 @@ namespace MarsDSP::DSP {
                     const float filtR = fbLP_R.processSample(fbHP_R.processSample(dsR[k]));
                     const float cf    = lCrossfeed.at(static_cast<int>(k));
                     const float cfInv = 1.0f - cf;
+
                     dsL[k] = cfInv * filtL + cf * filtR;
                     dsR[k] = cfInv * filtR + cf * filtL;
                 }
@@ -500,14 +519,11 @@ namespace MarsDSP::DSP {
                             auto vXL = SIMD_MM(loadu_ps)(ch0 + n);
                             auto vYL_ducked = SIMD_MM(mul_ps)(SIMD_MM(load_ps)(&dsL[n]), vDuckGain);
 
-                            const auto vFbArgL = SIMD_MM(add_ps)(vXL,
-                                                    SIMD_MM(mul_ps)(vFbL, vYL_ducked));
+                            const auto vFbArgL = SIMD_MM(add_ps)(vXL,SIMD_MM(mul_ps)(vFbL, vYL_ducked));
                             const auto vWriteValL = fasterTanhADAA(vFbArgL, cxFbL, cfFbL);
                             SIMD_MM(storeu_ps)(&wL[n], vWriteValL);
 
-                            const auto vOutArgL = SIMD_MM(add_ps)(
-                                SIMD_MM(mul_ps)(vYL_ducked, vMix),
-                                SIMD_MM(mul_ps)(vXL,        vOneMinusMix));
+                            const auto vOutArgL = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(vYL_ducked, vMix), SIMD_MM(mul_ps)(vXL, vOneMinusMix));
                             const auto vOutL = fasterTanhADAA(vOutArgL, cxOutL, cfOutL);
                             SIMD_MM(storeu_ps)(ch0 + n, vOutL);
                         }
@@ -518,14 +534,11 @@ namespace MarsDSP::DSP {
                             auto vXR = SIMD_MM(loadu_ps)(ch1 + n);
                             auto vYR_ducked = SIMD_MM(mul_ps)(SIMD_MM(load_ps)(&dsR[n]), vDuckGain);
 
-                            const auto vFbArgR = SIMD_MM(add_ps)(vXR,
-                                                    SIMD_MM(mul_ps)(vFbR, vYR_ducked));
+                            const auto vFbArgR = SIMD_MM(add_ps)(vXR, SIMD_MM(mul_ps)(vFbR, vYR_ducked));
                             const auto vWriteValR = fasterTanhADAA(vFbArgR, cxFbR, cfFbR);
                             SIMD_MM(storeu_ps)(&wR[n], vWriteValR);
 
-                            const auto vOutArgR = SIMD_MM(add_ps)(
-                                SIMD_MM(mul_ps)(vYR_ducked, vMix),
-                                SIMD_MM(mul_ps)(vXR,        vOneMinusMix));
+                            const auto vOutArgR = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(vYR_ducked, vMix), SIMD_MM(mul_ps)(vXR, vOneMinusMix));
                             const auto vOutR = fasterTanhADAA(vOutArgR, cxOutR, cfOutR);
                             SIMD_MM(storeu_ps)(ch1 + n, vOutR);
                         }
@@ -540,22 +553,18 @@ namespace MarsDSP::DSP {
                             const SampleType fbLP = static_cast<SampleType>(lFbL.at(static_cast<int>(n)));
                             const SampleType xL   = ch0[n];
                             const SampleType yL_ducked = static_cast<SampleType>(dsL[n]) * duckGain;
-                            wL[n]  = static_cast<SampleType>(fasterTanhADAA(
-                                static_cast<float>(xL + fbLP * yL_ducked), cxFbL, cfFbL));
-                            ch0[n] = static_cast<SampleType>(fasterTanhADAA(
-                                static_cast<float>(yL_ducked * mixP + xL * oneMinusMx),
-                                cxOutL, cfOutL));
+
+                            wL[n]  = static_cast<SampleType>(fasterTanhADAA(static_cast<float>(xL + fbLP * yL_ducked), cxFbL, cfFbL));
+                            ch0[n] = static_cast<SampleType>(fasterTanhADAA(static_cast<float>(yL_ducked * mixP + xL * oneMinusMx), cxOutL, cfOutL));
                         }
                         if (ch1 != nullptr)
                         {
                             const SampleType fbRP = static_cast<SampleType>(lFbR.at(static_cast<int>(n)));
                             const SampleType xR   = ch1[n];
                             const SampleType yR_ducked = static_cast<SampleType>(dsR[n]) * duckGain;
-                            wR[n]  = static_cast<SampleType>(fasterTanhADAA(
-                                static_cast<float>(xR + fbRP * yR_ducked), cxFbR, cfFbR));
-                            ch1[n] = static_cast<SampleType>(fasterTanhADAA(
-                                static_cast<float>(yR_ducked * mixP + xR * oneMinusMx),
-                                cxOutR, cfOutR));
+
+                            wR[n]  = static_cast<SampleType>(fasterTanhADAA(static_cast<float>(xR + fbRP * yR_ducked), cxFbR, cfFbR));
+                            ch1[n] = static_cast<SampleType>(fasterTanhADAA(static_cast<float>(yR_ducked * mixP + xR * oneMinusMx), cxOutR, cfOutR));
                         }
                     }
 
@@ -689,28 +698,25 @@ namespace MarsDSP::DSP {
         //
         // Calculation:
         //   repeats until |fb|^n < 0.001, i.e. n = ceil(log(0.001) / log(fb))
-        // plus a safety margin for biquad ring-down + parameter smoothing.
+        // plus a safety margin for s-plane filter ring-down + parameter smoothing.
         // Clamped to a sane maximum so pathological feedback values (~0.99)
         // don't yield absurd tail lengths.
         [[nodiscard]] int ringoutSamples() const noexcept
         {
             if (bypassed) return 0;
 
-            const float delayMs     = std::clamp(delayTime, minDelayTime, maxDelayTime);
+            const float delayMs      = std::clamp(delayTime, minDelayTime, maxDelayTime);
             const float delaySamples = static_cast<float>(sampleRate * delayMs * 0.001);
-            const float fb           = std::clamp(std::max(feedbackL, feedbackR),
-                                                  0.0f, 0.9999f);
+            const float fb           = std::clamp(std::max(feedbackL, feedbackR), 0.0f, 0.9999f);
 
             constexpr float silenceDb  = 0.001f;  // -60 dB
-            constexpr int   kMargin    = 2048;    // biquad ring-down + smoothers
+            constexpr int   kMargin    = 2048;    // s-plane filter ring-down + smoothers
             constexpr int   kMaxTail   = 1 << 20; // clamp (~21.8 s @ 48 kHz)
 
-            if (fb < 1.0e-4f)
-                return std::min(static_cast<int>(delaySamples) + kMargin, kMaxTail);
+            if (fb < 1.0e-4f) return std::min(static_cast<int>(delaySamples) + kMargin, kMaxTail);
 
             const int repeats = static_cast<int>(std::ceil(std::log(silenceDb) / std::log(fb)));
-            const long long tail = static_cast<long long>(delaySamples)
-                                 * static_cast<long long>(std::max(repeats, 1)) + kMargin;
+            const long long tail = static_cast<long long>(delaySamples) * static_cast<long long>(std::max(repeats, 1)) + kMargin;
 
             return static_cast<int>(std::min<long long>(tail, kMaxTail));
         }
@@ -734,8 +740,7 @@ namespace MarsDSP::DSP {
         // plugin layer before pushing values into the engine. The input array
         // must be large enough to hold every parameter for the *newer* of the
         // two schemas.
-        static void remapParametersForStreamingVersion(
-            int16_t streamedFrom, float* const /*parameters*/) noexcept
+        static void remapParametersForStreamingVersion(int16_t streamedFrom, float* const /*parameters*/) noexcept
         {
             assert(streamedFrom <= streamingVersion);
             // v1 is the initial schema; nothing to migrate yet.
@@ -754,16 +759,15 @@ namespace MarsDSP::DSP {
                 target = t;
                 delta  = (blockSize > 0) ? (t - current) / static_cast<float>(blockSize) : 0.0f;
             }
-            void instantize(float v) noexcept { current = target = v; delta = 0.0f; }
-            void advanceBlock()       noexcept { current = target;    delta = 0.0f; }
+
+            void instantize(float v)  noexcept { current = target = v; delta = 0.0f; }
+            void advanceBlock()       noexcept { current = target;     delta = 0.0f; }
 
             // 4-lane vector for samples [4q, 4q+1, 4q+2, 4q+3] within the block
             SIMD_M128 quad(int q) const noexcept
             {
                 const float base = current + delta * static_cast<float>(4 * q);
-                return SIMD_MM(add_ps)(SIMD_MM(set1_ps)(base),
-                                       SIMD_MM(mul_ps)(SIMD_MM(set1_ps)(delta),
-                                                       SIMD_MM(setr_ps)(0.0f, 1.0f, 2.0f, 3.0f)));
+                return SIMD_MM(add_ps)(SIMD_MM(set1_ps)(base), SIMD_MM(mul_ps)(SIMD_MM(set1_ps)(delta), SIMD_MM(setr_ps)(0.0f, 1.0f, 2.0f, 3.0f)));
             }
             // scalar value at sample offset i within the block
             float at(int i) const noexcept
@@ -786,8 +790,7 @@ namespace MarsDSP::DSP {
 
             void setRateInMilliseconds(double miliSeconds, double sampleRate, double blockSizeInv)
             {
-                setRate(static_cast<T>(
-                    1.0 - std::exp(-2.0 * M_PI / (miliSeconds * 0.001 * sampleRate * blockSizeInv))));
+                setRate(static_cast<T>(1.0 - std::exp(-2.0 * M_PI / (miliSeconds * 0.001 * sampleRate * blockSizeInv))));
             }
 
             void setTarget(T f)
@@ -806,7 +809,7 @@ namespace MarsDSP::DSP {
                 first_run = false;
             }
 
-            void snapToTarget()      { snapTo(target_v); }
+            void snapToTarget()         { snapTo(target_v); }
             T    getTargetValue() const { return target_v; }
             T    getValue()       const { return v; }
 
@@ -822,6 +825,7 @@ namespace MarsDSP::DSP {
             T v{0};
             T target_v{0};
             bool first_run{true};
+
           protected:
             T lp{0}, lpinv{0};
         };
@@ -831,7 +835,7 @@ namespace MarsDSP::DSP {
         template <typename T, bool first_run_checks = true>
         struct SurgeLag : OnePoleLag<T, first_run_checks>
         {
-            SurgeLag()                : OnePoleLag<T, first_run_checks>() {}
+            SurgeLag()                : OnePoleLag<T, first_run_checks>()    {}
             explicit SurgeLag(T lp_)  : OnePoleLag<T, first_run_checks>(lp_) {}
 
             void newValue(T f)   { this->setTarget(f); }
@@ -839,60 +843,16 @@ namespace MarsDSP::DSP {
             void instantize()    { this->snapToTarget(); }
         };
 
-        // RBJ biquad (Direct Form II Transposed). Zero heap allocation.
-        // Used on the feedback path to shape the delayed signal spectrum
-        // before it's mixed back into the write buffer.
-        struct Biquad
-        {
-            float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f, a1 = 0.0f, a2 = 0.0f;
-            float z1 = 0.0f, z2 = 0.0f;
-
-            void reset() noexcept { z1 = z2 = 0.0f; }
-
-            float processSample(float x) noexcept
-            {
-                const float y = b0 * x + z1;
-                z1 = b1 * x - a1 * y + z2;
-                z2 = b2 * x - a2 * y;
-                return y;
-            }
-
-            void setLowPass(double fs, double fc, double Q) noexcept
-            {
-                const double fcc = std::clamp(fc, 20.0, 0.49 * fs);
-                const double w = 2.0 * M_PI * fcc / fs;
-                const double cw = std::cos(w), sw = std::sin(w);
-                const double alpha = sw / (2.0 * Q);
-                const double a0 = 1.0 + alpha;
-                b0 = static_cast<float>((1.0 - cw) * 0.5 / a0);
-                b1 = static_cast<float>((1.0 - cw)       / a0);
-                b2 = b0;
-                a1 = static_cast<float>(-2.0 * cw / a0);
-                a2 = static_cast<float>((1.0 - alpha) / a0);
-            }
-
-            void setHighPass(double fs, double fc, double Q) noexcept
-            {
-                const double fcc = std::clamp(fc, 20.0, 0.49 * fs);
-                const double w = 2.0 * M_PI * fcc / fs;
-                const double cw = std::cos(w), sw = std::sin(w);
-                const double alpha = sw / (2.0 * Q);
-                const double a0 = 1.0 + alpha;
-                b0 = static_cast<float>((1.0 + cw) * 0.5 / a0);
-                b1 = static_cast<float>(-(1.0 + cw)      / a0);
-                b2 = b0;
-                a1 = static_cast<float>(-2.0 * cw / a0);
-                a2 = static_cast<float>((1.0 - alpha) / a0);
-            }
-        };
-
+        // Push the current low-cut / high-cut corners into the s-plane
+        // feedback-path filters. The prototype (Butterworth s-plane poles +
+        // residues) is baked into each filter at construction time; only
+        // the cutoff is rescaled per call, so this is cheap.
         void updateFilterCoeffs() noexcept
         {
-            constexpr double Q = 0.707;
-            fbLP_L.setLowPass (sampleRate, highCutHz, Q);
-            fbLP_R.setLowPass (sampleRate, highCutHz, Q);
-            fbHP_L.setHighPass(sampleRate, lowCutHz,  Q);
-            fbHP_R.setHighPass(sampleRate, lowCutHz,  Q);
+            fbLP_L.setCutoffFrequencyInHz(highCutHz);
+            fbLP_R.setCutoffFrequencyInHz(highCutHz);
+            fbHP_L.setCutoffFrequencyInHz(lowCutHz);
+            fbHP_R.setCutoffFrequencyInHz(lowCutHz);
         }
 
         SampleType softClip(SampleType x) noexcept
@@ -900,7 +860,12 @@ namespace MarsDSP::DSP {
             return fasterTanhBounded(x);
         }
 
-        std::vector<SampleType> bufferL, bufferR;
+        // Circular delay buffer. 2 channels x (kBufSize + kTail) samples,
+        // heap-allocated through xsimd's aligned allocator so every channel
+        // base pointer satisfies the SIMD batch alignment. Replaces the
+        // previous std::vector<SampleType> pair.
+        AlignedBuffers::AlignedSIMDBuffer<SampleType> circularDelayBuffer {};
+
         // scratch buffers are thread_local to avoid per-instance allocation while remaining thread-safe.
         // Assumes no re-entrant process() on the same thread (e.g. sidechain feedback loops).
         alignas(16) static thread_local inline float tL [N_BLOCK];  // scratch: NEW-offset L read
@@ -914,21 +879,21 @@ namespace MarsDSP::DSP {
 
         double sampleRate = 44100.0;
 
-        SampleType prevPos = static_cast<SampleType>(0);
-        SampleType duckGain = static_cast<SampleType>(1);
+        SampleType prevPos      = static_cast<SampleType>(0);
+        SampleType duckGain     = static_cast<SampleType>(1);
         SampleType duckAtkCoeff = static_cast<SampleType>(1);
         SampleType duckRelCoeff = static_cast<SampleType>(1);
 
         static constexpr float minDelayTime = 5.0f;
         static constexpr float maxDelayTime = 5000.0f;
 
-        float mix = 1.0f;
+        float mix       = 1.0f;
         float feedbackL = 0.0f;
         float feedbackR = 0.0f;
         float delayTime = 50.0f;
 
-        LipolSIMD          lMix, lFbL, lFbR, lCrossfeed;
-        SurgeLag<float>    lagDelayMs;
+        LipolSIMD       lMix, lFbL, lFbR, lCrossfeed;
+        SurgeLag<float> lagDelayMs;
 
         // One ADAA waveshaper per softclip call site.
         // *Fb*  = the feedback-write softclip; *Out* = the dry/wet-mix output
@@ -938,7 +903,11 @@ namespace MarsDSP::DSP {
         Waveshapers::ADAATanh adaaOutL, adaaOutR;
 
         // Feedback-path filters (per channel): highpass before lowpass.
-        Biquad fbLP_L, fbLP_R, fbHP_L, fbHP_R;
+        // 4th-order Butterworth analog prototype discretised via the
+        // bilinear transform with cutoff pre-warp (see
+        // source/dsp/filter/splane_curvefit_*.h).
+        SPlaneCurveFit::SPlaneCurveFitLowpassFilter  fbLP_L, fbLP_R;
+        SPlaneCurveFit::SPlaneCurveFitHighpassFilter fbHP_L, fbHP_R;
 
         // Filter + crossfeed parameter targets. lowCutHz / highCutHz trigger
         // coefficient recomputation at the top of process() when they change.
@@ -955,7 +924,7 @@ namespace MarsDSP::DSP {
         // clamp time param to (maxDelaySamples - 1) to avoid outside buffer reads
         static constexpr int kBufSize = 1 << 18;
         static constexpr int kBufMask = kBufSize - 1;
-        static constexpr int kTail    = 8;                  // for 5th-order Lagrange window
+        static constexpr int kTail    = 8; // for the 5th-order Lagrange window
 
         int writeIdxL = 0;
         int writeIdxR = 0;

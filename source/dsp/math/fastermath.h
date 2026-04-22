@@ -279,47 +279,78 @@ namespace MarsDSP::inline FasterMath
         return fasterTanh(xbounded);
     }
 //==============================================================================//
-    // Padé (4,4) approximant of exp(x).
+    // pade exp(x) ≈ N(x) / D(x)
+    // [4/4] approximant coefficients for exp(x)
     //
-    //   exp(x) ≈ (1680 + 840 x + 180 x^2 + 20 x^3 + x^4)
-    //          / (1680 - 840 x + 180 x^2 - 20 x^3 + x^4)
+    //             N0 + x·(N1 + x·(N2 + x·(N3 + x)))
+    // exp(x) ≈  ─────────────────────────────────────
+    //             D0 + x·(D1 + x·(D2 + x·(D3 + x)))
     //
-    // Accurate near zero; degrades for |x| beyond ~5. Used where the argument
-    // is already known to be bounded (see fastTanhIntegral below) - do not
-    // use as a general-purpose exp for arbitrary-range inputs.
+    // N(x) = 1680 + x·(  840 + x·(180 + x·(  20 + x)))
+    // D(x) = 1680 + x·( -840 + x·(180 + x·( -20 + x)))
+    //
+    // exp is neither even nor odd so unlike sin/cos/tan/tanh here we expand
+    // in x directly rather than in x².
+    //
+    // accuracy: near-double-precision around zero; degrades for |x| beyond
+    // ~5. Used where the argument is already bounded (see fastTanhIntegral
+    // below) - not safe as a general-purpose exp for arbitrary-range inputs.
+
+    namespace PadeExpCoeffs
+    {
+        constexpr float N0 =  1680.0f;   // num x⁰
+        constexpr float N1 =   840.0f;   // num x¹
+        constexpr float N2 =   180.0f;   // num x²
+        constexpr float N3 =    20.0f;   // num x³ (implicit x⁴ coefficient = 1)
+
+        constexpr float D0 =  1680.0f;   // den x⁰
+        constexpr float D1 =  -840.0f;   // den x¹
+        constexpr float D2 =   180.0f;   // den x²
+        constexpr float D3 =   -20.0f;   // den x³ (implicit x⁴ coefficient = 1)
+    }
+
+    inline float padeExpApprox(const float x) noexcept
+    {
+        using namespace PadeExpCoeffs;
+
+        // horner evaluation inside-out in x
+        const auto num = N0 + x * (N1 + x * (N2 + x * (N3 + x)));
+        const auto den = D0 + x * (D1 + x * (D2 + x * (D3 + x)));
+
+        return num / den;
+    }
+
     inline float fasterExp(const float x) noexcept
     {
-        const auto numerator   = 1680.0f + x * (840.0f  + x * (180.0f + x * (20.0f  + x)));
-        const auto denominator = 1680.0f + x * (-840.0f + x * (180.0f + x * (-20.0f + x)));
-        return numerator / denominator;
+        return padeExpApprox(x);
     }
 
     inline SIMD_M128 fasterExp(const SIMD_M128 x) noexcept
     {
-        #define M(a, b) SIMD_MM(mul_ps)(a, b)
-        #define A(a, b) SIMD_MM(add_ps)(a, b)
-        #define F(a)    SIMD_MM(set1_ps)(a)
+        using namespace PadeExpCoeffs;
 
-        const auto m1680   = F(1680.0f);
-        const auto m840    = F(840.0f);
-        const auto mneg840 = F(-840.0f);
-        const auto m180    = F(180.0f);
-        const auto m20     = F(20.0f);
-        const auto mneg20  = F(-20.0f);
+        // broadcast each coeff across 4 lanes
+        const auto vN0 = SIMD_MM(set1_ps)(N0);
+        const auto vN1 = SIMD_MM(set1_ps)(N1);
+        const auto vN2 = SIMD_MM(set1_ps)(N2);
+        const auto vN3 = SIMD_MM(set1_ps)(N3);
 
-        const auto num = A(m1680,
-                         M(x, A(m840,
-                         M(x, A(m180,
-                         M(x, A(m20, x)))))));
+        const auto vD0 = SIMD_MM(set1_ps)(D0);
+        const auto vD1 = SIMD_MM(set1_ps)(D1);
+        const auto vD2 = SIMD_MM(set1_ps)(D2);
+        const auto vD3 = SIMD_MM(set1_ps)(D3);
 
-        const auto den = A(m1680,
-                         M(x, A(mneg840,
-                         M(x, A(m180,
-                         M(x, A(mneg20, x)))))));
+        // numerator:   N0 + x·(N1 + x·(N2 + x·(N3 + x))) | innermost first
+        auto numInner  = SIMD_MM(add_ps)(vN3, x);                              // N3 + x
+        numInner       = SIMD_MM(add_ps)(vN2, SIMD_MM(mul_ps)(x, numInner));   // N2 + x·(…)
+        numInner       = SIMD_MM(add_ps)(vN1, SIMD_MM(mul_ps)(x, numInner));   // N1 + x·(…)
+        const auto num = SIMD_MM(add_ps)(vN0, SIMD_MM(mul_ps)(x, numInner));   // N0 + x·(…)
 
-        #undef M
-        #undef A
-        #undef F
+        // denominator: D0 + x·(D1 + x·(D2 + x·(D3 + x)))
+        auto denInner  = SIMD_MM(add_ps)(vD3, x);                              // D3 + x
+        denInner       = SIMD_MM(add_ps)(vD2, SIMD_MM(mul_ps)(x, denInner));   // D2 + x·(…)
+        denInner       = SIMD_MM(add_ps)(vD1, SIMD_MM(mul_ps)(x, denInner));   // D1 + x·(…)
+        const auto den = SIMD_MM(add_ps)(vD0, SIMD_MM(mul_ps)(x, denInner));   // D0 + x·(…)
 
         return SIMD_MM(div_ps)(num, den);
     }
@@ -340,6 +371,7 @@ namespace MarsDSP::inline FasterMath
 
         const auto mantMask = SIMD_MM(castsi128_ps)(SIMD_MM(set1_epi32)(0x007FFFFF));
         const auto oneBits  = SIMD_MM(castsi128_ps)(SIMD_MM(set1_epi32)(0x3F800000));
+
         auto m = SIMD_MM(or_ps)(SIMD_MM(and_ps)(x, mantMask), oneBits);
 
         // Mantissa extraction gives m in [1, 2). Fold the upper half down:
@@ -352,14 +384,15 @@ namespace MarsDSP::inline FasterMath
         const auto SQRT2   = SIMD_MM(set1_ps)(1.4142135623730951f);
         const auto mask    = SIMD_MM(cmpgt_ps)(m, SQRT2);
         const auto halfM   = SIMD_MM(mul_ps)(m, SIMD_MM(set1_ps)(0.5f));
-        m  = SIMD_MM(or_ps)(SIMD_MM(and_ps)(mask, halfM),
-                            SIMD_MM(andnot_ps)(mask, m));
+
+        m  = SIMD_MM(or_ps)(SIMD_MM(and_ps)(mask, halfM), SIMD_MM(andnot_ps)(mask, m));
         ef = SIMD_MM(add_ps)(ef, SIMD_MM(and_ps)(mask, SIMD_MM(set1_ps)(1.0f)));
         m  = SIMD_MM(sub_ps)(m, SIMD_MM(set1_ps)(1.0f));
 
         // minimax polynomial for log(1+m) * m^3 on m in ~[-0.293, 0.414].
         const auto m2 = SIMD_MM(mul_ps)(m, m);
         auto poly = SIMD_MM(set1_ps)(7.0376836292E-2f);
+
         poly = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(poly, m), SIMD_MM(set1_ps)(-1.1514610310E-1f));
         poly = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(poly, m), SIMD_MM(set1_ps)( 1.1676998740E-1f));
         poly = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(poly, m), SIMD_MM(set1_ps)(-1.2420140846E-1f));
@@ -375,6 +408,7 @@ namespace MarsDSP::inline FasterMath
 
         auto result = SIMD_MM(add_ps)(m, poly);
         result = SIMD_MM(add_ps)(result, SIMD_MM(mul_ps)(ef, SIMD_MM(set1_ps)(0.693359375f)));
+
         return result;
     }
 
@@ -396,19 +430,20 @@ namespace MarsDSP::inline FasterMath
     {
         if (x < static_cast<T>(-3)) return static_cast<T>(-1);
         if (x > static_cast<T>( 3)) return static_cast<T>( 1);
+
         const T x2 = x * x;
-        return x * (static_cast<T>(27) + x2)
-             / (static_cast<T>(27) + static_cast<T>(9) * x2);
+
+        return x * (static_cast<T>(27) + x2) / (static_cast<T>(27) + static_cast<T>(9) * x2);
     }
 
     inline SIMD_M128 fastTanh(const SIMD_M128 x) noexcept
     {
-        const auto three    = SIMD_MM(set1_ps)(3.0f);
-        const auto negThree = SIMD_MM(set1_ps)(-3.0f);
+        const auto three       = SIMD_MM(set1_ps)(3.0f);
+        const auto negThree    = SIMD_MM(set1_ps)(-3.0f);
         const auto twentySeven = SIMD_MM(set1_ps)(27.0f);
-        const auto nine     = SIMD_MM(set1_ps)(9.0f);
-        const auto posOne   = SIMD_MM(set1_ps)(1.0f);
-        const auto negOne   = SIMD_MM(set1_ps)(-1.0f);
+        const auto nine        = SIMD_MM(set1_ps)(9.0f);
+        const auto posOne      = SIMD_MM(set1_ps)(1.0f);
+        const auto negOne      = SIMD_MM(set1_ps)(-1.0f);
 
         const auto x2   = SIMD_MM(mul_ps)(x, x);
         const auto num  = SIMD_MM(mul_ps)(x, SIMD_MM(add_ps)(twentySeven, x2));
@@ -418,11 +453,12 @@ namespace MarsDSP::inline FasterMath
         // clamp to saturation rails
         const auto ge3    = SIMD_MM(cmpge_ps)(x, three);
         const auto le_neg = SIMD_MM(cmple_ps)(x, negThree);
+
         auto result = body;
-        result = SIMD_MM(or_ps)(SIMD_MM(and_ps)(ge3, posOne),
-                                SIMD_MM(andnot_ps)(ge3, result));
-        result = SIMD_MM(or_ps)(SIMD_MM(and_ps)(le_neg, negOne),
-                                SIMD_MM(andnot_ps)(le_neg, result));
+
+        result = SIMD_MM(or_ps)(SIMD_MM(and_ps)(ge3, posOne), SIMD_MM(andnot_ps)(ge3, result));
+        result = SIMD_MM(or_ps)(SIMD_MM(and_ps)(le_neg, negOne), SIMD_MM(andnot_ps)(le_neg, result));
+
         return result;
     }
 //==============================================================================//
@@ -442,19 +478,16 @@ namespace MarsDSP::inline FasterMath
         const auto x2      = SIMD_MM(mul_ps)(x, x);
 
         // inner branch
-        const auto logArg  = SIMD_MM(add_ps)(SIMD_MM(set1_ps)(1.0f),
-                                             SIMD_MM(mul_ps)(x2, SIMD_MM(set1_ps)(1.0f / 3.0f)));
+        const auto logArg  = SIMD_MM(add_ps)(SIMD_MM(set1_ps)(1.0f), SIMD_MM(mul_ps)(x2, SIMD_MM(set1_ps)(1.0f / 3.0f)));
         const auto logPart = fasterLog(logArg);
-        const auto inner   = SIMD_MM(add_ps)(
-            SIMD_MM(mul_ps)(x2,      SIMD_MM(set1_ps)(1.0f / 18.0f)),
-            SIMD_MM(mul_ps)(logPart, SIMD_MM(set1_ps)(4.0f / 3.0f)));
+        const auto inner   = SIMD_MM(add_ps)(SIMD_MM(mul_ps)(x2, SIMD_MM(set1_ps)(1.0f / 18.0f)),
+                                             SIMD_MM(mul_ps)(logPart, SIMD_MM(set1_ps)(4.0f / 3.0f)));
 
         // outer branch
         const auto outer = SIMD_MM(sub_ps)(absX, SIMD_MM(set1_ps)(0.6516075f));
 
         const auto mask  = SIMD_MM(cmpge_ps)(absX, SIMD_MM(set1_ps)(3.0f));
-        return SIMD_MM(or_ps)(SIMD_MM(and_ps)(mask, outer),
-                              SIMD_MM(andnot_ps)(mask, inner));
+        return SIMD_MM(or_ps)(SIMD_MM(and_ps)(mask, outer), SIMD_MM(andnot_ps)(mask, inner));
     }
 
     inline float fastTanhIntegral(const float x) noexcept
@@ -487,10 +520,8 @@ namespace MarsDSP::inline FasterMath
         const auto F = fastTanhIntegral(x);
 
         // One-lane left shift (fill lane 0 with 0), then splice carry into lane 0.
-        const auto xShift = SIMD_MM(castsi128_ps)(
-            SIMD_MM(slli_si128)(SIMD_MM(castps_si128)(x), 4));
-        const auto FShift = SIMD_MM(castsi128_ps)(
-            SIMD_MM(slli_si128)(SIMD_MM(castps_si128)(F), 4));
+        const auto xShift = SIMD_MM(castsi128_ps)(SIMD_MM(slli_si128)(SIMD_MM(castps_si128)(x), 4));
+        const auto FShift = SIMD_MM(castsi128_ps)(SIMD_MM(slli_si128)(SIMD_MM(castps_si128)(F), 4));
 
         const auto xPrev = SIMD_MM(add_ss)(xShift, SIMD_MM(set_ss)(carryX));
         const auto FPrev = SIMD_MM(add_ss)(FShift, SIMD_MM(set_ss)(carryF));
@@ -514,8 +545,10 @@ namespace MarsDSP::inline FasterMath
 
         // Persist lane-3 as carry for the next quad.
         alignas(16) float lanesX[4], lanesF[4];
+
         SIMD_MM(store_ps)(lanesX, x);
         SIMD_MM(store_ps)(lanesF, F);
+
         carryX = lanesX[3];
         carryF = lanesF[3];
 
@@ -526,22 +559,25 @@ namespace MarsDSP::inline FasterMath
     {
         const float F  = fastTanhIntegral(x);
         const float dx = x - carryX;
+
         float y;
+
         if (std::fabs(dx) < 1.0e-4f)
         {
             // same midpoint fallback as SIMD path, routed through the SIMD
             // tanhBounded so scalar/SIMD results stay bit-identical.
             alignas(16) float out[4];
-            SIMD_MM(store_ps)(out,
-                fasterTanhBounded(SIMD_MM(set1_ps)(0.5f * (x + carryX))));
+            SIMD_MM(store_ps)(out, fasterTanhBounded(SIMD_MM(set1_ps)(0.5f * (x + carryX))));
             y = out[0];
         }
         else
         {
             y = (F - carryF) / dx;
         }
+
         carryX = x;
         carryF = F;
+
         return y;
     }
 //==============================================================================//

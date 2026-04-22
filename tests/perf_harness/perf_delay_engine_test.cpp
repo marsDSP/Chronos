@@ -255,7 +255,8 @@ int main()
                 juce::AudioBuffer<float> buf(2, n);
                 std::memcpy(buf.getWritePointer(0), L, sizeof(float) * n);
                 std::memcpy(buf.getWritePointer(1), R, sizeof(float) * n);
-                juce::dsp::AudioBlock<float> block(buf);
+                MarsDSP::DSP::AlignedBuffers::AlignedSIMDBufferView<float> block(
+                    buf.getArrayOfWritePointers(), buf.getNumChannels(), buf.getNumSamples());
                 chronos.process(block, n);
                 std::memcpy(L, buf.getReadPointer(0), sizeof(float) * n);
                 std::memcpy(R, buf.getReadPointer(1), sizeof(float) * n);
@@ -280,7 +281,8 @@ int main()
                 juce::AudioBuffer<float> buf(2, n);
                 std::memcpy(buf.getWritePointer(0), L, sizeof(float) * n);
                 std::memcpy(buf.getWritePointer(1), R, sizeof(float) * n);
-                juce::dsp::AudioBlock<float> block(buf);
+                MarsDSP::DSP::AlignedBuffers::AlignedSIMDBufferView<float> block(
+                    buf.getArrayOfWritePointers(), buf.getNumChannels(), buf.getNumSamples());
                 chronosMono.process(block, n);
                 std::memcpy(L, buf.getReadPointer(0), sizeof(float) * n);
                 std::memcpy(R, buf.getReadPointer(1), sizeof(float) * n);

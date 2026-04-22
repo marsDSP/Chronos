@@ -183,8 +183,14 @@ void ChronosProcessor::processBlock (AudioBuffer<float> &buffer, MidiBuffer &mid
     delay.setMono    (apvts.getRawParameterValue(kMono)  ->load() >= 0.5f);
     delay.setBypassed(apvts.getRawParameterValue(kBypass)->load() >= 0.5f);
 
-    const dsp::AudioBlock<float> block(buffer);
-    delay.process(block, numSamples);
+    // Wrap the host's JUCE AudioBuffer in an AlignedSIMDBufferView so the
+    // DelayEngine can consume it through the xsimd-aligned buffer API
+    // without going through juce::dsp::AudioBlock.
+    const MarsDSP::DSP::AlignedBuffers::AlignedSIMDBufferView inOutBlockView(
+        buffer.getArrayOfWritePointers(),
+        buffer.getNumChannels(),
+        buffer.getNumSamples());
+    delay.process(inOutBlockView, numSamples);
 
     // advance dither state
     xorshiftL ^= xorshiftL << 13;
@@ -231,8 +237,7 @@ void ChronosProcessor::setStateInformation(const void *data, int sizeInBytes)
     auto tree = ValueTree::fromXml(*xml);
 
     // Pre-versioning builds stored no version property; treat as v0.
-    const int fromVersion = static_cast<int>(
-        tree.getProperty(Chronos::kStateVersionProperty, 0));
+    const int fromVersion = tree.getProperty(Chronos::kStateVersionProperty, 0);
     Chronos::migrateStateTree(tree, fromVersion);
 
     apvts.replaceState(tree);

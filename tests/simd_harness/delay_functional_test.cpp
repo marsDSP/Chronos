@@ -131,7 +131,8 @@ static std::unique_ptr<DelayEngine<float>> makeEngine(
 
 static void processN(DelayEngine<float>& e, juce::AudioBuffer<float>& buf, int n)
 {
-    juce::dsp::AudioBlock<float> block(buf);
+    AlignedBuffers::AlignedSIMDBufferView<float> block(
+        buf.getArrayOfWritePointers(), buf.getNumChannels(), buf.getNumSamples());
     e.process(block, n);
 }
 
