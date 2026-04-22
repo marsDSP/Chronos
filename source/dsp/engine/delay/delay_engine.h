@@ -1,8 +1,6 @@
 #pragma once
 
-#ifndef CHRONOS_DELAY_ENGINE_H
-#define CHRONOS_DELAY_ENGINE_H
-
+#include <atomic>
 #include <cassert>
 #include <JuceHeader.h>
 #include "dsp/math/fastermath.h"
@@ -75,7 +73,7 @@ namespace MarsDSP::DSP {
             circularDelayBuffer.clearAllSamples();
 
             // snap smoothers so the first block after reset doesn't ramp from 0.
-            lMix.instantize(std::clamp(mix,             0.0f, 1.0f));
+            lMix.instantize(std::clamp(mix.load(std::memory_order_relaxed), 0.0f, 1.0f));
             lFbL.instantize(std::clamp(feedbackL,       0.0f, 0.99f));
             lFbR.instantize(std::clamp(feedbackR,       0.0f, 0.99f));
             lCrossfeed.instantize(std::clamp(crossfeed, 0.0f, 1.0f));
@@ -202,7 +200,8 @@ namespace MarsDSP::DSP {
 
             // push targets into block-rate linear ramp smoothers
             // SIMD inner loops consume per-quad vectors via .quad(q).
-            lMix.setTarget(std::clamp(mix,             0.0f, 1.0f),  numSamples);
+            const float mixSnapshot = mix.load(std::memory_order_relaxed);
+            lMix.setTarget(std::clamp(mixSnapshot, 0.0f, 1.0f), numSamples);
             lFbL.setTarget(std::clamp(feedbackL,       0.0f, 0.99f), numSamples);
             lFbR.setTarget(std::clamp(feedbackR,       0.0f, 0.99f), numSamples);
             lCrossfeed.setTarget(std::clamp(crossfeed, 0.0f, 1.0f),  numSamples);
@@ -620,9 +619,15 @@ namespace MarsDSP::DSP {
                         const SampleType oneMinusMx = static_cast<SampleType>(1) - mixP;
                         const auto fbP        = static_cast<SampleType>(lFbL.at(static_cast<int>(n)));
 
-                        SampleType monoSum = ch0 != nullptr ? ch0[n] : static_cast<SampleType>(0);
-                        if (ch1 != nullptr)
-                            monoSum = static_cast<SampleType>(0.5) * (monoSum + ch1[n]);
+                        SampleType monoSum;
+                        if (ch0 != nullptr && ch1 != nullptr)
+                            monoSum = static_cast<SampleType>(0.5) * (ch0[n] + ch1[n]);
+                        else if (ch0 != nullptr)
+                            monoSum = ch0[n];
+                        else if (ch1 != nullptr)
+                            monoSum = ch1[n];
+                        else
+                            monoSum = static_cast<SampleType>(0);
 
                         const SampleType duckedOut = static_cast<SampleType>(dsL[n]) * duckGain;
 
@@ -904,12 +909,12 @@ namespace MarsDSP::DSP {
 
         void setMixParam(const float value) noexcept
         {
-            mix = std::clamp(value, 0.0f, 1.0f);
+            mix.store(std::clamp(value, 0.0f, 1.0f), std::memory_order_relaxed);
         }
 
         void setMixPercentage(const float value) noexcept
         {
-            mix = std::clamp(value * 0.01f, 0.0f, 1.0f);
+            mix.store(std::clamp(value * 0.01f, 0.0f, 1.0f), std::memory_order_relaxed);
         }
 
         void setFeedbackParam(const float value) noexcept
@@ -1307,7 +1312,7 @@ namespace MarsDSP::DSP {
         static constexpr float minDelayTime = 5.0f;
         static constexpr float maxDelayTime = 5000.0f;
 
-        float mix       = 1.0f;
+        std::atomic<float> mix { 1.0f };
         float feedbackL = 0.0f;
         float feedbackR = 0.0f;
         float delayTime = 50.0f;
@@ -1396,4 +1401,3 @@ namespace MarsDSP::DSP {
         float cachedReverbModulationNormalised = 0.5f;
     };
 }
-#endif
