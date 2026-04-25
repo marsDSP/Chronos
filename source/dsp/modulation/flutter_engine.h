@@ -46,8 +46,10 @@ namespace MarsDSP::DSP::Modulation
     public:
         // Largest pow-2 host block we support internally. The acLines store
         // one SIMD_M128 per quad of the host block, padded up to this
-        // capacity so resolveBlock has nothing to allocate.
-        static constexpr int kMaxBlockSize = 4096;
+        // capacity so resolveBlock has nothing to allocate. Sized to the
+        // first pow-2 ≥ the DelayEngine's N_BLOCK (4112) so the audio
+        // loop never asserts on a 4104-sample host block.
+        static constexpr int kMaxBlockSize = 8192;
 
         // Sub-block resolution at which the LFO is re-evaluated. Matches
         // delay_engine.h::kTapModulationSubBlockSize so the sub-block-end
@@ -110,15 +112,36 @@ namespace MarsDSP::DSP::Modulation
             // 0.36 at full knob (depth^1.5 * 0.36), leaving the effect at
             // <13% of amplitude at 50% knob. The new curve is linear in depth
             // with a 0.707 ceiling, doubling audibility across the whole range.
+            //
+            // depthNormalised == 0 must drive the slew target to exactly 0 so
+            // the LFO falls fully silent — no "depth floor" residue. The
+            // earlier kDepthFloor=1e-3 left ~0.4 samples of AC contribution on
+            // a flutter knob at zero, leaking into the tap-modulation
+            // crossfade and breaking scalar/SIMD parity.
             const float skewedDepth = std::pow (depthNormalised, 2.0f) * 0.5f;
             const float depthTarget = std::sqrt (juce::jmax (0.0f, skewedDepth));
             for (auto& slew : depthSlew)
-                slew.setTargetValue (juce::jmax (kDepthFloor, depthTarget));
+                slew.setTargetValue (juce::jmax (0.0f, depthTarget));
 
             const float rateHz = 0.1f * std::pow (1000.0f, rateNormalised);
             angleDelta1 = juce::MathConstants<float>::twoPi * rateHz / sampleRate;
             angleDelta2 = 2.0f * angleDelta1;
             angleDelta3 = 3.0f * angleDelta1;
+        }
+
+        // True iff the LFO is silent (target depth == 0 and the slew has
+        // already converged to 0 on every channel). Used by the audio path
+        // to short-circuit the per-sample LFO contribution to the tap
+        // position so a zero knob produces a bit-clean pass-through.
+        [[nodiscard]] bool isFullySilent() const noexcept
+        {
+            if (depthSlew.empty()) return true;
+            for (const auto& slew : depthSlew)
+            {
+                if (slew.getTargetValue() != 0.0f) return false;
+                if (slew.getCurrentValue() != 0.0f) return false;
+            }
+            return true;
         }
 
         // Single-shot block resolver. Advances every channel's phase by the
@@ -339,7 +362,9 @@ namespace MarsDSP::DSP::Modulation
             }
         }
 
-        static constexpr float kDepthFloor   = 0.001f;
+        // Linear smoother needs a real zero floor — multiplicative smoothing
+        // is incompatible with target=0, so the slew template is Linear.
+        static constexpr float kDepthFloor   = 0.0f;
         static constexpr float kPhaseOffset1 = 0.0f;
         static constexpr float kPhaseOffset2 = 13.0f * juce::MathConstants<float>::pi / 4.0f;
         static constexpr float kPhaseOffset3 = -juce::MathConstants<float>::pi / 10.0f;
@@ -358,7 +383,7 @@ namespace MarsDSP::DSP::Modulation
         std::vector<float> phase2;
         std::vector<float> phase3;
         std::vector<float> blockEndAc;
-        std::vector<juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative>> depthSlew;
+        std::vector<juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear>> depthSlew;
 
         // Per-channel piecewise-linear AC line for the most recent host block.
         // Aligned so SIMD load/store of the underlying SIMD_M128 quads is

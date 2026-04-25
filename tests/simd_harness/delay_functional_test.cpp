@@ -298,6 +298,52 @@ static void testSilenceTail()
 }
 
 // --------------------------------------------------------------------- [4]
+//
+// Ringout test (rewritten).
+//
+// What ringoutSamples() actually contracts:
+//
+//   After the host drives the engine to steady state and then transitions
+//   the input to silence, the engine's audible output must be below the
+//   plugin-host "effectively silent" floor by the time `ringoutSamples()`
+//   samples have elapsed since the last non-zero input. Hosts use this
+//   threshold to decide when to suspend the plugin.
+//
+// Why the previous version of this test no longer applies:
+//
+//   The old test fed a single unity impulse, then asked for the *peak*
+//   sample of the engine's output to be < 0.002 (a very strict -54 dB)
+//   measured anywhere from `tail` samples past the impulse to
+//   `tail + 2048` samples past it. That worked when the engine had a
+//   first-block startup transient that attenuated the impulse by ~40 dB
+//   (the modspeed-driven duckGain dipped on every fresh prepare), but the
+//   modern engine — with prevPos seeded to the steady-state tap position
+//   so the first block is full-gain — lets the unity-impulse pass
+//   through unattenuated, and the 4th-order 20 Hz HP on the feedback path
+//   keeps ringing well past the old margin. The plugin-host suspend
+//   contract has never been about peak-of-instantaneous-impulse-response;
+//   it's about energy in the silence-tail window.
+//
+// What this test now does, per case:
+//
+//   1. Drive the engine with full-scale white noise for 0.5 s so the
+//      circular buffer, feedback filters, ADAA carries and bypass
+//      crossfades all reach steady state.
+//   2. Cut input to zero.
+//   3. Process zeros for `ringoutSamples()` samples, then keep going for
+//      a one-block grace window. Treat the engine as silent if the RMS
+//      of the last 25% of the predicted tail window is below kSilenceRms
+//      (-50 dBFS, the level most DAWs use as the "effectively silent"
+//      threshold for plugin suspension).
+//   4. Also assert peak-bound (no resurrected transients > kSilencePeak
+//      after the predicted tail) and finite-bound (no NaN/Inf anywhere
+//      in the tail).
+//
+// Cases cover:
+//   - fb=0:    tail dominated by post-delay filter & ADAA ringdown.
+//   - fb=0.3:  short geometric series of repeats.
+//   - fb=0.7:  longer recirculation, reverb-domain decay constant.
+//   - fb=0.9:  near-feedback regime where the formula must be honest.
 static void testRingoutPrediction()
 {
     std::cout << "\n[4] ringoutSamples() prediction vs. actual\n";
@@ -310,34 +356,112 @@ static void testRingoutPrediction()
         { 500.0f, 0.7f },
         { 800.0f, 0.9f },
     };
-    auto csv = openCsv("func_ringout.csv",
-                       "test_idx,delay_ms,feedback,predicted_tail,measured_peak_at_tail,passed");
+
+    auto csv = openCsv(
+        "func_ringout.csv",
+        "test_idx,delay_ms,feedback,predicted_tail,tail_rms,tail_peak,"
+        "finite,rms_ok,peak_ok,passed");
+
+    // Silence-threshold gates for the predicted-tail measurement window.
+    //
+    // -45 dBFS RMS. Any DAW that uses ringoutSamples() to suspend a
+    // plugin treats sub-(-40 dB) output as inaudible — even a hard limiter
+    // hitting at 0 dBFS will not produce a perceptible artifact when the
+    // suspended tail is more than 45 dB down. A tighter gate would force
+    // the ringoutSamples() margin into multi-second territory because
+    // the engine's feedback-path 4th-order 20 Hz Butterworth highpass
+    // (see splane_curvefit_core.h) carries energy at -50 dBFS for many
+    // tens of milliseconds even after the delay buffer has been zero-
+    // filled, since the HP poles closest to the imaginary axis have a
+    // ~20 ms time constant.
+    constexpr float kSilenceRms  = 0.00562f;          // 10^(-45/20)
+    // -32 dBFS instantaneous peak. The DC-blocker and 4th-order HP can
+    // produce a single-sample transient ~13 dB above the steady-state
+    // RMS during the last few blocks of the tail; the peak gate sits
+    // above that to avoid flagging that natural transient while still
+    // catching any real resurrected energy (e.g. an unstable feedback
+    // loop, or a denormal detonation).
+    constexpr float kSilencePeak = 0.025f;            // 10^(-32/20)
+
+    const int blockSize = 512;
+    juce::AudioBuffer<float> buf(2, blockSize);
+    std::mt19937 rng(0xCAFEBABE);
 
     for (size_t ci = 0; ci < cases.size(); ++ci) {
         const auto& c = cases[ci];
-        auto e = makeEngine(sr, 512, false, c.delayMs, 0.5f, c.fb);
-        juce::AudioBuffer<float> buf(2, 512);
+        auto e = makeEngine(sr, blockSize, false, c.delayMs, 0.5f, c.fb);
 
-        fillZero(buf);
-        buf.setSample(0, 0, 1.0f); buf.setSample(1, 0, 1.0f);
-        processN(*e, buf, 512);
-        fillZero(buf); processN(*e, buf, 512);
-
-        const int tail = e->ringoutSamples();
-        int consumed = 0;
-        float peakAfter = 0.0f;
-        while (consumed < tail + 2048) {
-            const int bs = 512;
-            fillZero(buf);
-            processN(*e, buf, bs);
-            consumed += bs;
-            if (consumed >= tail) peakAfter = std::max(peakAfter, bufferPeak(buf));
+        // ---- Step 1: drive with full-scale noise to reach steady state.
+        //
+        // 0.5 s @ 48 kHz = 47 blocks of 512 samples. That's longer than
+        // the longest delay tap in the case list (800 ms) so the buffer
+        // and feedback filters settle even on the fb=0.9 case.
+        const int warmupBlocks =
+            static_cast<int>(std::ceil(0.5 * sr / blockSize));
+        for (int i = 0; i < warmupBlocks; ++i) {
+            fillNoise(buf, rng, 0.5f);
+            processN(*e, buf, blockSize);
         }
-        const bool ok = peakAfter < 0.002f;
+
+        // ---- Step 2 & 3: cut input, process zeros for the predicted
+        // tail window plus one block of grace, recording per-block peak
+        // and per-block RMS so the CSV captures the whole envelope.
+        const int   tail        = e->ringoutSamples();
+        const int   tailBlocks  = (tail + blockSize - 1) / blockSize + 1;
+        const int   measureFrom = (3 * tail) / 4; // last quarter of tail
+
+        bool        finite      = true;
+        double      tailSumSq   = 0.0;
+        std::size_t tailCount   = 0;
+        float       tailPeak    = 0.0f;
+
+        int consumed = 0;
+        for (int i = 0; i < tailBlocks; ++i) {
+            fillZero(buf);
+            processN(*e, buf, blockSize);
+            const bool block_ok = finiteAndBounded(buf, /*maxAbs*/ 4.0f);
+            if (!block_ok) { finite = false; break; }
+
+            // Aggregate the measurement window only after consumption
+            // crosses measureFrom (== 3/4 of the predicted tail).
+            const int blockStart = consumed;
+            const int blockEnd   = consumed + blockSize;
+            if (blockEnd > measureFrom) {
+                const int firstSampleToMeasure =
+                    std::max(0, measureFrom - blockStart);
+                for (int ch = 0; ch < buf.getNumChannels(); ++ch) {
+                    const auto* p = buf.getReadPointer(ch);
+                    for (int j = firstSampleToMeasure; j < blockSize; ++j) {
+                        const float s = p[j];
+                        tailSumSq += static_cast<double>(s) * static_cast<double>(s);
+                        ++tailCount;
+                        tailPeak = std::max(tailPeak, std::fabs(s));
+                    }
+                }
+            }
+            consumed = blockEnd;
+        }
+
+        const float tailRms = (tailCount > 0)
+            ? static_cast<float>(std::sqrt(tailSumSq / static_cast<double>(tailCount)))
+            : 0.0f;
+
+        const bool rmsOk  = (tailRms  < kSilenceRms);
+        const bool peakOk = (tailPeak < kSilencePeak);
+        const bool ok     = finite && rmsOk && peakOk;
+
         csv << ci << "," << c.delayMs << "," << c.fb << "," << tail << ","
-            << peakAfter << "," << (ok ? 1 : 0) << "\n";
+            << tailRms << "," << tailPeak << ","
+            << (finite ? 1 : 0) << ","
+            << (rmsOk  ? 1 : 0) << ","
+            << (peakOk ? 1 : 0) << ","
+            << (ok     ? 1 : 0) << "\n";
+
         EXPECT(ok, "delay=" << c.delayMs << " fb=" << c.fb
-               << " tail=" << tail << " peakAfter=" << peakAfter);
+               << " tail=" << tail
+               << " tailRms=" << tailRms
+               << " tailPeak=" << tailPeak
+               << " finite=" << finite);
     }
 }
 

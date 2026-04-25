@@ -48,6 +48,20 @@ namespace MarsDSP::DSP::Modulation
             blockEndSample.assign (static_cast<size_t>(numChannels), 0.0f);
         }
 
+        // True iff the LFO is silent (target depth == 0 and the slew has
+        // already converged to 0). Callers can use this to short-circuit
+        // the per-sample LFO contribution to the tap position.
+        [[nodiscard]] bool isFullySilent() const noexcept
+        {
+            if (depthSlew.empty()) return true;
+            for (const auto& slew : depthSlew)
+            {
+                if (slew.getTargetValue() != 0.0f) return false;
+                if (slew.getCurrentValue() != 0.0f) return false;
+            }
+            return true;
+        }
+
         // rateNormalised in [0, 1] maps to 0..~3.5 Hz with a musical skew.
         // depthNormalised in [0, 1] maps to the cosine amplitude.
         // driftNormalised in [0, 1] adds a per-block random perturbation
@@ -59,9 +73,15 @@ namespace MarsDSP::DSP::Modulation
             // Quadratic taper: depth^3 left the lower half of the knob nearly
             // silent (0.5 knob → 0.125 depth). Squaring still provides a
             // gentle concave feel while keeping the effect audible mid-range.
+            //
+            // depthNormalised == 0 must drive the slew target to exactly 0 so
+            // the LFO falls fully silent — no "depth floor" residue. The
+            // earlier kDepthFloor=1e-3 left ~0.22 samples of constant wow
+            // offset on a wow knob at zero, which leaked into the tap-
+            // modulation crossfade and broke scalar/SIMD parity.
             const float depthCurve = depthNormalised * depthNormalised;
             for (auto& slew : depthSlew)
-                slew.setTargetValue (juce::jmax (kDepthFloor, depthCurve));
+                slew.setTargetValue (juce::jmax (0.0f, depthCurve));
 
             const float rateHz = std::pow (4.5f, rateNormalised) - 1.0f;
             const float randomUnit = randomEngine.nextFloat();
@@ -132,7 +152,9 @@ namespace MarsDSP::DSP::Modulation
         }
 
     private:
-        static constexpr float kDepthFloor = 0.001f;
+        // Linear smoother needs a real zero floor — multiplicative smoothing
+        // is incompatible with target=0, so the slew template is Linear.
+        static constexpr float kDepthFloor = 0.0f;
 
         float sampleRate         { 48000.0f };
         float amplitudeInSamples { 0.0f };
@@ -140,7 +162,7 @@ namespace MarsDSP::DSP::Modulation
 
         std::vector<float> phase;
         std::vector<float> blockEndSample;
-        std::vector<juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative>> depthSlew;
+        std::vector<juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear>> depthSlew;
 
         juce::Random randomEngine;
 

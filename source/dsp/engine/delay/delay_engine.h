@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cassert>
+#include <memory>
 #include <JuceHeader.h>
 #include "dsp/math/fastermath.h"
 #include "dsp/engine/delay/waveshaper.h"
@@ -35,6 +36,19 @@ namespace MarsDSP::DSP {
                 circularDelayBuffer.setCurrentSize(2, kBufSize + kTail);
                 circularDelayBuffer.clearAllSamples();
             }
+
+            // The ChronosReverb processor is ~3.7 MB by value (four 32k
+            // float ring buffers per allpass / loop delayline plus a
+            // 192k-sample predelay buffer). Holding it inline would push
+            // sizeof(DelayEngine<float>) above 3.5 MB and force any
+            // caller that stack-allocates two engines (e.g. SIMD
+            // correctness harnesses doing scalar/SIMD A/B comparisons)
+            // past the macOS 8 MB main-thread stack limit. Lazy-create
+            // it on the first prepare() call so the engine itself stays
+            // a few hundred bytes on the stack.
+            if (! stereoChronosReverbProcessor)
+                stereoChronosReverbProcessor =
+                    std::make_unique<ChronosReverb::ChronosReverbStereoProcessor<SampleType>>();
         }
 
         struct LagrangeCoeffs
@@ -69,7 +83,17 @@ namespace MarsDSP::DSP {
         void reset() noexcept
         {
             writeIdxL = writeIdxR = 0;
-            prevPos   = SampleType(0);
+            // Initialise prevPos to the steady-state user-driven
+            // tap position so the first block's modspeed comes out as
+            // 0 (otherwise the modspeed would spike at
+            // sampleRate * delayTime / 1000 — ~441 samples for a 10 ms
+            // tap at 44.1 kHz — producing a one-block duckGain dip that
+            // depends on the number of samples per process() call and
+            // breaks scalar/SIMD A/B parity in the alignment harness).
+            const float clampedDelayMs =
+                std::clamp(delayTime, minDelayTime, maxDelayTime);
+            prevPos   = static_cast<SampleType>(sampleRate
+                                                * (clampedDelayMs * 0.001));
             duckGain  = SampleType(1);
             circularDelayBuffer.clearAllSamples();
 
@@ -87,8 +111,12 @@ namespace MarsDSP::DSP {
 
             // Flush the unified reverb processor (predelay, input
             // diffusers, loop allpasses, damping filters, tapped delay
-            // lines, quadrature LFO).
-            stereoChronosReverbProcessor.reset();
+            // lines, quadrature LFO). The processor is owned by
+            // unique_ptr to keep the engine off the stack (see
+            // AllocBuffer for the rationale); guard the call against a
+            // pre-prepare reset.
+            if (stereoChronosReverbProcessor)
+                stereoChronosReverbProcessor->reset();
 
             // Flush the feedback write-back DC blockers.
             feedbackWriteDcBlockerLeft.reset();
@@ -135,10 +163,13 @@ namespace MarsDSP::DSP {
             // Prepare the unified post-delay reverb. Handles its own
             // per-block size / decay / damping smoothing internally,
             // so the outer engine just pushes parameter targets and
-            // calls processBlockInPlace() once per block.
+            // calls processBlockInPlace() once per block. The processor
+            // is heap-owned (see AllocBuffer for the rationale); the
+            // unique_ptr is created there before reaching this line.
             const int preparedMaxBlockSize =
                 std::max(static_cast<int>(spec.maximumBlockSize), 1);
-            stereoChronosReverbProcessor.prepare(sampleRate, preparedMaxBlockSize);
+            assert(stereoChronosReverbProcessor != nullptr);
+            stereoChronosReverbProcessor->prepare(sampleRate, preparedMaxBlockSize);
 
             // Prepare the wow and flutter modulation engines with two
             // channels so left/right Lagrange reads can drift
@@ -271,7 +302,8 @@ namespace MarsDSP::DSP {
 
             // Reverb modulation knob is a straight passthrough of the
             // user's value.
-            stereoChronosReverbProcessor.setModulation(cachedReverbModulationNormalised);
+            assert(stereoChronosReverbProcessor != nullptr);
+            stereoChronosReverbProcessor->setModulation(cachedReverbModulationNormalised);
 
             const auto numSamplesSize = static_cast<size_t>(numSamples);
             assert(numSamplesSize <= N_BLOCK - 8);
@@ -927,7 +959,7 @@ namespace MarsDSP::DSP {
                     // parameters cannot touch the delay taps.
                     if (reverbShouldRunThisBlock && reverbIsActiveThisBlock)
                     {
-                        stereoChronosReverbProcessor.processBlockInPlace(
+                        stereoChronosReverbProcessor->processBlockInPlace(
                             ch0, ch1, static_cast<int>(numSamplesSize));
                     }
 
@@ -1032,7 +1064,8 @@ namespace MarsDSP::DSP {
         void setReverbMixParam(const float normalisedAmount) noexcept
         {
             cachedReverbMixNormalised = std::clamp(normalisedAmount, 0.0f, 1.0f);
-            stereoChronosReverbProcessor.setMix(cachedReverbMixNormalised);
+            if (stereoChronosReverbProcessor)
+                stereoChronosReverbProcessor->setMix(cachedReverbMixNormalised);
         }
 
         // Reverb room size as a bipolar log2 multiplier. 0 = default
@@ -1041,39 +1074,44 @@ namespace MarsDSP::DSP {
         // block so updates are seamless.
         void setReverbRoomSizeParam(const float bipolarLog2Size) noexcept
         {
-            stereoChronosReverbProcessor.setRoomSize(
-                std::clamp(bipolarLog2Size, -2.0f, 2.0f));
+            if (stereoChronosReverbProcessor)
+                stereoChronosReverbProcessor->setRoomSize(
+                    std::clamp(bipolarLog2Size, -2.0f, 2.0f));
         }
 
         // Reverb decay time as log2-seconds: -4..6 corresponds to
         // ~62.5 ms .. 64 s of T60.
         void setReverbDecayTimeParam(const float log2Seconds) noexcept
         {
-            stereoChronosReverbProcessor.setDecayTime(
-                std::clamp(log2Seconds, -4.0f, 6.0f));
+            if (stereoChronosReverbProcessor)
+                stereoChronosReverbProcessor->setDecayTime(
+                    std::clamp(log2Seconds, -4.0f, 6.0f));
         }
 
         // Reverb predelay as log2-seconds: -8..1 corresponds to
         // ~4 ms .. 2 s of predelay.
         void setReverbPredelayParam(const float log2Seconds) noexcept
         {
-            stereoChronosReverbProcessor.setPredelayTime(
-                std::clamp(log2Seconds, -8.0f, 1.0f));
+            if (stereoChronosReverbProcessor)
+                stereoChronosReverbProcessor->setPredelayTime(
+                    std::clamp(log2Seconds, -8.0f, 1.0f));
         }
 
         // Reverb input-diffuser coefficient (0..1). The processor scales
         // this internally by 0.7 to keep the input allpasses stable.
         void setReverbDiffusionParam(const float normalisedAmount) noexcept
         {
-            stereoChronosReverbProcessor.setDiffusion(
-                std::clamp(normalisedAmount, 0.0f, 1.0f));
+            if (stereoChronosReverbProcessor)
+                stereoChronosReverbProcessor->setDiffusion(
+                    std::clamp(normalisedAmount, 0.0f, 1.0f));
         }
 
         // Reverb loop-allpass coefficient / buildup (0..1).
         void setReverbBuildupParam(const float normalisedAmount) noexcept
         {
-            stereoChronosReverbProcessor.setBuildup(
-                std::clamp(normalisedAmount, 0.0f, 1.0f));
+            if (stereoChronosReverbProcessor)
+                stereoChronosReverbProcessor->setBuildup(
+                    std::clamp(normalisedAmount, 0.0f, 1.0f));
         }
 
         // Reverb tap-modulation depth (0..1). Cached so process() can
@@ -1087,16 +1125,18 @@ namespace MarsDSP::DSP {
         // using it as the lowpass memory coefficient.
         void setReverbHighFrequencyDampingParam(const float normalisedAmount) noexcept
         {
-            stereoChronosReverbProcessor.setHighFrequencyDamping(
-                std::clamp(normalisedAmount, 0.0f, 1.0f));
+            if (stereoChronosReverbProcessor)
+                stereoChronosReverbProcessor->setHighFrequencyDamping(
+                    std::clamp(normalisedAmount, 0.0f, 1.0f));
         }
 
         // Reverb LF damping (0..1). The processor scales by 0.2 before
         // using it as the highpass memory coefficient.
         void setReverbLowFrequencyDampingParam(const float normalisedAmount) noexcept
         {
-            stereoChronosReverbProcessor.setLowFrequencyDamping(
-                std::clamp(normalisedAmount, 0.0f, 1.0f));
+            if (stereoChronosReverbProcessor)
+                stereoChronosReverbProcessor->setLowFrequencyDamping(
+                    std::clamp(normalisedAmount, 0.0f, 1.0f));
         }
 
         // ------------------------------------------------------------------
@@ -1192,13 +1232,26 @@ namespace MarsDSP::DSP {
             constexpr float silenceDb  = 0.001f;  // -60 dB
             // Margin budget that has to cover every component's own
             // post-silence ring-down, as measured at the engine output:
-            //   - s-plane HP at 20 Hz (Butterworth 4th order): ~2400 smp
-            //   - DC blocker (pole 0.995): ~1250 smp
-            //   - lagDelayMs + APVTS smoothers:               ~ 512 smp
-            // Rounded up with a safety factor so ringoutSamples() stays a
-            // reliable "host can suspend the plugin" signal.
-            constexpr int   kMargin    = 4096;
-            constexpr int   kMaxTail   = 1 << 20; // clamp (~21.8 s @ 48 kHz)
+            //   - s-plane HP at 20 Hz (curve-fit 4th order):    ~24000 smp
+            //   - s-plane LP at 20 kHz (curve-fit 4th order):   ~  200 smp
+            //   - DC blocker (pole 0.995):                      ~ 1250 smp
+            //   - lagDelayMs + APVTS smoothers:                 ~  512 smp
+            //   - 5th-order Lagrange interpolator transient:    ~   16 smp
+            // The s-plane curve-fit HP at 20 Hz has slower ring-down than
+            // a textbook Butterworth because the curve-fit poles are
+            // tuned for magnitude response, not impulse-response decay;
+            // measured tail RMS for a noise-driven steady state stays
+            // above -50 dBFS for ~25,000 samples after input is cut.
+            // 32 k samples (~683 ms @ 48 kHz) covers that with margin.
+            constexpr int   kMargin    = 32768;
+            // 4 M samples (~87 s @ 48 kHz). Necessary so feedback values
+            // ≥ 0.9 with multi-hundred-ms delay times don't get clamped
+            // to a tail that's shorter than the actual ring-down
+            // (fb=0.9 / 800 ms / 48 kHz: the geometric series itself
+            // takes 65 × 0.8 s ≈ 52 s to reach -60 dB; the previous
+            // 1 << 20 = 21.8 s clamp left the tail audible at the
+            // suspend boundary).
+            constexpr int   kMaxTail   = 1 << 22;
 
             if (fb < 1.0e-4f) return std::min(static_cast<int>(delaySamples) + kMargin, kMaxTail);
 
@@ -1405,7 +1458,12 @@ namespace MarsDSP::DSP {
         // Unified post-delay reverb processor: predelay -> 4 input
         // allpass diffusers -> 4 loop blocks, each with their own
         // allpasses + shelf damping + LFO-modulated tapped delay.
-        ChronosReverb::ChronosReverbStereoProcessor<SampleType> stereoChronosReverbProcessor{};
+        // Heap-owned because the value type is ~3.7 MB and would
+        // otherwise blow stack frames in callers that hold two
+        // DelayEngine instances side-by-side. Lazily created in
+        // AllocBuffer (called from prepare()).
+        std::unique_ptr<ChronosReverb::ChronosReverbStereoProcessor<SampleType>>
+            stereoChronosReverbProcessor;
 
         Bypass::CrossfadeBypassEngine<SampleType> masterPluginBypassEngine{};
         Bypass::CrossfadeBypassEngine<SampleType> reverbSendBypassEngine{};
@@ -1479,8 +1537,11 @@ namespace MarsDSP::DSP {
         // ---- Bridge ducker (sidechain duck on the wet path) -------------
         // The MaxBlockSize template arg is a power-of-two safe upper bound
         // for the BlockLerpSIMD ramp; N_BLOCK / 4 isn't pow2 in general,
-        // so we round to 4096 (covers any sane host block size).
-        Dynamics::BridgeDucker<4096, SampleType> bridgeDucker{};
+        // so we round to 8192 (next pow2 ≥ N_BLOCK = 4112). BridgeDucker's
+        // prepare() rounds the actual host maxBlockSize UP to the next
+        // pow2 ≤ 8192, so the audio loop's quad index stays in bounds for
+        // any host block from 1 sample up to N_BLOCK - kTail.
+        Dynamics::BridgeDucker<8192, SampleType> bridgeDucker{};
         float duckerThresholdDbCached = -24.0f;
         float duckerAmountCached      =  0.0f;
         float duckerAttackMsCached    =  5.0f;

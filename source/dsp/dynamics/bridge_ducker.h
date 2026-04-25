@@ -68,13 +68,23 @@ namespace MarsDSP::DSP::Dynamics
 
             envFollower.prepare (sampleRateHz, maxBlockSize, /* numChannels */ 1);
 
-            // BlockLerpSIMD requires power-of-two; round down to the
-            // largest pow2 ≤ min(maxBlockSize, MaxBlockSize).
-            const int safeBlock = std::min (maxBlockSize, MaxBlockSize);
+            // BlockLerpSIMD requires power-of-two and must be at least as
+            // large as the host block, otherwise the audio loop in
+            // DelayEngine::process can index past the prepared ramp
+            // (`gainLine.quad(q)` with q computed from the actual
+            // numSamples, not from the prepared block size). Round UP to
+            // the smallest pow2 ≥ maxBlockSize, capped by MaxBlockSize.
+            const int requested = std::max (maxBlockSize, 1);
+            const int safeBlock = std::min (requested, MaxBlockSize);
             int powTwoBlock = 4;
-            while ((powTwoBlock << 1) <= safeBlock) powTwoBlock <<= 1;
+            while (powTwoBlock < safeBlock) powTwoBlock <<= 1;
+            // Clamp in case requested > MaxBlockSize: BlockLerpSIMD will
+            // assert if we hand it bs > MaxBlockSize, and any host block
+            // larger than MaxBlockSize is a bug at the caller anyway.
+            powTwoBlock = std::min (powTwoBlock, MaxBlockSize);
             gainLerp.setBlockSize (powTwoBlock);
             gainLerp.instantize (1.0f);
+            preparedRampBlockSize = powTwoBlock;
 
             blockEndGain = 1.0f;
             blockEndEnv  = 0.0f;
@@ -229,6 +239,7 @@ namespace MarsDSP::DSP::Dynamics
 
         float sampleRate    { 48000.0f };
         int   audioChannels { 2 };
+        int   preparedRampBlockSize { MaxBlockSize };
         float thresholdLin  { 0.0631f };  // -24 dB
         float amount        { 0.0f };
         float blockEndGain  { 1.0f };
