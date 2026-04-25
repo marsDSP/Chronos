@@ -10,14 +10,13 @@
 #include "dsp/wdf/wdf_diode_pair.h"
 #include "dsp/wdf/wdf_math.h"
 
-// WDF correctness harness, modelled directly on the metrics chowdsp_wdf
-// uses in its own OmegaTest.cpp + BasicCircuitTest.cpp:
+// WDF correctness harness:
 //
 //   (A) Wright-Omega vs scipy reference values (margin 0.3 for omega3,
-//       0.05 for omega4, both absolute - chowdsp's documented bands).
+//       0.05 for omega4, both absolute).
 //
 //   (B) log_approx, exp_approx, log2_approx, pow2_approx accuracy bands
-//       (chowdsp margins: 0.005, 0.03, 0.008, 0.001).
+//       (margins 0.005, 0.03, 0.008, 0.001).
 //
 //   (C) Voltage divider sanity (10 V across two equal resistors -> 5 V).
 //
@@ -29,7 +28,7 @@
 
 namespace
 {
-    // scipy.special.wrightomega values, reproduced from chowdsp's OmegaTest.
+    // scipy.special.wrightomega reference values for W + ln(W) = x.
     const std::unordered_map<double, double> WrightOmegaReference = {
         { -10.0, 4.539786874921544e-05 }, { -9.5, 7.484622772024869e-05 },
         { -9.0, 0.00012339457692560975 }, { -8.5, 0.00020342698226408345 },
@@ -109,7 +108,7 @@ int main()
         };
 
         bool allOk = true;
-        std::cout << "[B] Polynomial approximation bands (chowdsp margins):" << std::endl;
+        std::cout << "[B] Polynomial approximation bands:" << std::endl;
         allOk &= checkBand ("log2", 1.0, 2.0, 0.008,
                             [](double x) { return W::log2Approx<double>(x); },
                             [](double x) { return std::log2 (x); });
