@@ -64,7 +64,6 @@ source/dsp/modulation/  Wow, flutter, OU noise
 source/dsp/filter/      S-plane curve-fit HP/LP
 source/dsp/dynamics/    WDF diode-bridge ducker
 source/dsp/buffers/     Aligned SIMD buffer abstractions
-docs/CHRONOS_DSP_BIBLE.md  Full derivations for everything above
 ```
 
 ## License
