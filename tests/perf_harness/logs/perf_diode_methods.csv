@@ -1,0 +1,5 @@
+method,avg_time_us,relative_speedup_vs_wdf_accurate
+WDF DiodePair (omega4),66.0501,1.0000
+WDF DiodePair (omega3),23.8236,2.7725
+ADAA sinh (slow),145.3268,0.4545
+ADAA sinh (fast),171.0890,0.3861

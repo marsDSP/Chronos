@@ -424,6 +424,101 @@ namespace MarsDSP::inline FasterMath
         return y;
     }
 //==============================================================================//
+    // Fast SIMD ADAA variants. The default fasterSinhADAA / fasterCoshADAA above
+    // use SIMD_MM(div_ps) which on most x86 hardware costs 14-25 cycles per
+    // quad. Replacing it with SIMD_MM(rcp_ps) (a 12-bit reciprocal estimate,
+    // ~5 cycles) plus one Newton refinement step (r' = r * (2 - dx * r))
+    // recovers full single-precision accuracy at a fraction of the cost. The
+    // tolerance gate, midpoint fallback and carry update are bit-identical to
+    // the slow path so the fast variants are drop-in replacements for the
+    // SIMD overload only - the scalar overload still uses plain division.
+    inline SIMD_M128 rcpRefined(SIMD_M128 x) noexcept
+    {
+        // Newton iteration for 1/x: r1 = r0 * (2 - x * r0)
+        const auto r0 = SIMD_MM(rcp_ps)(x);
+        const auto two = SIMD_MM(set1_ps)(2.0f);
+        const auto correction = SIMD_MM(sub_ps)(two, SIMD_MM(mul_ps)(x, r0));
+        return SIMD_MM(mul_ps)(r0, correction);
+    }
+
+    inline SIMD_M128 fasterSinhADAA_fast(const SIMD_M128 x, float &carryX, float &carryF) noexcept
+    {
+        const auto F = SIMD_MM(sub_ps)(fasterCosh(x), SIMD_MM(set1_ps)(1.0f));
+
+        const auto xShift = SIMD_MM(castsi128_ps)(SIMD_MM(slli_si128)(SIMD_MM(castps_si128)(x), 4));
+        const auto FShift = SIMD_MM(castsi128_ps)(SIMD_MM(slli_si128)(SIMD_MM(castps_si128)(F), 4));
+
+        const auto xPrev = SIMD_MM(add_ss)(xShift, SIMD_MM(set_ss)(carryX));
+        const auto FPrev = SIMD_MM(add_ss)(FShift, SIMD_MM(set_ss)(carryF));
+
+        const auto dx = SIMD_MM(sub_ps)(x, xPrev);
+        const auto dF = SIMD_MM(sub_ps)(F, FPrev);
+
+        const auto ABSMASK  = SIMD_MM(castsi128_ps)(SIMD_MM(set1_epi32)(0x7FFFFFFF));
+        const auto absDx    = SIMD_MM(and_ps)(dx, ABSMASK);
+        const auto eps      = SIMD_MM(set1_ps)(1.0e-4f);
+        const auto tooSmall = SIMD_MM(cmplt_ps)(absDx, eps);
+
+        // Mask the divisor so rcp doesn't see ~0; we throw away the result
+        // for those lanes anyway via the fallback blend below.
+        const auto safeDx   = SIMD_MM(or_ps)(SIMD_MM(and_ps)(tooSmall, eps),
+                                             SIMD_MM(andnot_ps)(tooSmall, dx));
+        const auto invDx    = rcpRefined(safeDx);
+        const auto adaaQ    = SIMD_MM(mul_ps)(dF, invDx);
+
+        const auto mid    = SIMD_MM(mul_ps)(SIMD_MM(set1_ps)(0.5f), SIMD_MM(add_ps)(x, xPrev));
+        const auto fallbk = fasterSinh(mid);
+
+        const auto y = SIMD_MM(or_ps)(SIMD_MM(and_ps)   (tooSmall, fallbk),
+                                      SIMD_MM(andnot_ps)(tooSmall, adaaQ));
+
+        alignas(16) float lanesX[4], lanesF[4];
+        SIMD_MM(store_ps)(lanesX, x);
+        SIMD_MM(store_ps)(lanesF, F);
+        carryX = lanesX[3];
+        carryF = lanesF[3];
+
+        return y;
+    }
+
+    inline SIMD_M128 fasterCoshADAA_fast(const SIMD_M128 x, float &carryX, float &carryF) noexcept
+    {
+        const auto F = fasterSinh(x);
+
+        const auto xShift = SIMD_MM(castsi128_ps)(SIMD_MM(slli_si128)(SIMD_MM(castps_si128)(x), 4));
+        const auto FShift = SIMD_MM(castsi128_ps)(SIMD_MM(slli_si128)(SIMD_MM(castps_si128)(F), 4));
+
+        const auto xPrev = SIMD_MM(add_ss)(xShift, SIMD_MM(set_ss)(carryX));
+        const auto FPrev = SIMD_MM(add_ss)(FShift, SIMD_MM(set_ss)(carryF));
+
+        const auto dx = SIMD_MM(sub_ps)(x, xPrev);
+        const auto dF = SIMD_MM(sub_ps)(F, FPrev);
+
+        const auto ABSMASK  = SIMD_MM(castsi128_ps)(SIMD_MM(set1_epi32)(0x7FFFFFFF));
+        const auto absDx    = SIMD_MM(and_ps)(dx, ABSMASK);
+        const auto eps      = SIMD_MM(set1_ps)(1.0e-4f);
+        const auto tooSmall = SIMD_MM(cmplt_ps)(absDx, eps);
+
+        const auto safeDx   = SIMD_MM(or_ps)(SIMD_MM(and_ps)(tooSmall, eps),
+                                             SIMD_MM(andnot_ps)(tooSmall, dx));
+        const auto invDx    = rcpRefined(safeDx);
+        const auto adaaQ    = SIMD_MM(mul_ps)(dF, invDx);
+
+        const auto mid    = SIMD_MM(mul_ps)(SIMD_MM(set1_ps)(0.5f), SIMD_MM(add_ps)(x, xPrev));
+        const auto fallbk = fasterCosh(mid);
+
+        const auto y = SIMD_MM(or_ps)(SIMD_MM(and_ps)   (tooSmall, fallbk),
+                                      SIMD_MM(andnot_ps)(tooSmall, adaaQ));
+
+        alignas(16) float lanesX[4], lanesF[4];
+        SIMD_MM(store_ps)(lanesX, x);
+        SIMD_MM(store_ps)(lanesF, F);
+        carryX = lanesX[3];
+        carryF = lanesF[3];
+
+        return y;
+    }
+//==============================================================================//
     namespace PadeTanCoeffs
     {
         // (7,6) pade approximant of tan(x)

@@ -12,6 +12,10 @@ add_executable(perf_cosh_test perf_cosh_test.cpp)
 add_executable(perf_boundtopi_test perf_boundtopi_test.cpp)
 add_executable(perf_delay_engine_test perf_delay_engine_test.cpp)
 
+# Diode-bridge solver perf comparison: WDF (omega) vs Newton (sinh/cosh) vs
+# fast/slow ADAA sinh.
+add_executable(perf_diode_methods_test perf_diode_methods_test.cpp)
+
 # New session: s-plane filter + aligned buffer.
 add_executable(perf_splane_filter_test  perf_splane_filter_test.cpp)
 add_executable(perf_aligned_buffer_test perf_aligned_buffer_test.cpp)
@@ -53,6 +57,7 @@ target_link_libraries(perf_tan_test PRIVATE SharedCode)
 target_link_libraries(perf_tanh_test PRIVATE SharedCode)
 target_link_libraries(perf_sinh_test PRIVATE SharedCode)
 target_link_libraries(perf_cosh_test PRIVATE SharedCode)
+target_link_libraries(perf_diode_methods_test PRIVATE SharedCode)
 target_link_libraries(perf_boundtopi_test PRIVATE SharedCode)
 target_link_libraries(perf_delay_engine_test PRIVATE
     SharedCode
@@ -91,5 +96,6 @@ set_target_properties(perf_tan_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE
 set_target_properties(perf_tanh_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(perf_sinh_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(perf_cosh_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+set_target_properties(perf_diode_methods_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(perf_boundtopi_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(perf_delay_engine_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")

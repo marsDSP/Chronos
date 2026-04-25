@@ -15,6 +15,10 @@ add_executable(simd_boundtopi_test simd_boundtopi_test.cpp)
 # verifies block-rate processBlockStereo path and dumps telemetry CSVs.
 add_executable(simd_ducker_smoke_test simd_ducker_smoke_test.cpp)
 
+# WDF diode-pair correctness harness: Wright-Omega vs scipy reference,
+# voltage divider, RC lowpass, DC sweep, audio chirp.
+add_executable(wdf_diode_pair_test wdf_diode_pair_test.cpp)
+
 add_executable(simd_delay_engine_test simd_delay_engine_test.cpp)
 add_executable(simd_alignment_delay_test simd_alignment_delay_test.cpp)
 add_executable(simd_alignment_math_test simd_alignment_math_test.cpp)
@@ -47,6 +51,7 @@ target_link_libraries(simd_tanh_test PRIVATE SharedCode)
 target_link_libraries(simd_sinh_test PRIVATE SharedCode)
 target_link_libraries(simd_cosh_test PRIVATE SharedCode)
 target_link_libraries(simd_ducker_smoke_test PRIVATE SharedCode)
+target_link_libraries(wdf_diode_pair_test PRIVATE SharedCode)
 target_link_libraries(simd_boundtopi_test PRIVATE SharedCode)
 target_link_libraries(simd_delay_engine_test PRIVATE 
     SharedCode 
@@ -141,6 +146,7 @@ set_target_properties(simd_tanh_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAK
 set_target_properties(simd_sinh_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(simd_cosh_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(simd_ducker_smoke_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+set_target_properties(wdf_diode_pair_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(simd_boundtopi_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(simd_delay_engine_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(simd_alignment_delay_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
