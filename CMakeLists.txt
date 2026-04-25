@@ -124,12 +124,18 @@ add_library(SharedCode INTERFACE
         source/dsp/diffusion/modulated_delayline.h
         source/dsp/diffusion/stereo_processor.h
         source/dsp/bypass/crossfade_bypass_engine.h
+        source/dsp/buffers/aligned_simd_buffer.h
+        source/dsp/buffers/aligned_simd_buffer_detail.h
+        source/dsp/buffers/aligned_simd_buffer_view.h
         source/dsp/buffers/static_delay_buffer.h
         source/dsp/modulation/noise_generator_engine.h
         source/dsp/modulation/ou_drift_process.h
         source/dsp/modulation/wow_engine.h
         source/dsp/modulation/flutter_engine.h
         source/dsp/filter/dc_blocker.h
+        source/dsp/filter/splane_curvefit_core.h
+        source/dsp/filter/splane_curvefit_highpass.h
+        source/dsp/filter/splane_curvefit_lowpass.h
         source/utils/helpers/tempo_sync.h)
 
 # Set compile features for SharedCode
