@@ -235,6 +235,7 @@ namespace MarsDSP::DSP::Dynamics
         float blockEndEnv   { 0.0f };
         bool  bypassed      { true };
 
+    public:
         BridgeDucker (const BridgeDucker&)            = delete;
         BridgeDucker& operator= (const BridgeDucker&) = delete;
     };

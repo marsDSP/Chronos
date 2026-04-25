@@ -47,6 +47,12 @@ add_executable(chronos_reverb_smoke_test chronos_reverb_smoke_test.cpp)
 add_executable(chronos_reverb_characterisation_test
                chronos_reverb_characterisation_test.cpp)
 
+# Wow / flutter LFO characterisation: depth and rate sweeps for the
+# WowEngine and FlutterEngine. Header-only consumers, so SharedCode
+# is the only link dep needed (it transitively brings in JUCE).
+add_executable(wow_flutter_characterisation_test
+               wow_flutter_characterisation_test.cpp)
+
 # Link against SharedCode from the main project
 target_link_libraries(simd_test PRIVATE SharedCode)
 target_link_libraries(simd_cos_test PRIVATE SharedCode)
@@ -128,6 +134,24 @@ target_link_libraries(chronos_reverb_smoke_test PRIVATE SharedCode)
 # SharedCode for include paths.
 target_link_libraries(chronos_reverb_characterisation_test PRIVATE SharedCode)
 
+# Wow / flutter characterisation pulls in juce::Random and juce::String
+# (via JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR), so it needs the
+# same JUCE module stack as the other engine-level tests, not just
+# SharedCode.
+target_link_libraries(wow_flutter_characterisation_test PRIVATE
+    SharedCode
+    juce::juce_audio_basics
+    juce::juce_audio_devices
+    juce::juce_audio_formats
+    juce::juce_audio_processors
+    juce::juce_core
+    juce::juce_dsp
+    juce::juce_events
+    juce::juce_graphics
+    juce::juce_gui_basics
+    juce::juce_gui_extra
+)
+
 target_link_libraries(delay_functional_test PRIVATE
     SharedCode
     juce::juce_audio_basics
@@ -177,4 +201,6 @@ set_target_properties(chronos_reverb_amount_stability_test
 set_target_properties(chronos_reverb_smoke_test
                       PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(chronos_reverb_characterisation_test
+                      PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+set_target_properties(wow_flutter_characterisation_test
                       PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")

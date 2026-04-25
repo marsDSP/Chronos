@@ -245,6 +245,14 @@ namespace MarsDSP::DSP {
             wowEngine    .prepareBlock(wowRateThisBlock, wowDepthThisBlock, wowDriftThisBlock);
             flutterEngine.prepareBlock(flutterRateBlock, flutterDepthBlock);
 
+            // Resolve the flutter LFO for the whole host block in one pass.
+            // FlutterEngine fills a per-channel piecewise-linear SIMD AC ramp
+            // at kSubBlockSize=16 resolution, plus the exact end-of-sub-block
+            // AC values consumed by the tap-modulation crossfade below. This
+            // replaces the old per-sub-block processBlock(subN, 0) call so
+            // the audio loop no longer carries flutter state between sub-blocks.
+            flutterEngine.resolveBlock(numSamples);
+
             // Push ducker parameter targets, then resolve the WDF bridge
             // once for this block from the dry input on ch0/ch1. The
             // resulting gain ramp lives in bridgeDucker.getGainLine() and
@@ -324,7 +332,11 @@ namespace MarsDSP::DSP {
             // setting while staying aligned to the 4-wide SIMD lanes.
             constexpr int kTapModulationSubBlockSize = 16;
 
+            const float flutterDcThisBlock      = flutterEngine.getDcOffsetInSamples();
+            const float flutterEndSubDcInBlock  = flutterOn ? flutterDcThisBlock : 0.0f;
+
             int sampleOffset = 0;
+            int subBlockIdx  = 0;
             while (sampleOffset < numSamples)
             {
                 const int subN = std::min(kTapModulationSubBlockSize,
@@ -333,10 +345,10 @@ namespace MarsDSP::DSP {
                 const int scratchLen = subN + kTail;
 
                 const float wowEndSubSample = wowEngine.processBlock(subN, 0);
-                const auto  [flutterEndSubAc, flutterEndSubDcRaw] =
-                    flutterEngine.processBlock(subN, 0);
-                const float flutterEndSubDc =
-                    flutterOn ? flutterEndSubDcRaw : 0.0f;
+                // Flutter is now resolved up-front in resolveBlock; pull the
+                // exact end-of-sub-block AC value from the precomputed table.
+                const float flutterEndSubAc = flutterEngine.subBlockEndAc(subBlockIdx, 0);
+                const float flutterEndSubDc = flutterEndSubDcInBlock;
                 const float currSubLfoOffsetSamples =
                     wowEndSubSample + flutterEndSubAc + flutterEndSubDc;
 
@@ -580,6 +592,7 @@ namespace MarsDSP::DSP {
 
                 prevSubLfoOffsetSamples = currSubLfoOffsetSamples;
                 sampleOffset += subN;
+                ++subBlockIdx;
             }
 
             lastWowBlockEndSample = wowEngine.getBlockEndSample(0);
