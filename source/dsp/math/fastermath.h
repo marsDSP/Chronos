@@ -146,6 +146,284 @@ namespace MarsDSP::inline FasterMath
         return SIMD_MM(div_ps)(num, den);
     }
 //==============================================================================//
+    // pade sinh(x) ≈ N(x) / D(x)
+    // [7/6] approximant coefficients for sinh(x), derived from the sin(x)
+    // approximant by the substitution x → i·x  (sin(i·x) = i·sinh(x)).
+    //
+    //            x · (N0 + x²·(N1 + x²·(N2 + x²·N3)))
+    // sinh(x) ≈ ──────────────────────────────────────────
+    //                D0 + x²·(D1 + x²·(D2 + x²·D3))
+    //
+    // sinh is odd so the expansion factors out an x and is otherwise even in x².
+    // Since the underlying sin Padé is the [7/6], this approximant is also [7/6]
+    // and gives ~24-bit float-precision over approximately [-π, π]. Beyond that
+    // |sinh(x)| grows exponentially and the rational form will start to drift.
+
+    namespace PadeSinhCoeffs
+    {
+        constexpr float N0 =  11511339840.0f;   // num x⁰ (after factoring x)
+        constexpr float N1 =  1640635920.0f;    // num x²
+        constexpr float N2 =  52785432.0f;      // num x⁴
+        constexpr float N3 =  479249.0f;        // num x⁶
+
+        constexpr float D0 =  11511339840.0f;   // den x⁰
+        constexpr float D1 = -277920720.0f;     // den x²
+        constexpr float D2 =  3177720.0f;       // den x⁴
+        constexpr float D3 = -18361.0f;         // den x⁶
+    }
+
+    inline float padeSinhApprox(const float x) noexcept
+    {
+        using namespace PadeSinhCoeffs;
+
+        const auto x2 = x * x;
+
+        // horner evaluation inside-out in x²
+        const auto num = x * (N0 + x2 * (N1 + x2 * (N2 + x2 * N3)));
+        const auto den =       D0 + x2 * (D1 + x2 * (D2 + x2 * D3));
+
+        return num / den;
+    }
+
+    inline float fasterSinh(const float x) noexcept
+    {
+        return padeSinhApprox(x);
+    }
+
+    inline SIMD_M128 fasterSinh(const SIMD_M128 x) noexcept
+    {
+        using namespace PadeSinhCoeffs;
+
+        // broadcast each coeff across 4 lanes
+        const auto vN0 = SIMD_MM(set1_ps)(N0);
+        const auto vN1 = SIMD_MM(set1_ps)(N1);
+        const auto vN2 = SIMD_MM(set1_ps)(N2);
+        const auto vN3 = SIMD_MM(set1_ps)(N3);
+
+        const auto vD0 = SIMD_MM(set1_ps)(D0);
+        const auto vD1 = SIMD_MM(set1_ps)(D1);
+        const auto vD2 = SIMD_MM(set1_ps)(D2);
+        const auto vD3 = SIMD_MM(set1_ps)(D3);
+
+        const auto x2  = SIMD_MM(mul_ps)(x, x);
+
+        // numerator: x · (N0 + x²·(N1 + x²·(N2 + x²·N3))) | innermost first
+        auto numInner  = SIMD_MM(add_ps)(vN2, SIMD_MM(mul_ps)(x2, vN3));        // N2 + x²·N3
+        numInner       = SIMD_MM(add_ps)(vN1, SIMD_MM(mul_ps)(x2, numInner));   // N1 + x²·(…)
+        const auto poly = SIMD_MM(add_ps)(vN0, SIMD_MM(mul_ps)(x2, numInner));  // N0 + x²·(…)
+        const auto num = SIMD_MM(mul_ps)(x, poly);
+
+        // denominator: D0 + x²·(D1 + x²·(D2 + x²·D3))
+        auto denInner  = SIMD_MM(add_ps)(vD2, SIMD_MM(mul_ps)(x2, vD3));        // D2 + x²·D3
+        denInner       = SIMD_MM(add_ps)(vD1, SIMD_MM(mul_ps)(x2, denInner));   // D1 + x²·(…)
+        const auto den = SIMD_MM(add_ps)(vD0, SIMD_MM(mul_ps)(x2, denInner));
+
+        return SIMD_MM(div_ps)(num, den);
+    }
+//==============================================================================//
+    // pade cosh(x) ≈ N(x) / D(x)
+    // [7/6] approximant coefficients for cosh(x), derived from the cos(x)
+    // approximant by the substitution x → i·x  (cos(i·x) = cosh(x)).
+    //
+    //            N0 + x²·(N1 + x²·(N2 + x²·N3))
+    // cosh(x) ≈ ─────────────────────────────────
+    //            D0 + x²·(D1 + x²·(D2 + x²·D3))
+    //
+    // cosh is even so the expansion is purely in x² (no leading factor of x).
+
+    namespace PadeCoshCoeffs
+    {
+        constexpr float N0 =  39251520.0f;    // num x⁰
+        constexpr float N1 =  18471600.0f;    // num x²
+        constexpr float N2 =  1075032.0f;     // num x⁴
+        constexpr float N3 =  14615.0f;       // num x⁶
+
+        constexpr float D0 =  39251520.0f;    // den x⁰
+        constexpr float D1 = -1154160.0f;     // den x²
+        constexpr float D2 =  16632.0f;       // den x⁴
+        constexpr float D3 = -127.0f;         // den x⁶
+    }
+
+    inline float padeCoshApprox(const float x) noexcept
+    {
+        using namespace PadeCoshCoeffs;
+
+        // cosh depends only on x², confirming even symmetry
+        const auto x2 = x * x;
+
+        // horner evaluation inside-out in x²
+        const auto num = N0 + x2 * (N1 + x2 * (N2 + x2 * N3));
+        const auto den = D0 + x2 * (D1 + x2 * (D2 + x2 * D3));
+
+        return num / den;
+    }
+
+    inline float fasterCosh(const float x) noexcept
+    {
+        return padeCoshApprox(x);
+    }
+
+    inline SIMD_M128 fasterCosh(const SIMD_M128 x) noexcept
+    {
+        using namespace PadeCoshCoeffs;
+
+        const auto vN0 = SIMD_MM(set1_ps)(N0);
+        const auto vN1 = SIMD_MM(set1_ps)(N1);
+        const auto vN2 = SIMD_MM(set1_ps)(N2);
+        const auto vN3 = SIMD_MM(set1_ps)(N3);
+
+        const auto vD0 = SIMD_MM(set1_ps)(D0);
+        const auto vD1 = SIMD_MM(set1_ps)(D1);
+        const auto vD2 = SIMD_MM(set1_ps)(D2);
+        const auto vD3 = SIMD_MM(set1_ps)(D3);
+
+        const auto x2  = SIMD_MM(mul_ps)(x, x);
+
+        // numerator: N0 + x²·(N1 + x²·(N2 + x²·N3))
+        auto numInner  = SIMD_MM(add_ps)(vN2, SIMD_MM(mul_ps)(x2, vN3));        // N2 + x²·N3
+        numInner       = SIMD_MM(add_ps)(vN1, SIMD_MM(mul_ps)(x2, numInner));   // N1 + x²·(…)
+        const auto num = SIMD_MM(add_ps)(vN0, SIMD_MM(mul_ps)(x2, numInner));   // N0 + x²·(…)
+
+        // denominator: D0 + x²·(D1 + x²·(D2 + x²·D3))
+        auto denInner  = SIMD_MM(add_ps)(vD2, SIMD_MM(mul_ps)(x2, vD3));        // D2 + x²·D3
+        denInner       = SIMD_MM(add_ps)(vD1, SIMD_MM(mul_ps)(x2, denInner));   // D1 + x²·(…)
+        const auto den = SIMD_MM(add_ps)(vD0, SIMD_MM(mul_ps)(x2, denInner));
+
+        return SIMD_MM(div_ps)(num, den);
+    }
+//==============================================================================//
+    // Antiderivative-antialiased sinh / cosh (first-order ADAA).
+    //
+    //   y[n] = (F(x[n]) - F(x[n-1])) / (x[n] - x[n-1])
+    //
+    // For sinh, F = cosh.  For cosh, F = sinh.  When |dx| is tiny we substitute
+    // the direct function evaluated at the midpoint to dodge 0/0 cancellation.
+    //
+    // The SIMD versions process four consecutive samples per call. The
+    // "previous sample" for lane 0 comes from the carry passed in; lanes 1..3
+    // read from the quad's own earlier lanes via a one-lane left shift. On
+    // exit carryX / carryF are updated to lane-3 of the current quad so the
+    // next call picks up where this one left off. Seed both to 0 at reset.
+    inline SIMD_M128 fasterSinhADAA(const SIMD_M128 x, float &carryX, float &carryF) noexcept
+    {
+        // antiderivative of sinh is cosh; subtract 1 so F(0) = 0 and the
+        // natural (carryX, carryF) = (0, 0) reset state is consistent.
+        // Subtracting a constant does not change dF between samples.
+        const auto F = SIMD_MM(sub_ps)(fasterCosh(x), SIMD_MM(set1_ps)(1.0f));
+
+        // One-lane left shift (fill lane 0 with 0), then splice carry into lane 0.
+        const auto xShift = SIMD_MM(castsi128_ps)(SIMD_MM(slli_si128)(SIMD_MM(castps_si128)(x), 4));
+        const auto FShift = SIMD_MM(castsi128_ps)(SIMD_MM(slli_si128)(SIMD_MM(castps_si128)(F), 4));
+
+        const auto xPrev = SIMD_MM(add_ss)(xShift, SIMD_MM(set_ss)(carryX));
+        const auto FPrev = SIMD_MM(add_ss)(FShift, SIMD_MM(set_ss)(carryF));
+
+        const auto dx = SIMD_MM(sub_ps)(x, xPrev);
+        const auto dF = SIMD_MM(sub_ps)(F, FPrev);
+
+        // Per-lane fallback when |dx| < eps: use direct sinh at the midpoint.
+        const auto ABSMASK  = SIMD_MM(castsi128_ps)(SIMD_MM(set1_epi32)(0x7FFFFFFF));
+        const auto absDx    = SIMD_MM(and_ps)(dx, ABSMASK);
+        const auto tooSmall = SIMD_MM(cmplt_ps)(absDx, SIMD_MM(set1_ps)(1.0e-4f));
+        const auto adaaQ    = SIMD_MM(div_ps)(dF, dx);
+        const auto mid      = SIMD_MM(mul_ps)(SIMD_MM(set1_ps)(0.5f), SIMD_MM(add_ps)(x, xPrev));
+        const auto fallbk   = fasterSinh(mid);
+
+        const auto y = SIMD_MM(or_ps)(SIMD_MM(and_ps)   (tooSmall, fallbk),
+                                      SIMD_MM(andnot_ps)(tooSmall, adaaQ));
+
+        // Persist lane-3 as carry for the next quad.
+        alignas(16) float lanesX[4], lanesF[4];
+
+        SIMD_MM(store_ps)(lanesX, x);
+        SIMD_MM(store_ps)(lanesF, F);
+
+        carryX = lanesX[3];
+        carryF = lanesF[3];
+
+        return y;
+    }
+
+    inline float fasterSinhADAA(const float x, float &carryX, float &carryF) noexcept
+    {
+        // see SIMD overload: F = cosh(x) - 1 so F(0) = 0
+        const float F  = fasterCosh(x) - 1.0f;
+        const float dx = x - carryX;
+
+        float y;
+
+        if (std::fabs(dx) < 1.0e-4f)
+        {
+            y = fasterSinh(0.5f * (x + carryX));
+        }
+        else
+        {
+            y = (F - carryF) / dx;
+        }
+
+        carryX = x;
+        carryF = F;
+
+        return y;
+    }
+
+    inline SIMD_M128 fasterCoshADAA(const SIMD_M128 x, float &carryX, float &carryF) noexcept
+    {
+        // antiderivative of cosh is sinh
+        const auto F = fasterSinh(x);
+
+        const auto xShift = SIMD_MM(castsi128_ps)(SIMD_MM(slli_si128)(SIMD_MM(castps_si128)(x), 4));
+        const auto FShift = SIMD_MM(castsi128_ps)(SIMD_MM(slli_si128)(SIMD_MM(castps_si128)(F), 4));
+
+        const auto xPrev = SIMD_MM(add_ss)(xShift, SIMD_MM(set_ss)(carryX));
+        const auto FPrev = SIMD_MM(add_ss)(FShift, SIMD_MM(set_ss)(carryF));
+
+        const auto dx = SIMD_MM(sub_ps)(x, xPrev);
+        const auto dF = SIMD_MM(sub_ps)(F, FPrev);
+
+        const auto ABSMASK  = SIMD_MM(castsi128_ps)(SIMD_MM(set1_epi32)(0x7FFFFFFF));
+        const auto absDx    = SIMD_MM(and_ps)(dx, ABSMASK);
+        const auto tooSmall = SIMD_MM(cmplt_ps)(absDx, SIMD_MM(set1_ps)(1.0e-4f));
+        const auto adaaQ    = SIMD_MM(div_ps)(dF, dx);
+        const auto mid      = SIMD_MM(mul_ps)(SIMD_MM(set1_ps)(0.5f), SIMD_MM(add_ps)(x, xPrev));
+        const auto fallbk   = fasterCosh(mid);
+
+        const auto y = SIMD_MM(or_ps)(SIMD_MM(and_ps)   (tooSmall, fallbk),
+                                      SIMD_MM(andnot_ps)(tooSmall, adaaQ));
+
+        alignas(16) float lanesX[4], lanesF[4];
+
+        SIMD_MM(store_ps)(lanesX, x);
+        SIMD_MM(store_ps)(lanesF, F);
+
+        carryX = lanesX[3];
+        carryF = lanesF[3];
+
+        return y;
+    }
+
+    inline float fasterCoshADAA(const float x, float &carryX, float &carryF) noexcept
+    {
+        const float F  = fasterSinh(x);
+        const float dx = x - carryX;
+
+        float y;
+
+        if (std::fabs(dx) < 1.0e-4f)
+        {
+            y = fasterCosh(0.5f * (x + carryX));
+        }
+        else
+        {
+            y = (F - carryF) / dx;
+        }
+
+        carryX = x;
+        carryF = F;
+
+        return y;
+    }
+//==============================================================================//
     namespace PadeTanCoeffs
     {
         // (7,6) pade approximant of tan(x)

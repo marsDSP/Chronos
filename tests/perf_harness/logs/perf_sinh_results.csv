@@ -1,0 +1,5 @@
+algorithm,avg_time_us,speedup
+std::sinh,1.157887,1.0
+Pade (Scalar),0.120030,9.646607
+Pade (SIMD),0.172048,6.730030
+ADAA (SIMD),0.618776,1.871253

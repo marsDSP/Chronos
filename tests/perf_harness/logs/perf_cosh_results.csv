@@ -1,0 +1,5 @@
+algorithm,avg_time_us,speedup
+std::cosh,1.155335,1.0
+Pade (Scalar),0.109653,10.536273
+Pade (SIMD),0.161347,7.160579
+ADAA (SIMD),0.607123,1.902968
