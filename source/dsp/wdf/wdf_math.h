@@ -10,12 +10,11 @@
 //  reflection equation in closed form. The headline routine is the Wright-
 //  Omega function W(x); the diode-pair reflection uses W applied to the
 //  signed forward-biased branch and reuses the result for the reverse branch
-//  via the Werner symmetry trick.
+//  via the antisymmetry of the diode pair around zero.
 //
 //  Wright-Omega is the solution to W + log(W) = x (for x in R). Evaluating
 //  it exactly per audio sample is too expensive, so we use a piecewise
-//  combination of cheap polynomial approximations - this is the same
-//  strategy used by Stefano D'Angelo's DAFx-2019 paper. Four orders are
+//  combination of cheap polynomial approximations. Four orders are
 //  exposed:
 //
 //      wrightOmega1: max(x, 0)                      ~6 dB error tail

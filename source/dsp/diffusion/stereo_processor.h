@@ -6,9 +6,8 @@
 // ============================================================================
 //  stereo_processor.h
 // ----------------------------------------------------------------------------
-//  Port of sst-effects' ChronosReverb (sst-effects/include/sst/effects/ChronosReverb.h)
-//  template class, adapted to the Chronos DSP namespace and rewritten with
-//  explicit, verbose names for every member and every intermediate
+//  ChronosReverb stereo processor.
+//  Template class with explicit, verbose names for every member and every intermediate
 //  variable in the inner loop. All underlying building blocks
 //  (Schroeder allpass, predelay, one-pole damping, dual-tap delay,
 //  quadrature LFO, block-rate smoother) live in their own headers with
@@ -16,7 +15,7 @@
 //
 //  Topology (per sample tick):
 //
-//    // --- feed for the reverb loop (mono, matches the SST reference) ---
+//    // --- feed for the reverb loop (mono) ---
 //    monoInput          = 0.5 * (inputL + inputR)
 //    predelayed         = predelay.process(monoInput, userPredelayInSamples)
 //    loopFeed           = predelayed
@@ -90,8 +89,8 @@
 //    roomSize       - bipolar percent. The actual size scale is
 //                     2^(roomSize) so 0 = default size, +1 = 2x, -1 = 0.5x.
 //    decayTime      - log2-seconds. Actual decay time in seconds is
-//                     2^(decayTime). SST uses the range [-4, 6] → ~0.0625 s
-//                     up to 64 s.
+//                     2^(decayTime). The accepted range [-4, 6] covers
+//                     ~0.0625 s up to 64 s.
 //    predelay       - log2-seconds. Same convention as decayTime.
 //    diffusion      - 0..1 knob. Input-diffuser allpass coefficient is
 //                     0.7 * this value.
@@ -111,7 +110,7 @@
 //                     to the wet signal before the mix.
 //
 //  Size invariants: the internal building blocks are templated on a
-//  MaxDelayCapacity large enough to hold SST's longest tap
+//  MaxDelayCapacity large enough to hold the longest tap
 //  (≈ 0.5 s × 8x size scale at 384 kHz). We expose that capacity via the
 //  template parameter kMaxInternalCapacityInSamples below.
 // ============================================================================
@@ -146,31 +145,30 @@ namespace MarsDSP::DSP::ChronosReverb
         static_assert(std::is_floating_point_v<SampleType>,
                       "ChronosReverbStereoProcessor requires a floating-point sample type.");
 
-        // Internal constants, matching SST's defines. Renamed verbosely.
+        // Internal topology constants.
         static constexpr int         kNumberOfReverbBlocksInLoop       = 4;
         static constexpr int         kNumberOfInputDiffuserAllpasses   = 4;
         static constexpr int         kNumberOfAllpassesPerBlock        = 2;
 
         // Internal delay-line capacity (per ring, power of two so the
         // tapped delay line's wrap is a bitmask). 32768 samples is ~680 ms
-        // at 48 kHz / ~170 ms at 192 kHz - enough for SST's longest tap
-        // (122.6 ms * sizeScale) at any practical size scale. Intentionally
-        // smaller than the SST reference value (131072) so the full
-        // processor fits comfortably inside DelayEngine by value instead
-        // of forcing a heap allocation.
+        // at 48 kHz / ~170 ms at 192 kHz - enough for the longest tap
+        // (122.6 ms * sizeScale) at any practical size scale. Sized so the
+        // full processor fits comfortably inside DelayEngine by value
+        // instead of forcing a heap allocation.
         static constexpr std::size_t kMaxInternalCapacityInSamples     = (1u << 15);
 
         // Predelay ring capacity. 192000 samples = 4 s @ 48 kHz / 2 s @
-        // 96 kHz / 1 s @ 192 kHz. Covers the SST predelay parameter
-        // range (-8..1 log2-seconds => 4 ms..2 s) at every supported
-        // host sample rate without blowing the DelayEngine up memory-wise.
+        // 96 kHz / 1 s @ 192 kHz. Covers the predelay parameter range
+        // (-8..1 log2-seconds => 4 ms..2 s) at every supported host sample
+        // rate without blowing the DelayEngine up memory-wise.
         static constexpr std::size_t kMaxPredelayCapacityInSamples     = (48000u * 4u);
 
         // -60 dB linear gain target used in the per-block decay formula.
-        // SST: `db60 = powf(10, 0.05 * -60) = 1e-3`.
+        // db60 = pow(10, 0.05 * -60) = 1e-3.
         static constexpr double      kMinusSixtyDecibelsAsLinearGain   = 0.001;
 
-        // Tap gain schedule, copied directly from SST's setvars().
+        // Tap gain schedule.
         static constexpr SampleType  kFixedLeftTapGains[kNumberOfReverbBlocksInLoop] = {
             static_cast<SampleType>(1.5 / 4.0),
             static_cast<SampleType>(1.2 / 4.0),
@@ -184,8 +182,7 @@ namespace MarsDSP::DSP::ChronosReverb
             static_cast<SampleType>(0.8 / 4.0),
         };
 
-        // Per-block delay lengths (in ms at size scale = 1.0), directly
-        // from SST's calc_size() hard-coded table.
+        // Per-block delay lengths (in ms at size scale = 1.0).
         static constexpr double kBaseLeftTapTimesInMilliseconds [kNumberOfReverbBlocksInLoop] =
             {  80.3,  59.3,  97.7, 122.6 };
         static constexpr double kBaseRightTapTimesInMilliseconds[kNumberOfReverbBlocksInLoop] =
@@ -196,8 +193,7 @@ namespace MarsDSP::DSP::ChronosReverb
 
         // Per-block allpass + loop-delay table (ms at size = 1.0). Rows
         // are blocks, columns are the two loop allpasses per block plus a
-        // final loop-delay column. This is a verbatim copy of the numbers
-        // in SST's calc_size().
+        // final loop-delay column.
         static constexpr double kBaseLoopAllpassLengthsInMilliseconds
             [kNumberOfReverbBlocksInLoop][kNumberOfAllpassesPerBlock] =
         {
@@ -210,11 +206,11 @@ namespace MarsDSP::DSP::ChronosReverb
             [kNumberOfReverbBlocksInLoop] =
             { 178.8, 126.5, 106.1, 139.4 };
 
-        // SST's hard-coded "nominal loop time at scale=1" used in the
-        // per-block decay-multiplier formula. 0.5508 s.
+        // "Nominal loop time at scale=1" used in the per-block decay-
+        // multiplier formula. 0.5508 s.
         static constexpr double kNominalLoopTimeAtSizeScaleOneInSeconds = 0.5508;
 
-        // The LFO defaults to 0.25 Hz (SST: `2^-2` Hz).
+        // The LFO defaults to 0.25 Hz (= 2^-2 Hz).
         static constexpr double kDefaultLfoFrequencyInHertz = 0.25;
 
         ChronosReverbStereoProcessor() noexcept = default;
@@ -238,7 +234,7 @@ namespace MarsDSP::DSP::ChronosReverb
             modulationDepthSmoother        .prepareForBlockOfSamples(cachedMaximumBlockSizeInSamples);
             wetDryMixSmoother              .prepareForBlockOfSamples(cachedMaximumBlockSizeInSamples);
 
-            // Default LFO rate (SST default = 0.25 Hz quadrature).
+            // Default LFO rate (0.25 Hz quadrature).
             quadratureModulationOscillator.setRateInRadiansPerSample(
                 static_cast<SampleType>(2.0 * M_PI
                                         * kDefaultLfoFrequencyInHertz
@@ -417,8 +413,7 @@ namespace MarsDSP::DSP::ChronosReverb
 
                 // 2b) Four input diffusers in series. This feeds the
                 //     reverb loop below with a mono, decorrelated
-                //     version of the predelayed input (matches the SST
-                //     Reverb2 reference topology).
+                //     version of the predelayed input.
                 for (auto& inputAllpass : inputDiffuserAllpasses)
                     inputBusSample = inputAllpass.processSingleSample(inputBusSample,
                                                                       currentDiffusionCoefficient);
@@ -544,7 +539,7 @@ namespace MarsDSP::DSP::ChronosReverb
 
                     // Decay-per-block multiplier: applied after every
                     // block so the effective per-loop gain is
-                    // multiplier^4. See the SST reverb loop.
+                    // multiplier^4.
                     recirculatingSample *= currentDecayPerBlockMultiplier;
                 }
 
@@ -595,7 +590,7 @@ namespace MarsDSP::DSP::ChronosReverb
     private:
         // ------------------------------------------------------------------
         //  Helper: convert the user modulation knob into a depth in
-        //  samples. Matches SST's
+        //  samples. Formula:
         //      modulation * sampleRate * 0.001 * 5
         //  i.e. up to 5 ms of delay deviation at full depth.
         // ------------------------------------------------------------------
@@ -661,8 +656,8 @@ namespace MarsDSP::DSP::ChronosReverb
         //  Helper: the per-block decay multiplier is
         //     db60 ^ (loopTime / (4 * 2^decayTime))
         //  where loopTime is the nominal 0.5508 s (size = 1) times the
-        //  current size scale. This matches the SST closed-form solution
-        //  for a 4-block chain to hit -60 dB at the target decay time.
+        //  current size scale. This is the closed-form solution for a
+        //  4-block chain to hit -60 dB at the target decay time.
         // ------------------------------------------------------------------
         void recalculateDecayPerBlockMultiplierFromCurrentParameters() noexcept
         {
@@ -683,8 +678,8 @@ namespace MarsDSP::DSP::ChronosReverb
         }
 
         // ------------------------------------------------------------------
-        //  Helper: convert an SST-style millisecond length (at size = 1)
-        //  into samples at the current host sample rate, clamped so the
+        //  Helper: convert a millisecond length (at size = 1) into
+        //  samples at the current host sample rate, clamped so the
         //  result never exceeds the internal delay capacity.
         // ------------------------------------------------------------------
         [[nodiscard]] static int millisecondsToSamples(double lengthInMilliseconds,
@@ -741,8 +736,7 @@ namespace MarsDSP::DSP::ChronosReverb
         ChronosReverbPredelayCircularBuffer<SampleType, kMaxPredelayCapacityInSamples>
             predelayCircularBuffer;
 
-        // Mono input diffusers that feed the reverb loop. Match the
-        // SST Reverb2 reference topology exactly.
+        // Mono input diffusers that feed the reverb loop.
         std::array<ChronosReverbSchroederAllpassDelayLine<SampleType, kMaxInternalCapacityInSamples>,
                    kNumberOfInputDiffuserAllpasses>
             inputDiffuserAllpasses{};

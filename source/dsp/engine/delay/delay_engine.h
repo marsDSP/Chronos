@@ -14,6 +14,7 @@
 #include "dsp/modulation/wow_engine.h"
 #include "dsp/modulation/flutter_engine.h"
 #include "dsp/filter/dc_blocker.h"
+#include "dsp/dynamics/bridge_ducker.h"
 
 namespace MarsDSP::DSP {
     template<typename SampleType, int N_BLOCK = 4112>
@@ -101,6 +102,10 @@ namespace MarsDSP::DSP {
             lastFlutterBlockEndAc = 0.0f;
             lastFlutterBlockEndDc = 0.0f;
 
+            // Flush the WDF bridge ducker so the first block after
+            // reset starts with gain = 1.
+            bridgeDucker.reset();
+
             // Latch current on/off states in the bypass engines so the
             // first block after reset doesn't trigger a spurious crossfade.
             masterPluginBypassEngine.reset(!bypassed);
@@ -140,6 +145,10 @@ namespace MarsDSP::DSP {
             // independently.
             wowEngine    .prepare(sampleRate, preparedMaxBlockSize, 2);
             flutterEngine.prepare(sampleRate, preparedMaxBlockSize, 2);
+
+            // Prepare the WDF bridge ducker. Sidechain follower is mono;
+            // gain ramp is held in BlockLerpSIMD<N_BLOCK> internally.
+            bridgeDucker.prepare(sampleRate, preparedMaxBlockSize, 2);
 
             // Flush the DC blockers that live on the feedback write-back.
             feedbackWriteDcBlockerLeft.reset();
@@ -235,6 +244,22 @@ namespace MarsDSP::DSP {
 
             wowEngine    .prepareBlock(wowRateThisBlock, wowDepthThisBlock, wowDriftThisBlock);
             flutterEngine.prepareBlock(flutterRateBlock, flutterDepthBlock);
+
+            // Push ducker parameter targets, then resolve the WDF bridge
+            // once for this block from the dry input on ch0/ch1. The
+            // resulting gain ramp lives in bridgeDucker.getGainLine() and
+            // is multiplied into vDuckGain below in Pass 3.
+            bridgeDucker.setBypassed(duckerBypassedCached);
+            bridgeDucker.prepareBlock(duckerThresholdDbCached,
+                                      duckerAmountCached,
+                                      duckerAttackMsCached,
+                                      duckerReleaseMsCached);
+            {
+                const auto* dryL = ch0 != nullptr ? ch0 : ch1;
+                const auto* dryR = ch1 != nullptr ? ch1 : ch0;
+                if (dryL != nullptr && dryR != nullptr)
+                    bridgeDucker.resolveBlock(dryL, dryR, numSamples);
+            }
 
             // Reverb modulation knob is a straight passthrough of the
             // user's value.
@@ -580,6 +605,7 @@ namespace MarsDSP::DSP {
                     float cxFb  = adaaFbL .getCarryX(), cfFb  = adaaFbL .getCarryF();
                     float cxOut = adaaOutL.getCarryX(), cfOut = adaaOutL.getCarryF();
 
+                    const auto& bridgeGainLine = bridgeDucker.getGainLine();
                     size_t n = 0;
                     for (; n + 3 < numSamplesSize; n += 4)
                     {
@@ -598,8 +624,11 @@ namespace MarsDSP::DSP {
                         else if (ch0 != nullptr) vMonoSum = SIMD_MM(loadu_ps)(ch0 + n);
                         else if (ch1 != nullptr) vMonoSum = SIMD_MM(loadu_ps)(ch1 + n);
 
+                        // Combined duck gain = modspeed-stability scalar * sidechain-bridge ramp.
+                        const auto vBridgeGain = bridgeGainLine.quad(q);
+                        const auto vDuckCombined = SIMD_MM(mul_ps)(vDuckGain, vBridgeGain);
                         const auto vFiltered  = SIMD_MM(load_ps)(&dsL[n]);
-                        const auto vDuckedOut = SIMD_MM(mul_ps)(vFiltered, vDuckGain);
+                        const auto vDuckedOut = SIMD_MM(mul_ps)(vFiltered, vDuckCombined);
 
                         // ADAA softclip on the write-feedback branch.
                         const auto vFbArg = SIMD_MM(add_ps)(vMonoSum, SIMD_MM(mul_ps)(vFb, vDuckedOut));
@@ -629,7 +658,8 @@ namespace MarsDSP::DSP {
                         else
                             monoSum = static_cast<SampleType>(0);
 
-                        const SampleType duckedOut = static_cast<SampleType>(dsL[n]) * duckGain;
+                        const SampleType bridgeGainScalar = static_cast<SampleType>(bridgeDucker.gainAt(static_cast<int>(n)));
+                        const SampleType duckedOut = static_cast<SampleType>(dsL[n]) * duckGain * bridgeGainScalar;
 
                         wL[n] = static_cast<SampleType>(fasterTanhADAA(static_cast<float>(monoSum + fbP * duckedOut), cxFb, cfFb));
                         const auto out = static_cast<SampleType>(fasterTanhADAA(static_cast<float>(duckedOut * mixP + monoSum * oneMinusMx), cxOut, cfOut));
@@ -714,18 +744,21 @@ namespace MarsDSP::DSP {
                     float cxFbR  = adaaFbR .getCarryX(), cfFbR  = adaaFbR .getCarryF();
                     float cxOutR = adaaOutR.getCarryX(), cfOutR = adaaOutR.getCarryF();
 
+                    const auto& bridgeGainLineStereo = bridgeDucker.getGainLine();
                     size_t n = 0;
                     for (; n + 3 < numSamplesSize; n += 4)
                     {
                         const int q = static_cast<int>(n) >> 2;
                         const auto vMix         = lMix.quad(q);
                         const auto vOneMinusMix = SIMD_MM(sub_ps)(SIMD_MM(set1_ps)(1.0f), vMix);
+                        const auto vBridgeGain    = bridgeGainLineStereo.quad(q);
+                        const auto vDuckCombined  = SIMD_MM(mul_ps)(vDuckGain, vBridgeGain);
 
                         if (ch0 != nullptr)
                         {
                             const auto vFbL = lFbL.quad(q);
                             auto vXL = SIMD_MM(loadu_ps)(ch0 + n);
-                            auto vYL_ducked = SIMD_MM(mul_ps)(SIMD_MM(load_ps)(&dsL[n]), vDuckGain);
+                            auto vYL_ducked = SIMD_MM(mul_ps)(SIMD_MM(load_ps)(&dsL[n]), vDuckCombined);
 
                             const auto vFbArgL = SIMD_MM(add_ps)(vXL,SIMD_MM(mul_ps)(vFbL, vYL_ducked));
                             const auto vWriteValL = fasterTanhADAA(vFbArgL, cxFbL, cfFbL);
@@ -740,7 +773,7 @@ namespace MarsDSP::DSP {
                         {
                             const auto vFbR = lFbR.quad(q);
                             auto vXR = SIMD_MM(loadu_ps)(ch1 + n);
-                            auto vYR_ducked = SIMD_MM(mul_ps)(SIMD_MM(load_ps)(&dsR[n]), vDuckGain);
+                            auto vYR_ducked = SIMD_MM(mul_ps)(SIMD_MM(load_ps)(&dsR[n]), vDuckCombined);
 
                             const auto vFbArgR = SIMD_MM(add_ps)(vXR, SIMD_MM(mul_ps)(vFbR, vYR_ducked));
                             const auto vWriteValR = fasterTanhADAA(vFbArgR, cxFbR, cfFbR);
@@ -756,11 +789,14 @@ namespace MarsDSP::DSP {
                         const auto mixP             = static_cast<SampleType>(lMix.at(static_cast<int>(n)));
                         const SampleType oneMinusMx = static_cast<SampleType>(1) - mixP;
 
+                        const SampleType bridgeGainTail = static_cast<SampleType>(bridgeDucker.gainAt(static_cast<int>(n)));
+                        const SampleType combinedDuck   = duckGain * bridgeGainTail;
+
                         if (ch0 != nullptr)
                         {
                             const auto fbLP            = static_cast<SampleType>(lFbL.at(static_cast<int>(n)));
                             const SampleType xL        = ch0[n];
-                            const SampleType yL_ducked = static_cast<SampleType>(dsL[n]) * duckGain;
+                            const SampleType yL_ducked = static_cast<SampleType>(dsL[n]) * combinedDuck;
 
                             wL[n]  = static_cast<SampleType>(fasterTanhADAA(static_cast<float>(xL + fbLP * yL_ducked), cxFbL, cfFbL));
                             ch0[n] = static_cast<SampleType>(fasterTanhADAA(static_cast<float>(yL_ducked * mixP + xL * oneMinusMx), cxOutL, cfOutL));
@@ -769,7 +805,7 @@ namespace MarsDSP::DSP {
                         {
                             const auto fbRP            = static_cast<SampleType>(lFbR.at(static_cast<int>(n)));
                             const SampleType xR        = ch1[n];
-                            const SampleType yR_ducked = static_cast<SampleType>(dsR[n]) * duckGain;
+                            const SampleType yR_ducked = static_cast<SampleType>(dsR[n]) * combinedDuck;
 
                             wR[n]  = static_cast<SampleType>(fasterTanhADAA(static_cast<float>(xR + fbRP * yR_ducked), cxFbR, cfFbR));
                             ch1[n] = static_cast<SampleType>(fasterTanhADAA(static_cast<float>(yR_ducked * mixP + xR * oneMinusMx), cxOutR, cfOutR));
@@ -940,6 +976,33 @@ namespace MarsDSP::DSP {
         void setCrossfeedParam(const float value) noexcept
         {
             crossfeed = std::clamp(value, 0.0f, 1.0f);
+        }
+
+        // ------------------------------------------------------------------
+        //  Bridge ducker knobs. The ducker drives the wet path through a
+        //  WDF-modelled diode-pair shunt attenuator whose saturation
+        //  current is modulated by the dry-input envelope, giving an
+        //  analog-style sidechain duck. process() reads these every block.
+        // ------------------------------------------------------------------
+        void setDuckerBypassedParam(const bool b) noexcept
+        {
+            duckerBypassedCached = b;
+        }
+        void setDuckerThresholdParam(const float thresholdDb) noexcept
+        {
+            duckerThresholdDbCached = std::clamp(thresholdDb, -60.0f, 0.0f);
+        }
+        void setDuckerAmountParam(const float normalisedAmount) noexcept
+        {
+            duckerAmountCached = std::clamp(normalisedAmount, 0.0f, 1.0f);
+        }
+        void setDuckerAttackParam(const float ms) noexcept
+        {
+            duckerAttackMsCached = std::clamp(ms, 0.5f, 50.0f);
+        }
+        void setDuckerReleaseParam(const float ms) noexcept
+        {
+            duckerReleaseMsCached = std::clamp(ms, 10.0f, 500.0f);
         }
 
         // ------------------------------------------------------------------
@@ -1399,5 +1462,16 @@ namespace MarsDSP::DSP {
         // User's reverb tap-modulation knob, cached so process() can
         // push it to the ChronosReverb processor every block.
         float cachedReverbModulationNormalised = 0.5f;
+
+        // ---- Bridge ducker (sidechain duck on the wet path) -------------
+        // The MaxBlockSize template arg is a power-of-two safe upper bound
+        // for the BlockLerpSIMD ramp; N_BLOCK / 4 isn't pow2 in general,
+        // so we round to 4096 (covers any sane host block size).
+        Dynamics::BridgeDucker<4096, SampleType> bridgeDucker{};
+        float duckerThresholdDbCached = -24.0f;
+        float duckerAmountCached      =  0.0f;
+        float duckerAttackMsCached    =  5.0f;
+        float duckerReleaseMsCached   = 80.0f;
+        bool  duckerBypassedCached    = true;
     };
 }

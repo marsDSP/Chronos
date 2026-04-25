@@ -15,7 +15,7 @@
 //  attenuation grows with bias-current drive while preserving even+odd
 //  harmonic colour from the diode I-V curve.
 //
-//  Werner et al. derived an explicit reflection equation using the Wright-
+//  The reflection equation can be solved in closed form using the Wright-
 //  Omega function W(x):
 //
 //      b = a − 2·V_T · sgn(a) · ( W(p + λ·a/V_T) − W(p − λ·a/V_T) )

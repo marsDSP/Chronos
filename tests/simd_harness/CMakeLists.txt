@@ -24,6 +24,10 @@ add_executable(simd_alignment_delay_test simd_alignment_delay_test.cpp)
 add_executable(simd_alignment_math_test simd_alignment_math_test.cpp)
 add_executable(delay_functional_test delay_functional_test.cpp)
 
+# Engine-level ducker test: drives the full DelayEngine through JUCE
+# buffers and verifies the wet output ducks against the dry sidechain.
+add_executable(delay_engine_ducker_test delay_engine_ducker_test.cpp)
+
 # Engine-level unity-gain harness: OU / reverb-mix / delay-mix sweeps
 add_executable(unity_gain_test unity_gain_test.cpp)
 
@@ -138,6 +142,20 @@ target_link_libraries(delay_functional_test PRIVATE
     juce::juce_gui_extra
 )
 
+target_link_libraries(delay_engine_ducker_test PRIVATE
+    SharedCode
+    juce::juce_audio_basics
+    juce::juce_audio_devices
+    juce::juce_audio_formats
+    juce::juce_audio_processors
+    juce::juce_core
+    juce::juce_dsp
+    juce::juce_events
+    juce::juce_graphics
+    juce::juce_gui_basics
+    juce::juce_gui_extra
+)
+
 # Ensure it's in a convenient location
 set_target_properties(simd_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(simd_cos_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
@@ -152,6 +170,7 @@ set_target_properties(simd_delay_engine_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY
 set_target_properties(simd_alignment_delay_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(simd_alignment_math_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(delay_functional_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+set_target_properties(delay_engine_ducker_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(unity_gain_test       PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 set_target_properties(chronos_reverb_amount_stability_test
                       PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")

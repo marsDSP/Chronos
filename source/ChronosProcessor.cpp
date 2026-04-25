@@ -206,6 +206,32 @@ AudioProcessorValueTreeState::ParameterLayout ChronosProcessor::createParameterL
         NormalisableRange(0.0f, 1.0f, 0.01f), 0.0f,
         AudioParameterFloatAttributes().withLabel("%")));
 
+    // ---- Bridge ducker (sidechain duck on the wet path) ---------------
+    // Five knobs only: bypass, threshold, amount, attack, release.
+    // Default: bypassed so existing presets are unaffected.
+    layout.add(std::make_unique<AudioParameterBool>(
+        ParameterID(kDuckerBypass, 1), "Ducker Bypass", true));
+
+    layout.add(std::make_unique<AudioParameterFloat>(
+        ParameterID(kDuckerThreshold, 1), "Ducker Threshold",
+        NormalisableRange(-60.0f, 0.0f, 0.1f), -24.0f,
+        AudioParameterFloatAttributes().withLabel("dB")));
+
+    layout.add(std::make_unique<AudioParameterFloat>(
+        ParameterID(kDuckerAmount, 1), "Ducker Amount",
+        NormalisableRange(0.0f, 1.0f, 0.01f), 0.5f,
+        AudioParameterFloatAttributes().withLabel("%")));
+
+    layout.add(std::make_unique<AudioParameterFloat>(
+        ParameterID(kDuckerAttack, 1), "Ducker Attack",
+        NormalisableRange(0.5f, 50.0f, 0.1f, 0.4f), 5.0f,
+        AudioParameterFloatAttributes().withLabel("ms")));
+
+    layout.add(std::make_unique<AudioParameterFloat>(
+        ParameterID(kDuckerRelease, 1), "Ducker Release",
+        NormalisableRange(10.0f, 500.0f, 0.5f, 0.4f), 80.0f,
+        AudioParameterFloatAttributes().withLabel("ms")));
+
     // ---- Tempo sync ---------------------------------------------------
     layout.add(std::make_unique<AudioParameterBool>(
         ParameterID(kSyncEnabled, 1), "Sync", false));
@@ -335,6 +361,13 @@ void ChronosProcessor::processBlock (AudioBuffer<float> &buffer, MidiBuffer &mid
     delay.setFlutterOnOffParam(apvts.getRawParameterValue(kFlutterOnOff)->load() >= 0.5f);
     delay.setFlutterRateParam (apvts.getRawParameterValue(kFlutterRate)->load());
     delay.setFlutterDepthParam(apvts.getRawParameterValue(kFlutterDepth)->load());
+
+    // Bridge ducker: 5-knob sidechain duck on the wet taps.
+    delay.setDuckerBypassedParam (apvts.getRawParameterValue(kDuckerBypass)   ->load() >= 0.5f);
+    delay.setDuckerThresholdParam(apvts.getRawParameterValue(kDuckerThreshold)->load());
+    delay.setDuckerAmountParam   (apvts.getRawParameterValue(kDuckerAmount)   ->load());
+    delay.setDuckerAttackParam   (apvts.getRawParameterValue(kDuckerAttack)   ->load());
+    delay.setDuckerReleaseParam  (apvts.getRawParameterValue(kDuckerRelease)  ->load());
 
     delay.setMono                 (apvts.getRawParameterValue(kMono)  ->load() >= 0.5f);
     delay.setBypassed             (apvts.getRawParameterValue(kBypass)->load() >= 0.5f);

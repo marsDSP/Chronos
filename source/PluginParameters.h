@@ -77,6 +77,20 @@ namespace Chronos
         // sync interval at the host's BPM).
         inline constexpr auto kSyncEnabled      = "syncEnabled";
         inline constexpr auto kSyncInterval     = "syncInterval";
+
+        // Sidechain ducker. Drives the wet delay taps through a WDF-
+        // modelled diode-bridge shunt attenuator whose saturation
+        // current is modulated by the dry input envelope. Five knobs:
+        //   - duckerBypass    : on by default; flip off to engage
+        //   - duckerThreshold : in dB, envelope above which ducking starts
+        //   - duckerAmount    : 0..1, depth of ducking
+        //   - duckerAttack    : envelope follower attack in ms
+        //   - duckerRelease   : envelope follower release in ms
+        inline constexpr auto kDuckerBypass     = "duckerBypass";
+        inline constexpr auto kDuckerThreshold  = "duckerThreshold";
+        inline constexpr auto kDuckerAmount     = "duckerAmount";
+        inline constexpr auto kDuckerAttack     = "duckerAttack";
+        inline constexpr auto kDuckerRelease    = "duckerRelease";
     } // namespace ParamID
 
     // --------------------------------------------------------------
