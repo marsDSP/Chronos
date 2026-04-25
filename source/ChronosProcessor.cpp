@@ -401,7 +401,7 @@ bool ChronosProcessor::hasEditor() const
 }
 AudioProcessorEditor* ChronosProcessor::createEditor()
 {
-    return new GenericAudioProcessorEditor(*this);
+    return new ChronosEditor(*this);
 }
 //==============================================================================
 void ChronosProcessor::getStateInformation(MemoryBlock &destData)
