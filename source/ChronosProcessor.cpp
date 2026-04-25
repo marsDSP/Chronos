@@ -380,6 +380,35 @@ void ChronosProcessor::processBlock (AudioBuffer<float> &buffer, MidiBuffer &mid
                                                                              buffer.getNumSamples());
     delay.process(inOutBlockView, numSamples);
 
+    {
+        Chronos::MeteringFrame frame;
+        const int numChannels = buffer.getNumChannels();
+
+        if (numChannels > 0)
+        {
+            const auto rangeL = buffer.findMinMax(0, 0, numSamples);
+            frame.outputPeakLeft = std::max(std::abs(rangeL.getStart()),
+                                            std::abs(rangeL.getEnd()));
+        }
+        if (numChannels > 1)
+        {
+            const auto rangeR = buffer.findMinMax(1, 0, numSamples);
+            frame.outputPeakRight = std::max(std::abs(rangeR.getStart()),
+                                             std::abs(rangeR.getEnd()));
+        }
+        else
+        {
+            frame.outputPeakRight = frame.outputPeakLeft;
+        }
+
+        frame.duckerBlockEndGain = delay.getDuckerBlockEndGain();
+        frame.blockIndex         = ++meteringBlockCounter;
+
+        // Best-effort push. Returning false simply means the editor
+        // hasn't drained recently; we deliberately ignore that here.
+        (void) meteringQueue.try_enqueue(frame);
+    }
+
     // advance dither state
     xorshiftL ^= xorshiftL << 13;
     xorshiftL ^= xorshiftL >> 17;

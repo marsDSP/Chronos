@@ -1050,6 +1050,16 @@ namespace MarsDSP::DSP {
             duckerReleaseMsCached = std::clamp(ms, 10.0f, 500.0f);
         }
 
+        // Block-end ducker gain reported by the WDF bridge attenuator,
+        // already accounting for the ducker bypass. Used by the UI/DSP
+        // metering interlink to feed gain-reduction visualisations.
+        // 1.0 = no attenuation, 0.0 = wet path fully shunted.
+        [[nodiscard]] float getDuckerBlockEndGain() const noexcept
+        {
+            if (duckerBypassedCached) return 1.0f;
+            return bridgeDucker.getBlockEndGain();
+        }
+
         // ------------------------------------------------------------------
         //  Unified ChronosReverb knobs. All of these just forward to the
         //  embedded processor; the processor handles its own smoothing,

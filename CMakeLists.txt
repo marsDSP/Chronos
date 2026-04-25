@@ -136,7 +136,9 @@ add_library(SharedCode INTERFACE
         source/dsp/filter/splane_curvefit_core.h
         source/dsp/filter/splane_curvefit_highpass.h
         source/dsp/filter/splane_curvefit_lowpass.h
-        source/utils/helpers/tempo_sync.h)
+        source/utils/helpers/tempo_sync.h
+        source/utils/data/metering_frame.h
+        source/utils/memory/spsc_queue.h)
 
 # Set compile features for SharedCode
 target_compile_features(SharedCode INTERFACE cxx_std_23)

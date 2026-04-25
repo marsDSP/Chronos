@@ -166,9 +166,36 @@ ChronosEditor::ChronosEditor(ChronosProcessor& p)
     syncIntervalAtt = std::make_unique<BoxAtt>(p.apvts, ParamID::kSyncInterval,  syncIntervalCombo);
 
     setSize(kWindowW, kWindowH);
+
+    // Begin draining the DSP -> UI metering SPSC. 30 Hz is fast enough
+    // for visual peak / GR meters without burning CPU on idle redraws.
+    startTimerHz(30);
 }
 
-ChronosEditor::~ChronosEditor() = default;
+ChronosEditor::~ChronosEditor() { stopTimer(); }
+
+//==============================================================================
+void ChronosEditor::timerCallback()
+{
+    // Drain every frame the DSP has pushed since the last tick. We
+    // only care about the most recent one for visual metering, but we
+    // still consume them all so the queue does not back up.
+    auto& queue = proc.getMeteringQueue();
+
+    Chronos::MeteringFrame frame;
+    bool drainedAny = false;
+    while (queue.try_dequeue(frame))
+    {
+        latestPeakLeft   = frame.outputPeakLeft;
+        latestPeakRight  = frame.outputPeakRight;
+        latestDuckerGain = frame.duckerBlockEndGain;
+        latestBlockIdx   = frame.blockIndex;
+        drainedAny = true;
+    }
+
+    if (drainedAny)
+        repaint();
+}
 
 //==============================================================================
 void ChronosEditor::paint(Graphics& g)

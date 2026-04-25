@@ -11,8 +11,14 @@
 //   - Ducker        (orange)
 // A top header strip carries the master controls (Bypass / Mono /
 // Sync toggle / Sync interval).
+//
+// The editor is also the consumer end of the DSP -> UI metering SPSC
+// (see ChronosProcessor::getMeteringQueue). A juce::Timer drains the
+// queue ~30 times per second from the message thread; the latest
+// drained values are cached for paint() and any future meter widgets.
 //==============================================================================
-class ChronosEditor final : public juce::AudioProcessorEditor
+class ChronosEditor final : public juce::AudioProcessorEditor,
+                            private juce::Timer
 {
 public:
     explicit ChronosEditor(ChronosProcessor&);
@@ -22,7 +28,17 @@ public:
     void resized() override;
 
 private:
+    void timerCallback() override;
+
     ChronosProcessor& proc;
+
+    // Latest values pulled from the metering SPSC. Read on the message
+    // thread only (timerCallback / paint), so no synchronisation needed
+    // beyond the queue itself.
+    float latestPeakLeft         = 0.0f;
+    float latestPeakRight        = 0.0f;
+    float latestDuckerGain       = 1.0f;
+    std::uint64_t latestBlockIdx = 0;
 
     // Header
     juce::Label titleLabel;
