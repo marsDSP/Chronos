@@ -1,0 +1,12 @@
+[submodule "libs/JUCE"]
+	path = libs/JUCE
+	url = https://github.com/marsDSP/JUCE.git
+[submodule "libs/simde"]
+	path = libs/simde
+	url = https://github.com/marsDSP/simde.git
+[submodule "libs/Catch2"]
+	path = libs/Catch2
+	url = https://github.com/marsDSP/Catch2.git
+[submodule "libs/pluginval"]
+	path = libs/pluginval
+	url = https://github.com/marsDSP/pluginval.git
