@@ -126,6 +126,9 @@ http-client.private.env.json
 # Python virtual environment
 .venv/
 
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
 # Doxygen generated documentation
 #docs/
 media/
