@@ -5,7 +5,7 @@
 
 #include <JuceHeader.h>
 
-namespace MarsDSP::Helpers
+namespace MarsDSP::Utils::Helpers
 {
     inline String freqHzToString (float freqHz)
     {

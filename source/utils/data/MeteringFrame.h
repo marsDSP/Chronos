@@ -10,7 +10,7 @@
 //  snap of a single processBlock's worth of metering data pushed
 //  through SPSC. Entire struct is trivially copyable. No hot path alloc.
 // =====================================================================
-namespace MarsDSP::Utils
+namespace MarsDSP::Utils::Data
 {
     struct MeteringFrame
     {
