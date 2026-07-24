@@ -1,19 +1,19 @@
 #include "ChronosProcessor.h"
 #include "ChronosEditor.h"
 
+#include <random>
+
 //==============================================================================
 ChronosProcessor::ChronosProcessor() : AudioProcessor (BusesProperties()
                        .withInput  ("Input",  AudioChannelSet::stereo(), true)
                        .withOutput ("Output", AudioChannelSet::stereo(), true)
                        )
 {
-    xorshiftL = 1.0;
-    while (xorshiftL < 16386)
-        xorshiftL = rand() * UINT32_MAX;
+    std::random_device rd;
+    std::uniform_int_distribution seedDist { 16386u, UINT32_MAX };
 
-    xorshiftR = 1.0;
-    while (xorshiftR < 16386)
-        xorshiftR = rand() * UINT32_MAX;
+    xorshiftL = seedDist (rd);
+    xorshiftR = seedDist (rd);
 }
 
 ChronosProcessor::~ChronosProcessor() = default;
