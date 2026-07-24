@@ -158,7 +158,11 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer,
         parameters.smoothen();
         delayLine.setDelay(parameters.getDelaySamples());
 
-        // delay: push dry, pop delayed, shape the wet taps (HPF -> LPF, wet only), sum dry + wet
+        const float mixNorm = parameters.getMix() * 0.01f;
+        const float theta = mixNorm * (std::numbers::pi_v<float> * 0.5f);
+        const float dryGain = std::cos(theta);
+        const float wetGain = std::sin(theta);
+
         const double sr = parameters.getSampleRate();
         for (auto ch {0uz}; ch < totalNumInputChannels; ++ch)
         {
@@ -170,10 +174,9 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer,
             wet = hpf[ch].processSample(wet);
             lpf[ch].setParams(SVF::SVFType::LowPass, sr, parameters.getLPFFreq(), svfQ, 0.0);
             wet = lpf[ch].processSample(wet);
-            data[s] = dry + wet;
+            data[s] = dry * dryGain + wet * wetGain;
         }
 
-        // output stage: smoothed gain -> TPDF dither -> quantize to target bit-depth
         const float gainLin = parameters.getGain();
         const float lsb = std::ldexp(1.0f, 1 - parameters.getBits());
 

@@ -11,6 +11,7 @@ const ParameterID delayTimeParamID { "delayTime", 1 };
 const ParameterID bypassParamID { "bypass", 1 };
 const ParameterID hpfFreqParamID { "hpfFreq", 1 };
 const ParameterID lpfFreqParamID { "lpfFreq", 1 };
+const ParameterID mixParamID { "mix", 1 };
 
 template<typename T>
 static void castParameter(const AudioProcessorValueTreeState& apvts, const ParameterID& id, T& destination)
@@ -29,6 +30,7 @@ public:
         castParameter(apvts, bypassParamID, bypassParam);
         castParameter(apvts, hpfFreqParamID, hpfParam);
         castParameter(apvts, lpfFreqParamID, lpfParam);
+        castParameter(apvts, mixParamID, mixParam);
     }
 
     static AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
@@ -40,6 +42,7 @@ public:
         layout.add(std::make_unique<AudioParameterBool>(bypassParamID, "Bypass", false));
         layout.add(std::make_unique<AudioParameterFloat>(hpfFreqParamID, "HPF Cutoff", NormalisableRange{ 20.0f, 2000.0f }, 20.0f));
         layout.add(std::make_unique<AudioParameterFloat>(lpfFreqParamID, "LPF Cutoff", NormalisableRange{ 200.0f, 20000.0f }, 20000.0f));
+        layout.add(std::make_unique<AudioParameterFloat>(mixParamID, "Mix", NormalisableRange{ 0.0f, 100.0f }, 100.0f));
         return layout;
     }
 
@@ -52,6 +55,7 @@ public:
         delaySmoother.reset(sr, dur);
         hpfSmoother.reset(sr, dur);
         lpfSmoother.reset(sr, dur);
+        mixSmoother.reset(sr, dur);
     }
 
     void reset() noexcept
@@ -59,6 +63,7 @@ public:
         gain = 0.0f;
         bits = 0.0f;
         delaySamples = 0.0f;
+        mix = 0.0f;
         if (gainParam != nullptr)
             gainSmoother.setCurrentAndTargetValue(Decibels::decibelsToGain(gainParam->get()));
         if (bitsParam != nullptr)
@@ -69,6 +74,8 @@ public:
             hpfSmoother.setCurrentAndTargetValue(hpfParam->get());
         if (lpfParam != nullptr)
             lpfSmoother.setCurrentAndTargetValue(lpfParam->get());
+        if (mixParam != nullptr)
+            mixSmoother.setCurrentAndTargetValue(mixParam->get());
     }
 
     void update() noexcept
@@ -83,6 +90,8 @@ public:
             hpfSmoother.setTargetValue(hpfParam->get());
         if (lpfParam != nullptr)
             lpfSmoother.setTargetValue(lpfParam->get());
+        if (mixParam != nullptr)
+            mixSmoother.setTargetValue(mixParam->get());
     }
 
     void smoothen() noexcept
@@ -92,6 +101,7 @@ public:
         delaySamples = delaySmoother.getNextValue();
         hpfFreq = hpfSmoother.getNextValue();
         lpfFreq = lpfSmoother.getNextValue();
+        mix = mixSmoother.getNextValue();
     }
 
     [[nodiscard]] float getGain() const noexcept { return gain; }
@@ -99,6 +109,7 @@ public:
     [[nodiscard]] float getDelaySamples() const noexcept { return delaySamples; }
     [[nodiscard]] float getHPFFreq() const noexcept { return hpfFreq; }
     [[nodiscard]] float getLPFFreq() const noexcept { return lpfFreq; }
+    [[nodiscard]] float getMix() const noexcept { return mix; }
     [[nodiscard]] double getSampleRate() const noexcept { return sampleRate; }
     [[nodiscard]] bool getBypass() const noexcept { return bypassParam != nullptr && bypassParam->get(); }
     [[nodiscard]] AudioProcessorParameter* getBypassParameter() const noexcept { return bypassParam; }
@@ -117,12 +128,14 @@ private:
     float delaySamples {};
     float hpfFreq {};
     float lpfFreq {};
+    float mix {};
 
     AudioParameterFloat* gainParam {};
     AudioParameterInt* bitsParam {};
     AudioParameterFloat* delayParam {};
     AudioParameterFloat* hpfParam {};
     AudioParameterFloat* lpfParam {};
+    AudioParameterFloat* mixParam {};
     AudioParameterBool* bypassParam {};
 
     LinearSmoothedValue<float> gainSmoother;
@@ -130,6 +143,7 @@ private:
     LinearSmoothedValue<float> delaySmoother;
     LinearSmoothedValue<float> hpfSmoother;
     LinearSmoothedValue<float> lpfSmoother;
+    LinearSmoothedValue<float> mixSmoother;
 
     double sampleRate {};
 };

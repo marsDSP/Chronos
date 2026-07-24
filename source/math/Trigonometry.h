@@ -72,7 +72,6 @@ inline M128 mmSin(const M128 x) noexcept
     const auto den = mulAdd(x2, denInner, vD0); // D0 + x²·(…)
     return MM(div_ps)(num, den);
 }
-
 // ═══════════════════════════════════════════════════════════
 // cos(x) ≈ P(x²) / Q(x²) [6/6] even rational minimax on [-π, π]
 // ───────────────────────────────────────────────────────────
@@ -136,7 +135,6 @@ inline M128 mmCos(const M128 x) noexcept
 
     return MM(div_ps)(num, den);
 }
-
 // ═══════════════════════════════════════════════════════════
 // tan(x) ≈ x·P(x²) / Q(x²) [7/6] odd rational minimax on [-1.55, 1.55]
 // ───────────────────────────────────────────────────────────
@@ -199,7 +197,6 @@ inline M128 mmTan(const M128 x) noexcept
 
     return MM(div_ps)(num, den);
 }
-
 //==============================================================================//
 namespace PadeTanCoeffs
 {
