@@ -18,13 +18,24 @@ namespace PadeSinCoeffs {
     constexpr float D3 = 18361.0f; // den x⁶
 }
 
+inline float fastReciprocal(const float d) noexcept {
+    const auto r = MM(cvtss_f32)(MM(rcp_ss)(MM(set_ss)(d)));
+    return r * (2.0f - d * r);
+}
+
+inline M128 fastReciprocal(const M128 d) noexcept {
+    const auto r = MM(rcp_ps)(d);
+    const auto two = MM(set1_ps)(2.0f);
+    return MM(mul_ps)(r, MM(sub_ps)(two, MM(mul_ps)(d, r)));
+}
+
 inline float padeSinApprox(const float x) noexcept {
     using namespace PadeSinCoeffs;
     const auto x2 = x * x;
     // horner evaluation inside-out in x²
     const auto num = -x * (N0 + x2 * (N1 + x2 * (N2 + x2 * N3)));
     const auto den = D0 + x2 * (D1 + x2 * (D2 + x2 * D3));
-    return num / den;
+    return num * fastReciprocal(den);
 }
 
 inline float pSin(const float x) noexcept { return padeSinApprox(x); }
@@ -51,6 +62,6 @@ inline M128 pSin(const M128 x) noexcept {
     auto denInner = MM(add_ps)(vD2, MM(mul_ps)(x2, vD3)); // D2 + x²·D3
     denInner = MM(add_ps)(vD1, MM(mul_ps)(x2, denInner)); // D1 + x²·(…)
     const auto den = MM(add_ps)(vD0, MM(mul_ps)(x2, denInner));
-    return MM(div_ps)(num, den);
+    return MM(mul_ps)(num, fastReciprocal(den));
 }
 #endif
