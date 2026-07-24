@@ -19,6 +19,7 @@ AudioProcessorValueTreeState::ParameterLayout ChronosProcessor::createParameterL
 {
     AudioProcessorValueTreeState::ParameterLayout layout;
     layout.add(std::make_unique<AudioParameterFloat>(ParameterID {"gain", 1}, "Output Gain", NormalisableRange{-12.0f, 12.0f}, 0.0f));
+    layout.add(std::make_unique<AudioParameterInt>(ParameterID {"bits", 1}, "Bit Depth", 1, 32, 24));
     return layout;
 }
 //==============================================================================
@@ -114,37 +115,51 @@ bool ChronosProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
   #endif
 }
 
+float ChronosProcessor::nextUniform (uint32_t& state) noexcept
+{
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+
+    // map the high 24-bits to a float in [0, 1)
+    return static_cast<float>(state >> 8) * (1.0f / 8388608.0f);
+}
+
 void ChronosProcessor::processBlock (AudioBuffer<float>& buffer,
 [[maybe_unused]]MidiBuffer& midiMessages)
 {
     ignoreUnused (midiMessages);
 
     ScopedNoDenormals noDenormals;
+
     auto totalNumInputChannels  = getTotalNumInputChannels();
     auto totalNumOutputChannels = getTotalNumOutputChannels();
 
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear (i, 0, buffer.getNumSamples());
 
-    // gain test
-    const float gainDB   = apvts.getRawParameterValue("gain")->load();
-    const float gainLin  = Decibels::decibelsToGain (gainDB);
+    // gain
+    const float gainDB  = apvts.getRawParameterValue("gain")->load();
+    const float gainLin = Decibels::decibelsToGain(gainDB);
 
+    // target bit depth for the output quantizer (1 LSB for a [-1, 1] signal)
+    const auto bitDepth = static_cast<int>(apvts.getRawParameterValue("bits")->load());
+    const float lsb = std::ldexp(1.0f, 1 - bitDepth);
+    const int numSamples = buffer.getNumSamples();
+
+    // final output stage: gain -> TPDF dither -> quantize to target bit depth
     for (auto ch {0uz}; ch < totalNumInputChannels; ++ch)
     {
         auto* data = buffer.getWritePointer(static_cast<int>(ch));
-        for (auto smp {0uz}; smp < buffer.getNumSamples(); ++smp)
-            data[smp] *= gainLin;
+        auto& state = (ch == 0uz) ? xorshiftL : xorshiftR;
+
+        for (auto s {0uz}; s < numSamples; ++s)
+        {
+            const float scaled = data[s] * gainLin;
+            const float dither = (nextUniform(state) - nextUniform(state)) * lsb;
+            data[s] = std::round((scaled + dither) / lsb) * lsb;
+        }
     }
-
-    // advance dither state
-    xorshiftL ^= xorshiftL << 13;
-    xorshiftL ^= xorshiftL >> 17;
-    xorshiftL ^= xorshiftL << 5;
-
-    xorshiftR ^= xorshiftR << 13;
-    xorshiftR ^= xorshiftR >> 17;
-    xorshiftR ^= xorshiftR << 5;
 }
 
 //==============================================================================

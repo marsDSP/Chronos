@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <cmath>
 #include <random>
 
 //==============================================================================
@@ -51,6 +52,10 @@ private:
 
     uint32_t xorshiftL;
     uint32_t xorshiftR;
+
+    // xorshift32 -> uniform float in [0, 1), using the high 24 bits
+    static float nextUniform(uint32_t& state) noexcept;
+
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChronosProcessor)
 };
