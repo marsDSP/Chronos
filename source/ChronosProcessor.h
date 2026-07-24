@@ -14,8 +14,10 @@ public:
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override;
 
+protected:
     bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
 
+public:
     void processBlock (AudioBuffer<float>&, MidiBuffer&) override;
     using AudioProcessor::processBlock;
 
