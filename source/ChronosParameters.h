@@ -9,6 +9,8 @@ const ParameterID gainParamID { "gain", 1 };
 const ParameterID bitsParamID { "bits", 1 };
 const ParameterID delayTimeParamID { "delayTime", 1 };
 const ParameterID bypassParamID { "bypass", 1 };
+const ParameterID hpfFreqParamID { "hpfFreq", 1 };
+const ParameterID lpfFreqParamID { "lpfFreq", 1 };
 
 template<typename T>
 static void castParameter(const AudioProcessorValueTreeState& apvts, const ParameterID& id, T& destination)
@@ -25,6 +27,8 @@ public:
         castParameter(apvts, bitsParamID, bitsParam);
         castParameter(apvts, delayTimeParamID, delayParam);
         castParameter(apvts, bypassParamID, bypassParam);
+        castParameter(apvts, hpfFreqParamID, hpfParam);
+        castParameter(apvts, lpfFreqParamID, lpfParam);
     }
 
     static AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
@@ -34,6 +38,8 @@ public:
         layout.add(std::make_unique<AudioParameterInt>(bitsParamID, "Bit Depth", 1, 32, 24));
         layout.add(std::make_unique<AudioParameterFloat>(delayTimeParamID, "Delay Time", NormalisableRange{ minDelayTime, maxDelayTime }, 500.0f));
         layout.add(std::make_unique<AudioParameterBool>(bypassParamID, "Bypass", false));
+        layout.add(std::make_unique<AudioParameterFloat>(hpfFreqParamID, "HPF Cutoff", NormalisableRange{ 20.0f, 2000.0f }, 20.0f));
+        layout.add(std::make_unique<AudioParameterFloat>(lpfFreqParamID, "LPF Cutoff", NormalisableRange{ 200.0f, 20000.0f }, 20000.0f));
         return layout;
     }
 
@@ -44,6 +50,8 @@ public:
         gainSmoother.reset(sr, dur);
         bitsSmoother.reset(sr, dur);
         delaySmoother.reset(sr, dur);
+        hpfSmoother.reset(sr, dur);
+        lpfSmoother.reset(sr, dur);
     }
 
     void reset() noexcept
@@ -57,6 +65,10 @@ public:
             bitsSmoother.setCurrentAndTargetValue(static_cast<float>(bitsParam->get()));
         if (delayParam != nullptr)
             delaySmoother.setCurrentAndTargetValue(msToSamples(delayParam->get()));
+        if (hpfParam != nullptr)
+            hpfSmoother.setCurrentAndTargetValue(hpfParam->get());
+        if (lpfParam != nullptr)
+            lpfSmoother.setCurrentAndTargetValue(lpfParam->get());
     }
 
     void update() noexcept
@@ -67,6 +79,10 @@ public:
             bitsSmoother.setTargetValue(static_cast<float>(bitsParam->get()));
         if (delayParam != nullptr)
             delaySmoother.setTargetValue(msToSamples(delayParam->get()));
+        if (hpfParam != nullptr)
+            hpfSmoother.setTargetValue(hpfParam->get());
+        if (lpfParam != nullptr)
+            lpfSmoother.setTargetValue(lpfParam->get());
     }
 
     void smoothen() noexcept
@@ -74,11 +90,16 @@ public:
         gain = gainSmoother.getNextValue();
         bits = static_cast<int>(bitsSmoother.getNextValue());
         delaySamples = delaySmoother.getNextValue();
+        hpfFreq = hpfSmoother.getNextValue();
+        lpfFreq = lpfSmoother.getNextValue();
     }
 
     [[nodiscard]] float getGain() const noexcept { return gain; }
     [[nodiscard]] int getBits() const noexcept { return bits; }
     [[nodiscard]] float getDelaySamples() const noexcept { return delaySamples; }
+    [[nodiscard]] float getHPFFreq() const noexcept { return hpfFreq; }
+    [[nodiscard]] float getLPFFreq() const noexcept { return lpfFreq; }
+    [[nodiscard]] double getSampleRate() const noexcept { return sampleRate; }
     [[nodiscard]] bool getBypass() const noexcept { return bypassParam != nullptr && bypassParam->get(); }
     [[nodiscard]] AudioProcessorParameter* getBypassParameter() const noexcept { return bypassParam; }
 
@@ -94,15 +115,21 @@ private:
     float gain {};
     int bits {};
     float delaySamples {};
+    float hpfFreq {};
+    float lpfFreq {};
 
     AudioParameterFloat* gainParam {};
     AudioParameterInt* bitsParam {};
     AudioParameterFloat* delayParam {};
+    AudioParameterFloat* hpfParam {};
+    AudioParameterFloat* lpfParam {};
     AudioParameterBool* bypassParam {};
 
     LinearSmoothedValue<float> gainSmoother;
     LinearSmoothedValue<float> bitsSmoother;
     LinearSmoothedValue<float> delaySmoother;
+    LinearSmoothedValue<float> hpfSmoother;
+    LinearSmoothedValue<float> lpfSmoother;
 
     double sampleRate {};
 };

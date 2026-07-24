@@ -1,9 +1,11 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <array>
 #include <cmath>
 #include <random>
 
+#include "dsp/SVF.h"
 #include "ChronosParameters.h"
 //==============================================================================
 class ChronosProcessor final : public AudioProcessor
@@ -59,6 +61,12 @@ private:
     static float nextUniform(uint32_t& state) noexcept;
 
     dsp::DelayLine<float> delayLine;
+
+    // wet-path tone shaping: HPF then LPF on the delay taps only (dry is summed unfiltered)
+    using SVF = MarsDSP::Filters::TwoPoleSVF;
+    std::array<SVF, 2> hpf;
+    std::array<SVF, 2> lpf;
+    static constexpr double svfQ { 0.7071 }; // Butterworth, maximally flat passband
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChronosProcessor)
 };

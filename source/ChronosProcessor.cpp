@@ -96,6 +96,9 @@ void ChronosProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     const auto maxDelayInSamples = static_cast<int>(std::ceil(numSamples));
     delayLine.setMaximumDelayInSamples(maxDelayInSamples);
     delayLine.reset();
+
+    for (auto& f : hpf) f.reset();
+    for (auto& f : lpf) f.reset();
 }
 
 void ChronosProcessor::releaseResources()
@@ -155,13 +158,18 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer,
         parameters.smoothen();
         delayLine.setDelay(parameters.getDelaySamples());
 
-        // delay: push dry, pop delayed, sum dry + wet back in place
+        // delay: push dry, pop delayed, shape the wet taps (HPF -> LPF, wet only), sum dry + wet
+        const double sr = parameters.getSampleRate();
         for (auto ch {0uz}; ch < totalNumInputChannels; ++ch)
         {
             auto *data = buffer.getWritePointer(static_cast<int>(ch));
             const float dry = data[s];
             delayLine.pushSample(static_cast<int>(ch), dry);
-            const float wet = delayLine.popSample(static_cast<int>(ch));
+            float wet = delayLine.popSample(static_cast<int>(ch));
+            hpf[ch].setParams(SVF::SVFType::HighPass, sr, parameters.getHPFFreq(), svfQ, 0.0);
+            wet = hpf[ch].processSample(wet);
+            lpf[ch].setParams(SVF::SVFType::LowPass, sr, parameters.getLPFFreq(), svfQ, 0.0);
+            wet = lpf[ch].processSample(wet);
             data[s] = dry + wet;
         }
 
