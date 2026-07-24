@@ -26,20 +26,21 @@ scope or tool. This is non-negotiable and applies to every commit. This especial
 
 ## Project overview
 
-Chronos is a **Nonlinear Delay Engine** JUCE audio plugin (see `README.md`). It is in an early scaffold stage: the JUCE `AudioProcessor` and editor are wired up from the JUCE template, but no DSP is implemented yet (`ChronosProcessor::processBlock` is the template no-op; the editor renders a "Hello World" placeholder at 400×300). It targets **Standalone**, **VST3**, and (on macOS) **AU** formats. The intended header-only DSP will live under `source/dsp/` (currently empty). C++23.
+Chronos is a **Nonlinear Delay Engine** JUCE audio plugin (see `README.md`). It is still early, but no longer a bare template: `ChronosProcessor::processBlock` applies an output-gain stage followed by per-sample TPDF dither and quantization to a target bit depth, driven by an `AudioProcessorValueTreeState`, and `createEditor()` returns a `GenericAudioProcessorEditor`. It targets **Standalone**, **VST3**, and (on macOS) **AU** formats. The intended header-only DSP will live under `source/dsp/` (currently empty). C++23.
 
 Identity (set in `CMakeLists.txt`): company `MarsDSP`, BUNDLE_ID `com.marsdsp.Chronos`, manufacturer code `MDSP`, plugin code `CHRO`, version `0.1.0`. Remote: `https://github.com/marsDSP/Chronos.git`, branch `main`.
 
 ## Project structure
 
 - `source/` — plugin sources, globbed into the `Chronos` target via `file(GLOB_RECURSE ...)` for `*.{cpp,h,hpp}`.
-  - `ChronosProcessor.{h,cpp}` — JUCE `AudioProcessor`. Stereo in/out via `BusesProperties`, mono/stereo layouts supported, no MIDI in/out, not a synth, tail length `0.0`. `processBlock` is the template no-op; `getStateInformation`/`setStateInformation` are stubs; programs are the single default program.
-  - `ChronosEditor.{h,cpp}` — JUCE `AudioProcessorEditor` (template, 400×300, "Hello World").
-  - `dsp/`, `gui/`, `math/`, `simd/` — empty placeholder directories for future header-only DSP / GUI / math / SIMD code.
+  - `ChronosProcessor.{h,cpp}` — JUCE `AudioProcessor`. Stereo in/out via `BusesProperties`, mono/stereo layouts supported, no MIDI in/out, not a synth, tail length `0.0`. `processBlock` applies output gain (dB → linear via `Decibels::decibelsToGain`) then per-sample TPDF dither and quantization to the target bit depth, using two independent xorshift32 streams (one per channel, seeded from `std::random_device`). Parameters live in an `AudioProcessorValueTreeState` built by `createParameterLayout()`: `gain` (float, −12…+12 dB) and `bits` (int, 1…32). `isBusesLayoutSupported` is `protected`, matching the base class. `getStateInformation`/`setStateInformation` are still stubs; programs are the single default program.
+  - `ChronosEditor.{h,cpp}` — JUCE `AudioProcessorEditor` from the template. Note the processor does not instantiate it; `createEditor()` returns a `GenericAudioProcessorEditor` instead.
+  - `math/Trigonometry.h` — `pSin`, a minimax [7/6] odd-rational sine (scalar and `M128` overloads). `simd/Config.h` — the SIMD abstraction layer, providing the `MM()` / `M128` macros over native SSE or SIMDe. Neither header is `#include`d by the plugin yet, so neither is compiled by the build.
+  - `dsp/`, `gui/` — empty placeholder directories for future header-only DSP / GUI code.
   - `utils/{data,helpers,memory}/` — empty placeholder directories for future utilities.
 - `tests/` — scaffolded but NOT wired into the build. Empty placeholder subdirectories: `benchmarks/`, `charts/`, `harnesses/{cd,perf,simd}/`, `logs/`. There is no `tests/CMakeLists.txt` and no test target. `Catch2` is vendored under `libs/` for future numeric verification once `source/dsp/` is populated.
 - `libs/` — third-party code as git submodules (marsDSP forks): `JUCE`, `simde`, `Catch2`, `pluginval`. No KFR, gcem, tracy, or xsimd are vendored. Note: `CMakeLists.txt` still lists `libs/xsimd/include` in the `SharedCode` include dirs, but that path does not exist yet (no xsimd submodule).
-- `scripts/bash/copy_vst3.sh` — post-build copy of `Chronos.vst3` into `~/Desktop/vst test`. `scripts/python/` is an empty placeholder. There is no `setup.sh` or `build.sh`.
+- `scripts/bash/copy_vst3.sh` — post-build copy of `Chronos.vst3` into `~/Desktop/vst test`. `scripts/python/remez_sin.py` re-derives the minimax sine coefficients in `source/math/Trigonometry.h` via a Remez exchange and exits non-zero if they drift from the header, so it doubles as a regression check on those constants (needs numpy; run it as `./.venv/bin/python scripts/python/remez_sin.py`). There is no `setup.sh` or `build.sh`.
 - `assets/{fonts,png,svg}/` — empty placeholders, globbed via `juce_add_binary_data(AudioPluginData)` only when non-empty. Currently empty, so the `AudioPluginData` target is not created.
 - `docs/{notebooks,papers}/` — empty placeholders.
 - `cmake/`, `tooling/` — empty placeholders.
@@ -83,6 +84,7 @@ Built plugins are written to `<build>/Chronos_artefacts/<Config>/` as **Standalo
 ### macOS / build gotchas (read before touching CMake)
 
 - **Universal binary**: `CMAKE_OSX_ARCHITECTURES` is forced to `x86_64;arm64`; deployment target `11.0` (including the arm64 slice).
+- **x86_64 FMA**: the plugin target is compiled with `-Xarch_x86_64 -mfma` so `simde_mm_fmadd_ps` lowers to `vfmadd*ps` on the Intel slice (arm64 has FMA unconditionally and needs no flag). The `-Xarch_` prefix is required, since a bare `-mfma` would also be handed to the arm64 pass. This raises the x86_64 baseline to Haswell/FMA3 and switches that slice to VEX encoding; the 2013 Mac Pro (Ivy Bridge-EP) is still a supported macOS 11 machine and has AVX but no FMA3, so drop the flag if that hardware must keep working. Without it the code still builds — SIMDe falls back to a mul+add pair.
 - **Warnings**: `-w` disables all warnings on non-MSVC compilers; JUCE recommended warning/LTO flags are still applied to the plugin target.
 - **Debug symbols**: `-gdwarf-4` is added in `Debug`.
 - **ObjC ARC**: on Apple, JUCE `.mm` sources and the plugin target are compiled with `-fno-objc-arc`.
