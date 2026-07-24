@@ -160,6 +160,17 @@ target_include_directories("${PROJECT_NAME}" PUBLIC
 if(APPLE)
     target_compile_options("${PROJECT_NAME}" PRIVATE "-fno-objc-arc")
 
+    # Enable FMA3 on the x86_64 slice only. -Xarch_x86_64 scopes the flag to the
+    # x86 pass of the universal build; arm64 has FMA unconditionally, so it needs
+    # nothing. Without this, simde_mm_fmadd_ps in source/math/Trigonometry.h
+    # lowers to a mul+add pair on x86_64 instead of vfmadd.
+    #
+    # This, however, raises the x86_64 baseline from SSE4.2 to Haswell/FMA3.
+    # macOS 11 still supports the 2013 Mac Pro (Ivy Bridge-EP), which has AVX
+    # but no FMA3 and would take a SIGILL.
+    # Remove this block if that machine has to remain supported!
+    target_compile_options("${PROJECT_NAME}" PRIVATE "-Xarch_x86_64" "-mfma")
+
     file(GLOB_RECURSE JuceObjCSourceFiles "${CMAKE_CURRENT_SOURCE_DIR}/libs/JUCE/modules/*.mm")
     set_source_files_properties(
         ${JuceObjCSourceFiles}

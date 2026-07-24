@@ -6,42 +6,39 @@
 #include <cmath>
 #include <algorithm>
 #include "simd/Config.h"
+#include <simde/x86/fma.h>
 
-namespace PadeSinCoeffs {
-    constexpr float N0 = -11511339840.0f; // num x⁰ (before outer -x)
-    constexpr float N1 = 1640635920.0f; // num x²
-    constexpr float N2 = -52785432.0f; // num x⁴
-    constexpr float N3 = 479249.0f; // num x⁶
-    constexpr float D0 = 11511339840.0f; // den x⁰
-    constexpr float D1 = 277920720.0f; // den x²
-    constexpr float D2 = 3177720.0f; // den x⁴
-    constexpr float D3 = 18361.0f; // den x⁶
+// ═══════════════════════════════════════════════════════════
+// sin(x) ≈ x·P(x²) / Q(x²) [7/6] odd rational minimax on [-π, π]
+// ───────────────────────────────────────────────────────────
+namespace MinimaxSinCoeffs {
+    constexpr float N0 = 1.0f; // num x⁰
+    constexpr float N1 = -0.141643688f; // num x²
+    constexpr float N2 = 0.00446910504f; // num x⁴
+    constexpr float N3 = -3.88648514e-05f; // num x⁶
+    constexpr float D0 = 1.0f; // den x⁰
+    constexpr float D1 = 0.0250229947f; // den x²
+    constexpr float D2 = 0.000306247879f; // den x⁴
+    constexpr float D3 = 2.07578137e-06f; // den x⁶
 }
 
-inline float fastReciprocal(const float d) noexcept {
-    const auto r = MM(cvtss_f32)(MM(rcp_ss)(MM(set_ss)(d)));
-    return r * (2.0f - d * r);
+inline M128 mulAdd(const M128 a, const M128 b, const M128 c) noexcept {
+    return simde_mm_fmadd_ps(a, b, c);
 }
 
-inline M128 fastReciprocal(const M128 d) noexcept {
-    const auto r = MM(rcp_ps)(d);
-    const auto two = MM(set1_ps)(2.0f);
-    return MM(mul_ps)(r, MM(sub_ps)(two, MM(mul_ps)(d, r)));
-}
-
-inline float padeSinApprox(const float x) noexcept {
-    using namespace PadeSinCoeffs;
+inline float minimaxSinApprox(const float x) noexcept {
+    using namespace MinimaxSinCoeffs;
     const auto x2 = x * x;
     // horner evaluation inside-out in x²
-    const auto num = -x * (N0 + x2 * (N1 + x2 * (N2 + x2 * N3)));
+    const auto num = x * (N0 + x2 * (N1 + x2 * (N2 + x2 * N3)));
     const auto den = D0 + x2 * (D1 + x2 * (D2 + x2 * D3));
-    return num * fastReciprocal(den);
+    return num / den;
 }
 
-inline float pSin(const float x) noexcept { return padeSinApprox(x); }
+inline float pSin(const float x) noexcept { return minimaxSinApprox(x); }
 
 inline M128 pSin(const M128 x) noexcept {
-    using namespace PadeSinCoeffs;
+    using namespace MinimaxSinCoeffs;
     // broadcast each coeff across 4 lanes
     const auto vN0 = MM(set1_ps)(N0);
     const auto vN1 = MM(set1_ps)(N1);
@@ -51,17 +48,16 @@ inline M128 pSin(const M128 x) noexcept {
     const auto vD1 = MM(set1_ps)(D1);
     const auto vD2 = MM(set1_ps)(D2);
     const auto vD3 = MM(set1_ps)(D3);
-    const auto neg = MM(set1_ps)(-1.0f);
     const auto x2 = MM(mul_ps)(x, x);
-    // numerator:  -x · (N0 + x²·(N1 + x²·(N2 + x²·N3))) | innermost first
-    auto numInner = MM(add_ps)(vN2, MM(mul_ps)(x2, vN3)); // N2 + x²·N3
-    numInner = MM(add_ps)(vN1, MM(mul_ps)(x2, numInner)); // N1 + x²·(…)
-    numInner = MM(add_ps)(vN0, MM(mul_ps)(x2, numInner)); // N0 + x²·(…)
-    const auto num = MM(mul_ps)(neg, MM(mul_ps)(x, numInner));
+    // numerator:  x · (N0 + x²·(N1 + x²·(N2 + x²·N3))) | innermost first
+    auto numInner = mulAdd(x2, vN3, vN2); // N2 + x²·N3
+    numInner = mulAdd(x2, numInner, vN1); // N1 + x²·(…)
+    numInner = mulAdd(x2, numInner, vN0); // N0 + x²·(…)
+    const auto num = MM(mul_ps)(x, numInner);
     // denominator: D0 + x²·(D1 + x²·(D2 + x²·D3))
-    auto denInner = MM(add_ps)(vD2, MM(mul_ps)(x2, vD3)); // D2 + x²·D3
-    denInner = MM(add_ps)(vD1, MM(mul_ps)(x2, denInner)); // D1 + x²·(…)
-    const auto den = MM(add_ps)(vD0, MM(mul_ps)(x2, denInner));
-    return MM(mul_ps)(num, fastReciprocal(den));
+    auto denInner = mulAdd(x2, vD3, vD2); // D2 + x²·D3
+    denInner = mulAdd(x2, denInner, vD1); // D1 + x²·(…)
+    const auto den = mulAdd(x2, denInner, vD0); // D0 + x²·(…)
+    return MM(div_ps)(num, den);
 }
 #endif
