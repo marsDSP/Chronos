@@ -1,8 +1,5 @@
 #include "ChronosProcessor.h"
 #include "ChronosEditor.h"
-
-#include <random>
-
 //==============================================================================
 ChronosProcessor::ChronosProcessor() : AudioProcessor (BusesProperties()
                        .withInput  ("Input",  AudioChannelSet::stereo(), true)
@@ -21,7 +18,7 @@ ChronosProcessor::~ChronosProcessor() = default;
 AudioProcessorValueTreeState::ParameterLayout ChronosProcessor::createParameterLayout()
 {
     AudioProcessorValueTreeState::ParameterLayout layout;
-    layout.add(std::make_unique<AudioParameterFloat>(ParameterID {"Gain, 1"}, "Output Gain", NormalisableRange{-12.0f, 12.0f}, 0.0f));
+    layout.add(std::make_unique<AudioParameterFloat>(ParameterID {"gain", 1}, "Output Gain", NormalisableRange{-12.0f, 12.0f}, 0.0f));
     return layout;
 }
 //==============================================================================
@@ -130,14 +127,14 @@ void ChronosProcessor::processBlock (AudioBuffer<float>& buffer,
         buffer.clear (i, 0, buffer.getNumSamples());
 
     // gain test
+    const float gainDB   = apvts.getRawParameterValue("gain")->load();
+    const float gainLin  = Decibels::decibelsToGain (gainDB);
+
     for (auto ch {0uz}; ch < totalNumInputChannels; ++ch)
     {
         auto* data = buffer.getWritePointer(static_cast<int>(ch));
         for (auto smp {0uz}; smp < buffer.getNumSamples(); ++smp)
-        {
-            float gainDB = -6.0f;
-            data[smp] *= gainDB;
-        }
+            data[smp] *= gainLin;
     }
 
     // advance dither state
