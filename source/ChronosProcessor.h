@@ -4,8 +4,7 @@
 #include <cmath>
 #include <random>
 
-const ParameterID gainParamID { "gain", 1 };
-const ParameterID bitsParamID { "bits", 1 };
+#include "ChronosParameters.h"
 //==============================================================================
 class ChronosProcessor final : public AudioProcessor
 {
@@ -49,11 +48,8 @@ public:
     void setStateInformation (const void* data, int sizeInBytes) override;
 
 private:
-    AudioProcessorValueTreeState apvts {*this, nullptr, "Parameters", createParameterLayout()};
-    static AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
-
-    AudioParameterFloat *gainParam;
-    AudioParameterInt   *bitsParam;
+    AudioProcessorValueTreeState apvts {*this, nullptr, "Parameters", ChronosParameters::createParameterLayout()};
+    ChronosParameters parameters {apvts};
 
     uint32_t xorshiftL;
     uint32_t xorshiftR;

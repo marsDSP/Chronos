@@ -6,12 +6,6 @@ ChronosProcessor::ChronosProcessor() : AudioProcessor(BusesProperties()
     .withOutput("Output", AudioChannelSet::stereo(), true)
 )
 {
-    auto *gain_Param = apvts.getParameter(gainParamID.getParamID());
-    auto *bits_Param = apvts.getParameter(bitsParamID.getParamID());
-
-    gainParam = dynamic_cast<AudioParameterFloat*>(gain_Param);
-    bitsParam = dynamic_cast<AudioParameterInt*>(bits_Param);
-
     std::random_device rd;
     std::uniform_int_distribution seedDist{16386u, UINT32_MAX};
 
@@ -20,15 +14,6 @@ ChronosProcessor::ChronosProcessor() : AudioProcessor(BusesProperties()
 }
 
 ChronosProcessor::~ChronosProcessor() = default;
-
-AudioProcessorValueTreeState::ParameterLayout ChronosProcessor::createParameterLayout()
-{
-    AudioProcessorValueTreeState::ParameterLayout layout;
-    layout.add(std::make_unique<AudioParameterFloat>(gainParamID, "Output Gain", NormalisableRange{-12.0f, 12.0f}, 0.0f));
-    layout.add(std::make_unique<AudioParameterInt>(bitsParamID, "Bit Depth", 1, 32, 24));
-    return layout;
-}
-
 //==============================================================================
 const String ChronosProcessor::getName() const
 {
@@ -96,7 +81,9 @@ void ChronosProcessor::changeProgramName(int index, const String &newName)
 //==============================================================================
 void ChronosProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
-    ignoreUnused(sampleRate, samplesPerBlock);
+    ignoreUnused(samplesPerBlock);
+    parameters.prepare(sampleRate);
+    parameters.reset();
 }
 
 void ChronosProcessor::releaseResources()
@@ -145,23 +132,21 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer,
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear(i, 0, buffer.getNumSamples());
 
-    // gain
-    const float gainDB = gainParam->get();
-    const float gainLin = Decibels::decibelsToGain(gainDB);
+    parameters.update();
 
-    // target bit depth for the output quantizer (1 LSB for a [-1, 1] signal)
-    const auto bitDepth = bitsParam->get();
-    const float lsb = std::ldexp(1.0f, 1 - bitDepth);
     const int numSamples = buffer.getNumSamples();
 
-    // final output stage: gain -> TPDF dither -> quantize to target bit depth
-    for (auto ch {0uz}; ch < totalNumInputChannels; ++ch)
+    for (auto s {0uz}; s < numSamples; ++s)
     {
-        auto *data = buffer.getWritePointer(static_cast<int>(ch));
-        auto &state = (ch == 0uz) ? xorshiftL : xorshiftR;
+        parameters.smoothen();
+        const float gainLin = parameters.getGain();
+        const float lsb = std::ldexp(1.0f, 1 - parameters.getBits());
 
-        for (auto s {0uz}; s < numSamples; ++s)
+        for (auto ch {0uz}; ch < totalNumInputChannels; ++ch)
         {
+            auto *data = buffer.getWritePointer(static_cast<int>(ch));
+            auto &state = (ch == 0uz) ? xorshiftL : xorshiftR;
+
             const float scaled = data[s] * gainLin;
             const float dither = (nextUniform(state) - nextUniform(state)) * lsb;
             data[s] = std::round((scaled + dither) / lsb) * lsb;
