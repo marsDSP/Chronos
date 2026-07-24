@@ -86,7 +86,7 @@ public:
     static constexpr float maxDelayTime = 5000.0f;
 
 private:
-    float msToSamples(float ms) const noexcept
+    [[nodiscard]] float msToSamples(const float ms) const noexcept
     {
         return static_cast<float>(ms * 0.001 * sampleRate);
     }
