@@ -35,9 +35,9 @@ inline float minimaxSinApprox(const float x) noexcept {
     return num / den;
 }
 
-inline float pSin(const float x) noexcept { return minimaxSinApprox(x); }
+inline float mmSin(const float x) noexcept { return minimaxSinApprox(x); }
 
-inline M128 pSin(const M128 x) noexcept {
+inline M128 mmSin(const M128 x) noexcept {
     using namespace MinimaxSinCoeffs;
     // broadcast each coeff across 4 lanes
     const auto vN0 = MM(set1_ps)(N0);

@@ -35,6 +35,7 @@ public:
     bool producesMidi() const override;
     bool isMidiEffect() const override;
     double getTailLengthSeconds() const override;
+    AudioProcessorParameter* getBypassParameter() const override { return parameters.getBypassParameter(); }
 
     //==============================================================================
     int getNumPrograms() override;
@@ -57,6 +58,7 @@ private:
     // xorshift32 -> uniform float in [0, 1), using the high 24 bits
     static float nextUniform(uint32_t& state) noexcept;
 
+    dsp::DelayLine<float> delayLine;
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChronosProcessor)
 };

@@ -84,6 +84,18 @@ void ChronosProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     ignoreUnused(samplesPerBlock);
     parameters.prepare(sampleRate);
     parameters.reset();
+
+    dsp::ProcessSpec spec {};
+    spec.sampleRate = sampleRate;
+    spec.maximumBlockSize = static_cast<uint32>(samplesPerBlock);
+    spec.numChannels = 2;
+
+    delayLine.prepare(spec);
+
+    const double numSamples = ChronosParameters::maxDelayTime / 1000.0 * sampleRate;
+    const auto maxDelayInSamples = static_cast<int>(std::ceil(numSamples));
+    delayLine.setMaximumDelayInSamples(maxDelayInSamples);
+    delayLine.reset();
 }
 
 void ChronosProcessor::releaseResources()
@@ -132,6 +144,8 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer,
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear(i, 0, buffer.getNumSamples());
 
+    if (parameters.getBypass()) return;
+
     parameters.update();
 
     const int numSamples = buffer.getNumSamples();
@@ -139,13 +153,26 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer,
     for (auto s {0uz}; s < numSamples; ++s)
     {
         parameters.smoothen();
+        delayLine.setDelay(parameters.getDelaySamples());
+
+        // delay: push dry, pop delayed, sum dry + wet back in place
+        for (auto ch {0uz}; ch < totalNumInputChannels; ++ch)
+        {
+            auto *data = buffer.getWritePointer(static_cast<int>(ch));
+            const float dry = data[s];
+            delayLine.pushSample(static_cast<int>(ch), dry);
+            const float wet = delayLine.popSample(static_cast<int>(ch));
+            data[s] = dry + wet;
+        }
+
+        // output stage: smoothed gain -> TPDF dither -> quantize to target bit-depth
         const float gainLin = parameters.getGain();
         const float lsb = std::ldexp(1.0f, 1 - parameters.getBits());
 
         for (auto ch {0uz}; ch < totalNumInputChannels; ++ch)
         {
             auto *data = buffer.getWritePointer(static_cast<int>(ch));
-            auto &state = (ch == 0uz) ? xorshiftL : xorshiftR;
+            auto &state = ch == 0uz ? xorshiftL : xorshiftR;
 
             const float scaled = data[s] * gainLin;
             const float dither = (nextUniform(state) - nextUniform(state)) * lsb;
