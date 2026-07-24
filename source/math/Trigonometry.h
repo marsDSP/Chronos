@@ -16,7 +16,6 @@
 #ifndef M_2_PI
 #define M_2_PI 0.63661977236758134308
 #endif
-
 // ═══════════════════════════════════════════════════════════
 // sin(x) ≈ x·P(x²) / Q(x²) [7/6] odd rational minimax on [-π, π]
 // ───────────────────────────────────────────────────────────
@@ -200,4 +199,65 @@ inline M128 mmTan(const M128 x) noexcept
 
     return MM(div_ps)(num, den);
 }
+
+//==============================================================================//
+namespace PadeTanCoeffs
+{
+    // (7,6) pade approximant of tan(x)
+    constexpr float N0 = -135135.0f;
+    constexpr float N1 = 17325.0f;
+    constexpr float N2 = -378.0f;
+    constexpr float N3 = 1.0f;
+
+    constexpr float D0 = -135135.0f;
+    constexpr float D1 = 62370.0f;
+    constexpr float D2 = -3150.0f;
+    constexpr float D3 = 28.0f;
+}
+
+inline float padeTanApprox(const float x) noexcept
+{
+    using namespace PadeTanCoeffs;
+
+    const auto x2 = x * x;
+
+    const auto num = x * (N0 + x2 * (N1 + x2 * (N2 + x2 * N3)));
+    const auto den = D0 + x2 * (D1 + x2 * (D2 + x2 * D3));
+
+    return num / den;
+}
+
+inline float fasterTan(const float x) noexcept
+{
+    return padeTanApprox(x);
+}
+
+inline M128 fasterTan(const M128 x) noexcept
+{
+    using namespace PadeTanCoeffs;
+
+    const auto vN0 = MM(set1_ps)(N0);
+    const auto vN1 = MM(set1_ps)(N1);
+    const auto vN2 = MM(set1_ps)(N2);
+    const auto vN3 = MM(set1_ps)(N3);
+
+    const auto vD0 = MM(set1_ps)(D0);
+    const auto vD1 = MM(set1_ps)(D1);
+    const auto vD2 = MM(set1_ps)(D2);
+    const auto vD3 = MM(set1_ps)(D3);
+
+    const auto x2 = MM(mul_ps)(x, x);
+
+    auto numInner = MM(add_ps)(vN2, MM(mul_ps)(x2, vN3)); // N2 + x²·N3
+    numInner = MM(add_ps)(vN1, MM(mul_ps)(x2, numInner)); // N1 + x²·(…)
+    const auto poly = MM(add_ps)(vN0, MM(mul_ps)(x2, numInner)); // N0 + x²·(…)
+    const auto num = MM(mul_ps)(x, poly);
+
+    auto denInner = MM(add_ps)(vD2, MM(mul_ps)(x2, vD3)); // D2 + x²·D3
+    denInner = MM(add_ps)(vD1, MM(mul_ps)(x2, denInner)); // D1 + x²·(…)
+    const auto den = MM(add_ps)(vD0, MM(mul_ps)(x2, denInner));
+
+    return MM(div_ps)(num, den);
+}
+//==============================================================================//
 #endif
