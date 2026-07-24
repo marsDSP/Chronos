@@ -8,6 +8,15 @@
 #include "simd/Config.h"
 #include <simde/x86/fma.h>
 
+// MSVC's <cmath> does not expose the POSIX M_PI / M_2_PI macros unless
+// _USE_MATH_DEFINES is defined before include.
+#ifndef M_PI
+    #define M_PI 3.14159265358979323846
+#endif
+#ifndef M_2_PI
+    #define M_2_PI 0.63661977236758134308
+#endif
+
 // ═══════════════════════════════════════════════════════════
 // sin(x) ≈ x·P(x²) / Q(x²) [7/6] odd rational minimax on [-π, π]
 // ───────────────────────────────────────────────────────────
@@ -60,4 +69,5 @@ inline M128 mmSin(const M128 x) noexcept {
     const auto den = mulAdd(x2, denInner, vD0); // D0 + x²·(…)
     return MM(div_ps)(num, den);
 }
+
 #endif
