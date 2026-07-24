@@ -1,16 +1,22 @@
 #include "ChronosProcessor.h"
 #include "ChronosEditor.h"
 //==============================================================================
-ChronosProcessor::ChronosProcessor() : AudioProcessor (BusesProperties()
-                       .withInput  ("Input",  AudioChannelSet::stereo(), true)
-                       .withOutput ("Output", AudioChannelSet::stereo(), true)
-                       )
+ChronosProcessor::ChronosProcessor() : AudioProcessor(BusesProperties()
+    .withInput("Input", AudioChannelSet::stereo(), true)
+    .withOutput("Output", AudioChannelSet::stereo(), true)
+)
 {
-    std::random_device rd;
-    std::uniform_int_distribution seedDist { 16386u, UINT32_MAX };
+    auto *gain_Param = apvts.getParameter(gainParamID.getParamID());
+    auto *bits_Param = apvts.getParameter(bitsParamID.getParamID());
 
-    xorshiftL = seedDist (rd);
-    xorshiftR = seedDist (rd);
+    gainParam = dynamic_cast<AudioParameterFloat *>(gain_Param);
+    bitsParam = dynamic_cast<AudioParameterInt *>(bits_Param);
+
+    std::random_device rd;
+    std::uniform_int_distribution seedDist{16386u, UINT32_MAX};
+
+    xorshiftL = seedDist(rd);
+    xorshiftR = seedDist(rd);
 }
 
 ChronosProcessor::~ChronosProcessor() = default;
@@ -18,10 +24,12 @@ ChronosProcessor::~ChronosProcessor() = default;
 AudioProcessorValueTreeState::ParameterLayout ChronosProcessor::createParameterLayout()
 {
     AudioProcessorValueTreeState::ParameterLayout layout;
-    layout.add(std::make_unique<AudioParameterFloat>(ParameterID {"gain", 1}, "Output Gain", NormalisableRange{-12.0f, 12.0f}, 0.0f));
-    layout.add(std::make_unique<AudioParameterInt>(ParameterID {"bits", 1}, "Bit Depth", 1, 32, 24));
+    layout.add(
+        std::make_unique<AudioParameterFloat>(gainParamID, "Output Gain", NormalisableRange{-12.0f, 12.0f}, 0.0f));
+    layout.add(std::make_unique<AudioParameterInt>(bitsParamID, "Bit Depth", 1, 32, 24));
     return layout;
 }
+
 //==============================================================================
 const String ChronosProcessor::getName() const
 {
@@ -30,29 +38,29 @@ const String ChronosProcessor::getName() const
 
 bool ChronosProcessor::acceptsMidi() const
 {
-   #if JucePlugin_WantsMidiInput
+#if JucePlugin_WantsMidiInput
     return true;
-   #else
+#else
     return false;
-   #endif
+#endif
 }
 
 bool ChronosProcessor::producesMidi() const
 {
-   #if JucePlugin_ProducesMidiOutput
+#if JucePlugin_ProducesMidiOutput
     return true;
-   #else
+#else
     return false;
-   #endif
+#endif
 }
 
 bool ChronosProcessor::isMidiEffect() const
 {
-   #if JucePlugin_IsMidiEffect
+#if JucePlugin_IsMidiEffect
     return true;
-   #else
+#else
     return false;
-   #endif
+#endif
 }
 
 double ChronosProcessor::getTailLengthSeconds() const
@@ -70,52 +78,52 @@ int ChronosProcessor::getCurrentProgram()
     return 0;
 }
 
-void ChronosProcessor::setCurrentProgram (int index)
+void ChronosProcessor::setCurrentProgram(int index)
 {
-    ignoreUnused (index);
+    ignoreUnused(index);
 }
 
-const String ChronosProcessor::getProgramName (int index)
+const String ChronosProcessor::getProgramName(int index)
 {
-    ignoreUnused (index);
+    ignoreUnused(index);
     return {};
 }
 
-void ChronosProcessor::changeProgramName (int index, const String& newName)
+void ChronosProcessor::changeProgramName(int index, const String &newName)
 {
-    ignoreUnused (index, newName);
+    ignoreUnused(index, newName);
 }
 
 //==============================================================================
-void ChronosProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
+void ChronosProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
-    ignoreUnused (sampleRate, samplesPerBlock);
+    ignoreUnused(sampleRate, samplesPerBlock);
 }
 
 void ChronosProcessor::releaseResources()
 {
 }
 
-bool ChronosProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
+bool ChronosProcessor::isBusesLayoutSupported(const BusesLayout &layouts) const
 {
-  #if JucePlugin_IsMidiEffect
-    ignoreUnused (layouts);
+#if JucePlugin_IsMidiEffect
+    ignoreUnused(layouts);
     return true;
-  #else
+#else
     if (layouts.getMainOutputChannelSet() != AudioChannelSet::mono()
-     && layouts.getMainOutputChannelSet() != AudioChannelSet::stereo())
+        && layouts.getMainOutputChannelSet() != AudioChannelSet::stereo())
         return false;
 
-   #if ! JucePlugin_IsSynth
+#if ! JucePlugin_IsSynth
     if (layouts.getMainOutputChannelSet() != layouts.getMainInputChannelSet())
         return false;
-   #endif
+#endif
 
     return true;
-  #endif
+#endif
 }
 
-float ChronosProcessor::nextUniform (uint32_t& state) noexcept
+float ChronosProcessor::nextUniform(uint32_t &state) noexcept
 {
     state ^= state << 13;
     state ^= state >> 17;
@@ -125,33 +133,33 @@ float ChronosProcessor::nextUniform (uint32_t& state) noexcept
     return static_cast<float>(state >> 8) * (1.0f / 8388608.0f);
 }
 
-void ChronosProcessor::processBlock (AudioBuffer<float>& buffer,
-[[maybe_unused]]MidiBuffer& midiMessages)
+void ChronosProcessor::processBlock(AudioBuffer<float> &buffer,
+                                    [[maybe_unused]] MidiBuffer &midiMessages)
 {
-    ignoreUnused (midiMessages);
+    ignoreUnused(midiMessages);
 
     ScopedNoDenormals noDenormals;
 
-    auto totalNumInputChannels  = getTotalNumInputChannels();
+    auto totalNumInputChannels = getTotalNumInputChannels();
     auto totalNumOutputChannels = getTotalNumOutputChannels();
 
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
-        buffer.clear (i, 0, buffer.getNumSamples());
+        buffer.clear(i, 0, buffer.getNumSamples());
 
     // gain
-    const float gainDB  = apvts.getRawParameterValue("gain")->load();
+    const float gainDB = gainParam->get();
     const float gainLin = Decibels::decibelsToGain(gainDB);
 
     // target bit depth for the output quantizer (1 LSB for a [-1, 1] signal)
-    const auto bitDepth = static_cast<int>(apvts.getRawParameterValue("bits")->load());
+    const auto bitDepth = bitsParam->get();
     const float lsb = std::ldexp(1.0f, 1 - bitDepth);
     const int numSamples = buffer.getNumSamples();
 
     // final output stage: gain -> TPDF dither -> quantize to target bit depth
     for (auto ch {0uz}; ch < totalNumInputChannels; ++ch)
     {
-        auto* data = buffer.getWritePointer(static_cast<int>(ch));
-        auto& state = (ch == 0uz) ? xorshiftL : xorshiftR;
+        auto *data = buffer.getWritePointer(static_cast<int>(ch));
+        auto &state = (ch == 0uz) ? xorshiftL : xorshiftR;
 
         for (auto s {0uz}; s < numSamples; ++s)
         {
@@ -161,28 +169,28 @@ void ChronosProcessor::processBlock (AudioBuffer<float>& buffer,
         }
     }
 }
-
 //==============================================================================
 bool ChronosProcessor::hasEditor() const
 {
     return true;
 }
 
-AudioProcessorEditor* ChronosProcessor::createEditor()
+AudioProcessorEditor *ChronosProcessor::createEditor()
 {
-    return new GenericAudioProcessorEditor (*this);
+    return new GenericAudioProcessorEditor(*this);
 }
 
 //==============================================================================
-void ChronosProcessor::getStateInformation (MemoryBlock& destData)
+void ChronosProcessor::getStateInformation(MemoryBlock &destData)
 {
 }
 
-void ChronosProcessor::setStateInformation (const void* data, int sizeInBytes)
+void ChronosProcessor::setStateInformation(const void *data, int sizeInBytes)
 {
 }
+
 //==============================================================================
-AudioProcessor* JUCE_CALLTYPE createPluginFilter()
+AudioProcessor * JUCE_CALLTYPE createPluginFilter()
 {
     return new ChronosProcessor();
 }
