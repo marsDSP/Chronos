@@ -7,6 +7,13 @@ ChronosProcessor::ChronosProcessor() : AudioProcessor (BusesProperties()
                        .withOutput ("Output", AudioChannelSet::stereo(), true)
                        )
 {
+    xorshiftL = 1.0;
+    while (xorshiftL < 16386)
+        xorshiftL = rand() * UINT32_MAX;
+
+    xorshiftR = 1.0;
+    while (xorshiftR < 16386)
+        xorshiftR = rand() * UINT32_MAX;
 }
 
 ChronosProcessor::~ChronosProcessor() = default;
@@ -132,6 +139,15 @@ void ChronosProcessor::processBlock (AudioBuffer<float>& buffer,
             data[smp] *= gainDB;
         }
     }
+
+    // advance dither state
+    xorshiftL ^= xorshiftL << 13;
+    xorshiftL ^= xorshiftL >> 17;
+    xorshiftL ^= xorshiftL << 5;
+
+    xorshiftR ^= xorshiftR << 13;
+    xorshiftR ^= xorshiftR >> 17;
+    xorshiftR ^= xorshiftR << 5;
 }
 
 //==============================================================================
@@ -148,12 +164,10 @@ AudioProcessorEditor* ChronosProcessor::createEditor()
 //==============================================================================
 void ChronosProcessor::getStateInformation (MemoryBlock& destData)
 {
-    ignoreUnused (destData);
 }
 
 void ChronosProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
-    ignoreUnused (data, sizeInBytes);
 }
 //==============================================================================
 AudioProcessor* JUCE_CALLTYPE createPluginFilter()

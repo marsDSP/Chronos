@@ -47,6 +47,9 @@ public:
 private:
     AudioProcessorValueTreeState apvts {*this, nullptr, "Parameters", createParameterLayout()};
     static AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+
+    uint32_t xorshiftL;
+    uint32_t xorshiftR;
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChronosProcessor)
 };
