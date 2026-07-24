@@ -45,6 +45,8 @@ public:
     void setStateInformation (const void* data, int sizeInBytes) override;
 
 private:
+    AudioProcessorValueTreeState apvts {*this, nullptr, "Parameters", createParameterLayout()};
+    static AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChronosProcessor)
 };

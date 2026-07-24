@@ -2,22 +2,21 @@
 #include "ChronosEditor.h"
 
 //==============================================================================
-ChronosProcessor::ChronosProcessor()
-     : AudioProcessor (BusesProperties()
-                     #if ! JucePlugin_IsMidiEffect
-                      #if ! JucePlugin_IsSynth
+ChronosProcessor::ChronosProcessor() : AudioProcessor (BusesProperties()
                        .withInput  ("Input",  AudioChannelSet::stereo(), true)
-                      #endif
                        .withOutput ("Output", AudioChannelSet::stereo(), true)
-                     #endif
                        )
 {
 }
 
-ChronosProcessor::~ChronosProcessor()
-{
-}
+ChronosProcessor::~ChronosProcessor() = default;
 
+AudioProcessorValueTreeState::ParameterLayout ChronosProcessor::createParameterLayout()
+{
+    AudioProcessorValueTreeState::ParameterLayout layout;
+    layout.add(std::make_unique<AudioParameterFloat>(ParameterID {"Gain, 1"}, "Output Gain", NormalisableRange{-12.0f, 12.0f}, 0.0f));
+    return layout;
+}
 //==============================================================================
 const String ChronosProcessor::getName() const
 {
@@ -129,7 +128,8 @@ void ChronosProcessor::processBlock (AudioBuffer<float>& buffer,
         auto* data = buffer.getWritePointer(static_cast<int>(ch));
         for (auto smp {0uz}; smp < buffer.getNumSamples(); ++smp)
         {
-            data[smp] *= 0.5f;
+            float gainDB = -6.0f;
+            data[smp] *= gainDB;
         }
     }
 }
@@ -142,7 +142,7 @@ bool ChronosProcessor::hasEditor() const
 
 AudioProcessorEditor* ChronosProcessor::createEditor()
 {
-    return new ChronosEditor (*this);
+    return new GenericAudioProcessorEditor (*this);
 }
 
 //==============================================================================
