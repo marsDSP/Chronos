@@ -9,8 +9,8 @@ ChronosProcessor::ChronosProcessor() : AudioProcessor(BusesProperties()
     auto *gain_Param = apvts.getParameter(gainParamID.getParamID());
     auto *bits_Param = apvts.getParameter(bitsParamID.getParamID());
 
-    gainParam = dynamic_cast<AudioParameterFloat *>(gain_Param);
-    bitsParam = dynamic_cast<AudioParameterInt *>(bits_Param);
+    gainParam = dynamic_cast<AudioParameterFloat*>(gain_Param);
+    bitsParam = dynamic_cast<AudioParameterInt*>(bits_Param);
 
     std::random_device rd;
     std::uniform_int_distribution seedDist{16386u, UINT32_MAX};
@@ -24,8 +24,7 @@ ChronosProcessor::~ChronosProcessor() = default;
 AudioProcessorValueTreeState::ParameterLayout ChronosProcessor::createParameterLayout()
 {
     AudioProcessorValueTreeState::ParameterLayout layout;
-    layout.add(
-        std::make_unique<AudioParameterFloat>(gainParamID, "Output Gain", NormalisableRange{-12.0f, 12.0f}, 0.0f));
+    layout.add(std::make_unique<AudioParameterFloat>(gainParamID, "Output Gain", NormalisableRange{-12.0f, 12.0f}, 0.0f));
     layout.add(std::make_unique<AudioParameterInt>(bitsParamID, "Bit Depth", 1, 32, 24));
     return layout;
 }
@@ -183,10 +182,16 @@ AudioProcessorEditor *ChronosProcessor::createEditor()
 //==============================================================================
 void ChronosProcessor::getStateInformation(MemoryBlock &destData)
 {
+    copyXmlToBinary(*apvts.copyState().createXml(), destData);
 }
 
 void ChronosProcessor::setStateInformation(const void *data, int sizeInBytes)
 {
+    std::unique_ptr xml(getXmlFromBinary(data, sizeInBytes));
+    if (xml != nullptr && xml->hasTagName(apvts.state.getType()))
+    {
+        apvts.replaceState(ValueTree::fromXml(*xml));
+    }
 }
 
 //==============================================================================
