@@ -81,21 +81,15 @@ void ChronosProcessor::changeProgramName(int index, const String &newName)
 //==============================================================================
 void ChronosProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
-    ignoreUnused(samplesPerBlock);
     parameters.prepare(sampleRate);
     parameters.reset();
 
-    dsp::ProcessSpec spec {};
-    spec.sampleRate = sampleRate;
-    spec.maximumBlockSize = static_cast<uint32>(samplesPerBlock);
-    spec.numChannels = 2;
-
-    delayLine.prepare(spec);
-
-    const double numSamples = ChronosParameters::maxDelayTime / 1000.0 * sampleRate;
-    const auto maxDelayInSamples = static_cast<int>(std::ceil(numSamples));
-    delayLine.setMaximumDelayInSamples(maxDelayInSamples);
+    delayLine.prepare(sampleRate, samplesPerBlock, ChronosParameters::maxDelayTime);
+    delayLine.setInterpolation(parameters.getInterpolation());
     delayLine.reset();
+
+    wetBufL_.resize(static_cast<std::size_t>(samplesPerBlock));
+    wetBufR_.resize(static_cast<std::size_t>(samplesPerBlock));
 
     hpf.reset();
     lpf.reset();
@@ -155,33 +149,45 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
     const double fs = parameters.getSampleRate();
     const double fsSafe = (fs > 0.0) ? fs : 48000.0;
 
+    // the SimdDelayLine owns the per-sub-block delay-position smoothing internally
+    // (raw ms->samples) handed in as the start/end target for this block.
+    delayLine.setInterpolation(parameters.getInterpolation());
+
+    float* data0 = buffer.getWritePointer(0);
+    float* data1 = (totalNumInputChannels > 1) ? buffer.getWritePointer(1) : nullptr;
+
+    if (static_cast<int>(wetBufL_.size()) < numSamples)
+    {
+        wetBufL_.resize(static_cast<std::size_t>(numSamples));
+        wetBufR_.resize(static_cast<std::size_t>(numSamples));
+    }
+
+    const float delaySamples = parameters.getDelaySamples();
+    delayLine.process(data0, data1,
+                      wetBufL_.data(), (data1 != nullptr) ? wetBufR_.data() : nullptr,
+                      numSamples, delaySamples, delaySamples);
+
     hpf.setCoeffForBlock(SVF::SVFType::HighPass, fsSafe, parameters.getHPFFreq(), svfQ, 0.0, numSamples);
     lpf.setCoeffForBlock(SVF::SVFType::LowPass,  fsSafe, parameters.getLPFFreq(), svfQ, 0.0, numSamples);
 
     for (auto s {0uz}; s < numSamples; ++s)
     {
         parameters.smoothen();
-        delayLine.setDelay(parameters.getDelaySamples());
 
         const float mixNorm = parameters.getMix() * 0.01f;
         const float theta = mixNorm * (std::numbers::pi_v<float> * 0.5f);
         const float dryGain = std::cos(theta);
         const float wetGain = std::sin(theta);
 
-        float* data0 = buffer.getWritePointer(0);
         const float dry0 = data0[s];
-        delayLine.pushSample(0, dry0);
-        const float wet0 = delayLine.popSample(0);
+        const float wet0 = wetBufL_[s];
 
         float dry1 = 0.0f;
         float wet1 = 0.0f;
-        float* data1 = nullptr;
-        if (totalNumInputChannels > 1)
+        if (data1 != nullptr)
         {
-            data1 = buffer.getWritePointer(1);
             dry1 = data1[s];
-            delayLine.pushSample(1, dry1);
-            wet1 = delayLine.popSample(1);
+            wet1 = wetBufR_[s];
         }
 
         const M128 wetV = MM(set_ps)(0.0f, 0.0f, wet1, wet0);   // lane0=L, lane1=R
@@ -191,7 +197,7 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
         MM(storeu_ps)(out, lpV);
 
         data0[s] = dry0 * dryGain + out[0] * wetGain;
-        if (totalNumInputChannels > 1) data1[s] = dry1 * dryGain + out[1] * wetGain;
+        if (data1 != nullptr) data1[s] = dry1 * dryGain + out[1] * wetGain;
 
         const float gainLin = parameters.getGain();
         const float lsb = std::ldexp(1.0f, 1 - parameters.getBits());

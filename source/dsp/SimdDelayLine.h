@@ -4,6 +4,7 @@
 #define CHRONOS_SIMD_DELAY_LINE_H
 
 #include "DelayInterpolator.h"
+#include "OnePoleSmoother.h"
 #include "Pow2RingBuffer.h"
 
 #include <algorithm>
@@ -14,14 +15,15 @@
 namespace MarsDSP::Delays {
     class SimdDelayLine {
     public:
-        static constexpr int kSubBlock = 16;
-        static constexpr int kTail = Pow2RingBuffer::kTail; // 8
-        static constexpr int kScratchLen = kSubBlock + kTail; // 24
-        static constexpr int kGuard = 4;
+        static constexpr int kSubBlock   = 16;
+        static constexpr int kTail       = Pow2RingBuffer::kTail;   // 8
+        static constexpr int kScratchLen = kSubBlock + kTail;        // 24
+        static constexpr int kGuard      = 4;
 
-        // Size the rings from maxDelayMs, the host maxBlockSize, and the stencil
-        // overhang. At 48 kHz / 5000 ms / blk 512 this lands on 1 << 18.
-        // At 192 kHz it grows to 1 << 20. Idempotent.
+        // smoothing time constant. Matches the 20 ms ramp used by other smoothers
+        // the one-pole gives an exponential (asymptotic) trajectory
+        static constexpr double kDelaySmoothMs = 20.0;
+
         void prepare(double sampleRate, int maxBlockSize, float maxDelayMs) noexcept
         {
             assert(sampleRate > 0.0);
@@ -41,6 +43,12 @@ namespace MarsDSP::Delays {
             bufR_.prepare(capacity);
             maxBlockSize_ = blk;
             writeIdx_ = 0;
+
+            // Prepare the delay-position smoother: 20 ms one-pole, with the
+            // (1-alpha)^kSubBlock cache so the common sub-block advance via
+            // processN(kSubBlock) costs no std::pow.
+            posSmoother_.reset(sampleRate, kDelaySmoothMs * 0.001, kSubBlock);
+            firstBlock_ = true;
         }
 
         void reset() noexcept
@@ -48,6 +56,7 @@ namespace MarsDSP::Delays {
             bufL_.clear();
             bufR_.clear();
             writeIdx_ = 0;
+            firstBlock_ = true;
         }
 
         void setInterpolation(Interpolation mode) noexcept { mode_ = mode; }
@@ -63,10 +72,6 @@ namespace MarsDSP::Delays {
             assert(inL != nullptr);
             assert(wetL != nullptr);
 
-            // n <= 0 has a clean recovery (return early, output untouched).
-            // A runtime guard is the right form here.
-            // An assert would make the guard unreachable and abort in release.
-            // The nullptr preconditions above have no recovery, so they stay as asserts.
             if (n <= 0) return;
 
             const int cap = bufL_.getCapacity();
@@ -84,7 +89,14 @@ namespace MarsDSP::Delays {
             const float maxDelay = static_cast<float>(cap - maxBlockSize_ - kSubBlock - kTail - kGuard);
             const float dStart = std::clamp(delayStartSamples, 0.0f, maxDelay);
             const float dEnd = std::clamp(delayEndSamples, 0.0f, maxDelay);
-            const float dDelta = dEnd - dStart;
+
+            // ---- delay-position smoother setup ----
+            if (firstBlock_)
+            {
+                posSmoother_.setCurrentAndTargetValue(dStart);
+                firstBlock_ = false;
+            }
+            posSmoother_.setTargetValue(dEnd);
 
             const bool hasR = (wetR != nullptr);
 
@@ -94,14 +106,13 @@ namespace MarsDSP::Delays {
             {
                 const int subN = std::min(kSubBlock, n - sampleOffset);
 
-                const float fracStart = static_cast<float>(sampleOffset) / static_cast<float>(n);
-                const float fracEnd = static_cast<float>(sampleOffset + subN) / static_cast<float>(n);
-                const float posOld = dStart + fracStart * dDelta;
-                const float posNew = dStart + fracEnd * dDelta;
+                const float posOld = posSmoother_.getCurrentValue();
+                posSmoother_.processN(subN);
+                const float posNew = posSmoother_.getCurrentValue();
 
-                const int iOld = static_cast<int>(std::floor(posOld));
+                const int   iOld = static_cast<int>(std::floor(posOld));
                 const float fOld = posOld - static_cast<float>(iOld);
-                const int iNew = static_cast<int>(std::floor(posNew));
+                const int   iNew = static_cast<int>(std::floor(posNew));
                 const float fNew = posNew - static_cast<float>(iNew);
 
                 const Coeffs6 cOld = makeCoeffs(mode_, fOld);
@@ -153,6 +164,8 @@ namespace MarsDSP::Delays {
         int writeIdx_ = 0;
         int maxBlockSize_ = 0;
         Interpolation mode_ = Interpolation::Lagrange5th;
+        Smoothers::OnePoleSmoother<float> posSmoother_;
+        bool firstBlock_ = true;
 
         alignas(16) float scratchOldL_[kScratchLen] = {};
         alignas(16) float scratchNewL_[kScratchLen] = {};

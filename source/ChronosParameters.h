@@ -4,7 +4,7 @@
 #define CHRONOS_CHRONOSPARAMETERS_H
 
 #include <JuceHeader.h>
-#include "dsp/OnePoleSmoother.h"
+#include "dsp/DelayInterpolator.h"
 
 const ParameterID gainParamID { "gain", 1 };
 const ParameterID bitsParamID { "bits", 1 };
@@ -13,6 +13,7 @@ const ParameterID bypassParamID { "bypass", 1 };
 const ParameterID hpfFreqParamID { "hpfFreq", 1 };
 const ParameterID lpfFreqParamID { "lpfFreq", 1 };
 const ParameterID mixParamID { "mix", 1 };
+const ParameterID interpolationParamID { "interpolation", 1 };
 
 template<typename T>
 static void castParameter(const AudioProcessorValueTreeState& apvts, const ParameterID& id, T& destination)
@@ -32,6 +33,7 @@ public:
         castParameter(apvts, hpfFreqParamID, hpfParam);
         castParameter(apvts, lpfFreqParamID, lpfParam);
         castParameter(apvts, mixParamID, mixParam);
+        castParameter(apvts, interpolationParamID, interpolationParam);
     }
 
     static AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
@@ -44,6 +46,8 @@ public:
         layout.add(std::make_unique<AudioParameterFloat>(hpfFreqParamID, "HPF Cutoff", NormalisableRange{ 20.0f, 2000.0f }, 20.0f));
         layout.add(std::make_unique<AudioParameterFloat>(lpfFreqParamID, "LPF Cutoff", NormalisableRange{ 200.0f, 20000.0f }, 20000.0f));
         layout.add(std::make_unique<AudioParameterFloat>(mixParamID, "Mix", NormalisableRange{ 0.0f, 100.0f }, 100.0f));
+        layout.add(std::make_unique<AudioParameterChoice>(interpolationParamID, "Interpolation",
+            StringArray { "Linear", "Lagrange 3rd", "Lagrange 5th" }, 2));
         return layout;
     }
 
@@ -53,7 +57,6 @@ public:
         constexpr double dur = 0.02;
         gainSmoother.reset(sr, dur);
         bitsSmoother.reset(sr, dur);
-        delaySmoother.reset(sr, dur);
         hpfSmoother.reset(sr, dur);
         lpfSmoother.reset(sr, dur);
         mixSmoother.reset(sr, dur);
@@ -70,7 +73,7 @@ public:
         if (bitsParam != nullptr)
             bitsSmoother.setCurrentAndTargetValue(static_cast<float>(bitsParam->get()));
         if (delayParam != nullptr)
-            delaySmoother.setCurrentAndTargetValue(msToSamples(delayParam->get()));
+            delaySamples = msToSamples(delayParam->get());
         if (hpfParam != nullptr)
             hpfSmoother.setCurrentAndTargetValue(hpfParam->get());
         if (lpfParam != nullptr)
@@ -86,7 +89,7 @@ public:
         if (bitsParam != nullptr)
             bitsSmoother.setTargetValue(static_cast<float>(bitsParam->get()));
         if (delayParam != nullptr)
-            delaySmoother.setTargetValue(msToSamples(delayParam->get()));
+            delaySamples = msToSamples(delayParam->get());
         if (hpfParam != nullptr)
             hpfSmoother.setTargetValue(hpfParam->get());
         if (lpfParam != nullptr)
@@ -99,7 +102,6 @@ public:
     {
         gain = gainSmoother.getNextValue();
         bits = static_cast<int>(bitsSmoother.getNextValue());
-        delaySamples = delaySmoother.getNextValue();
         hpfFreq = hpfSmoother.getNextValue();
         lpfFreq = lpfSmoother.getNextValue();
         mix = mixSmoother.getNextValue();
@@ -114,6 +116,16 @@ public:
     [[nodiscard]] double getSampleRate() const noexcept { return sampleRate; }
     [[nodiscard]] bool getBypass() const noexcept { return bypassParam != nullptr && bypassParam->get(); }
     [[nodiscard]] AudioProcessorParameter* getBypassParameter() const noexcept { return bypassParam; }
+    [[nodiscard]] MarsDSP::Delays::Interpolation getInterpolation() const noexcept
+    {
+        if (interpolationParam == nullptr) return MarsDSP::Delays::Interpolation::Lagrange5th;
+        switch (interpolationParam->getIndex())
+        {
+            case 0:  return MarsDSP::Delays::Interpolation::Linear;
+            case 1:  return MarsDSP::Delays::Interpolation::Lagrange3rd;
+            default: return MarsDSP::Delays::Interpolation::Lagrange5th;
+        }
+    }
 
     static constexpr float minDelayTime = 5.0f;
     static constexpr float maxDelayTime = 5000.0f;
@@ -137,11 +149,11 @@ private:
     AudioParameterFloat* hpfParam {};
     AudioParameterFloat* lpfParam {};
     AudioParameterFloat* mixParam {};
+    AudioParameterChoice* interpolationParam {};
     AudioParameterBool* bypassParam {};
 
     LinearSmoothedValue<float> gainSmoother;
     LinearSmoothedValue<float> bitsSmoother;
-    MarsDSP::Smoothers::OnePoleSmoother<float> delaySmoother;
     LinearSmoothedValue<float> hpfSmoother;
     LinearSmoothedValue<float> lpfSmoother;
     LinearSmoothedValue<float> mixSmoother;

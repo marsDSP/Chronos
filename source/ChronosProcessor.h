@@ -4,8 +4,10 @@
 #include <array>
 #include <cmath>
 #include <random>
+#include <vector>
 
 #include "dsp/SVF.h"
+#include "dsp/SimdDelayLine.h"
 #include "ChronosParameters.h"
 //==============================================================================
 class ChronosProcessor final : public AudioProcessor
@@ -60,7 +62,9 @@ private:
     // xorshift32 -> uniform float in [0, 1), using the high 24 bits
     static float nextUniform(uint32_t& state) noexcept;
 
-    dsp::DelayLine<float> delayLine;
+    MarsDSP::Delays::SimdDelayLine delayLine;
+    std::vector<float> wetBufL_;
+    std::vector<float> wetBufR_;
 
     // wet-path tone shaping: HPF then LPF on the delay taps only (dry is summed unfiltered).
     // One SimdSVF per filter type. The stereo pair is packed into lanes 0,1.
