@@ -55,11 +55,12 @@ namespace MarsDSP::Filters {
         }
 
         [[nodiscard("result is the only effect; discarding wastes the computation")]]
-        double magnitude(const double freqHz, const double sampleRate) const noexcept
+        double magnitude(double freqHz, const double sampleRate) const noexcept
         {
             constexpr double pi = std::numbers::pi_v<double>;
             if (gNorm <= 0.0) return 1.0;
             const double fs = (sampleRate > 0.0) ? sampleRate : 48000.0;
+            freqHz = std::clamp(freqHz, 10.0, 0.49 * fs);
             const double omega = mmTanScalar(pi * (freqHz / fs)) / gNorm;
             const double denom = std::sqrt(1.0 + (omega * omega));
             return (type == Type::LowPass) ? (1.0 / denom) : (omega / denom);
@@ -183,11 +184,12 @@ namespace MarsDSP::Filters {
         }
 
         [[nodiscard("result is the only effect; discarding wastes the computation")]]
-        double magnitude(const double freqHz, const double sampleRate) const noexcept
+        double magnitude(double freqHz, const double sampleRate) const noexcept
         {
             constexpr double pi = std::numbers::pi_v<double>;
             if (g <= 0.0) return 1.0;
             const double fs = (sampleRate > 0.0) ? sampleRate : 48000.0;
+            freqHz = std::clamp(freqHz, 10.0, 0.49 * fs);
             const double omega = mmTanScalar(pi * freqHz / fs) / g;
             const double w2 = omega * omega;
             const double numRe = -m0 * w2 + (m0 + m2);
