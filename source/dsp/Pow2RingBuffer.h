@@ -35,7 +35,7 @@ namespace MarsDSP::Buffers {
             if (!storage_ || needElements > allocatedElements_)
             {
                 const auto bytes = needElements * sizeof(SampleType);
-                const auto raw = ::operator new[](bytes, std::align_val_t{32});
+                const auto raw = operator new[](bytes, std::align_val_t{32});
                 storage_.reset(static_cast<SampleType *>(raw));
                 allocatedElements_ = needElements;
             }
@@ -93,8 +93,36 @@ namespace MarsDSP::Buffers {
         }
 
         // ---- window read ----
-        void readWindow(int channel, int startIndex, SampleType *dst, int length) const noexcept;
-        const SampleType *tryGetContiguous(int channel, int startIndex, int length) const noexcept;
+        void readWindow(int channel, int startIndex, SampleType *dst, int length) const noexcept
+        {
+            assert(channel >= 0 && channel < numChannels_);
+            assert(startIndex >= 0 && startIndex < capacity_);
+            assert(length > 0 && length <= capacity_);
+
+            const SampleType *src = tryGetContiguous(channel, startIndex, length);
+            if (src)
+            {
+                std::memcpy(dst, src, static_cast<size_t>(length) * sizeof(SampleType));
+                return;
+            }
+
+            const SampleType *base = channelBase(channel);
+            const int first = std::min(length, capacity_ + kMirrorSamples - startIndex);
+            std::memcpy(dst, base + startIndex, static_cast<size_t>(first) * sizeof(SampleType));
+            const int remainder = length - first;
+            if (remainder > 0)
+                std::memcpy(dst + first, base + kMirrorSamples, static_cast<size_t>(remainder) * sizeof(SampleType));
+        }
+
+        const SampleType *tryGetContiguous(int channel, int startIndex, int length) const noexcept
+        {
+            assert(channel >= 0 && channel < numChannels_);
+            assert(startIndex >= 0 && startIndex < capacity_);
+            assert(length > 0);
+            if (startIndex + length <= capacity_ + kMirrorSamples)
+                return channelBase(channel) + startIndex;
+            return nullptr;
+        }
 
         // ---- copy / move ----
         Pow2RingBuffer() noexcept = default;
