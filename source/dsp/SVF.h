@@ -13,8 +13,7 @@
 // Precondition |π·f/fs| < 1.55 is enforced by the 0.49·fs clamp in setParams;
 // do not loosen to Cytomic's 0.499 (π·0.499 ≈ 1.568 would exceed the range).
 namespace {
-    double mmTanScalar(const double x) noexcept
-    {
+    inline double mmTanScalar(const double x) noexcept {
         const M128 v = MM(set1_ps)(static_cast<float>(x));
         return MM(cvtss_f32)(mmTan(v));
     }

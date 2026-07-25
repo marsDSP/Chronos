@@ -141,6 +141,7 @@ inline M128 mmCos(const M128 x) noexcept
 // float32 is rounding-limited, not coefficient-limited.
 // Do not expect the float64 improvement to show up in float32.
 // OUT OF RANGE: |x| ≥ π/2 is meaningless here, range-reduce before calling!
+// [-1.55, 1.55] fit interval, so 0.49 x pi = safe. I think it's like 1.539 or something.
 namespace MinimaxTanCoeffs
 {
     constexpr float N0 = 1.0f;
