@@ -62,9 +62,26 @@ namespace MarsDSP::Buffers {
         int wrap(int index) const noexcept { return index & mask_; }
 
         // ---- block write ----
-        void writeAt(int channel, int startIndex, const SampleType *src, int numSamples) noexcept;
+        void writeAt(int channel, int startIndex, const SampleType *src, int numSamples) noexcept
+        {
+            assert(channel >= 0 && channel < numChannels_);
+            assert(startIndex >= 0 && startIndex < capacity_);
+            assert(numSamples > 0 && numSamples <= capacity_);
+
+            SampleType *base = channelBase(channel);
+            const int first = std::min(numSamples, capacity_ - startIndex);
+            std::memcpy(base + startIndex, src, static_cast<size_t>(first) * sizeof(SampleType));
+            const int remainder = numSamples - first;
+            if (remainder > 0)
+                std::memcpy(base, src + first, static_cast<size_t>(remainder) * sizeof(SampleType));
+        }
         void refreshMirror() noexcept;
-        void advance(int numSamples) noexcept;
+
+        void advance(int numSamples) noexcept
+        {
+            assert(numSamples >= 0);
+            writeIndex_ = wrap(writeIndex_ + numSamples);
+        }
 
         // ---- window read ----
         void readWindow(int channel, int startIndex, SampleType *dst, int length) const noexcept;
@@ -82,7 +99,7 @@ namespace MarsDSP::Buffers {
         {
             void operator()(SampleType *p) const noexcept
             {
-                if (p) ::operator delete[](static_cast<void *>(p), std::align_val_t{32});
+                if (p) operator delete[](static_cast<void *>(p), std::align_val_t{32});
             }
         };
         using AlignedPtr = std::unique_ptr<SampleType[], AlignedDeleter>;
