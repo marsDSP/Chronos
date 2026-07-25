@@ -185,8 +185,9 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
 
         const float mixNorm = parameters.getMix() * 0.01f;
         const float theta = mixNorm * (std::numbers::pi_v<float> * 0.5f);
-        const float dryGain = std::cos(theta);
-        const float wetGain = std::sin(theta);
+
+        const float dryGain = mmCos(theta);
+        const float wetGain = mmSin(theta);
 
         const float dry0 = data0[s];
         const float wet0 = wetBufL_[s];
