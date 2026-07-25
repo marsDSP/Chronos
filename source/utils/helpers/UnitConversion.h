@@ -79,8 +79,6 @@ namespace MarsDSP::Utils::Helpers
         return timeMs;
     }
 
-    // add one for +/- ct here if necessary
-
     template <int NumDecimalPlaces>
     String floatToStringDecimal (float floatUnit)
     {

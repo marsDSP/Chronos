@@ -134,8 +134,7 @@ float ChronosProcessor::nextUniform(uint32_t &state) noexcept
     return static_cast<float>(state >> 8) * (1.0f / 8388608.0f);
 }
 
-void ChronosProcessor::processBlock(AudioBuffer<float> &buffer,
-                                    [[maybe_unused]] MidiBuffer &midiMessages)
+void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]] MidiBuffer &midiMessages)
 {
     ignoreUnused(midiMessages);
 
@@ -201,7 +200,6 @@ AudioProcessorEditor *ChronosProcessor::createEditor()
 {
     return new GenericAudioProcessorEditor(*this);
 }
-
 //==============================================================================
 void ChronosProcessor::getStateInformation(MemoryBlock &destData)
 {
@@ -216,7 +214,6 @@ void ChronosProcessor::setStateInformation(const void *data, int sizeInBytes)
         apvts.replaceState(ValueTree::fromXml(*xml));
     }
 }
-
 //==============================================================================
 AudioProcessor * JUCE_CALLTYPE createPluginFilter()
 {

@@ -4,6 +4,7 @@
 #define CHRONOS_CHRONOSPARAMETERS_H
 
 #include <JuceHeader.h>
+#include "dsp/OnePoleSmoother.h"
 
 const ParameterID gainParamID { "gain", 1 };
 const ParameterID bitsParamID { "bits", 1 };
@@ -140,7 +141,7 @@ private:
 
     LinearSmoothedValue<float> gainSmoother;
     LinearSmoothedValue<float> bitsSmoother;
-    LinearSmoothedValue<float> delaySmoother;
+    MarsDSP::Smoothers::OnePoleSmoother<float> delaySmoother;
     LinearSmoothedValue<float> hpfSmoother;
     LinearSmoothedValue<float> lpfSmoother;
     LinearSmoothedValue<float> mixSmoother;
