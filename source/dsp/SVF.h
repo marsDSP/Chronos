@@ -6,6 +6,19 @@
 #include <cmath>
 #include <numbers>
 #include <algorithm>
+#include "simd/Config.h"
+#include "math/Trigonometry.h"
+
+// Scalar bridge to the FMA-accurate mmTan(M128) kernel for bilinear pre-warping.
+// Precondition |π·f/fs| < 1.55 is enforced by the 0.49·fs clamp in setParams;
+// do not loosen to Cytomic's 0.499 (π·0.499 ≈ 1.568 would exceed the range).
+namespace {
+    double mmTanScalar(const double x) noexcept
+    {
+        const M128 v = MM(set1_ps)(static_cast<float>(x));
+        return MM(cvtss_f32)(mmTan(v));
+    }
+}
 
 namespace MarsDSP::Filters {
     class OnePoleTPT {
@@ -27,7 +40,7 @@ namespace MarsDSP::Filters {
             const double nyq = 0.49 * fs;
             freqHz = std::clamp(freqHz, 10.0, nyq);
             type = t;
-            gNorm = std::tan(pi * freqHz / fs);
+            gNorm = mmTanScalar(pi * freqHz / fs);
             G = gNorm / (1.0 + gNorm);
         }
 
@@ -47,7 +60,7 @@ namespace MarsDSP::Filters {
             constexpr double pi = std::numbers::pi_v<double>;
             if (gNorm <= 0.0) return 1.0;
             const double fs = (sampleRate > 0.0) ? sampleRate : 48000.0;
-            const double omega = std::tan(pi * (freqHz / fs)) / gNorm;
+            const double omega = mmTan(pi * (freqHz / fs)) / gNorm;
             const double denom = std::sqrt(1.0 + (omega * omega));
             return (type == Type::LowPass) ? (1.0 / denom) : (omega / denom);
         }
@@ -83,7 +96,7 @@ namespace MarsDSP::Filters {
             constexpr double ln10 = std::numbers::ln10_v<double>;
             const double A = std::exp(gainDB * (ln10 / 40.0));
             const double sqrtA = std::sqrt(A);
-            const double gt = std::tan(pi * freqHz / fs);
+            const double gt = mmTanScalar(pi * freqHz / fs);
             const double kk = 1.0 / Q;
 
             switch (type)
@@ -175,7 +188,7 @@ namespace MarsDSP::Filters {
             constexpr double pi = std::numbers::pi_v<double>;
             if (g <= 0.0) return 1.0;
             const double fs = (sampleRate > 0.0) ? sampleRate : 48000.0;
-            const double omega = std::tan (pi * freqHz / fs) / g;
+            const double omega = mmTan (pi * freqHz / fs) / g;
             const double w2 = omega * omega;
             const double numRe = -m0 * w2 + (m0 + m2);
             const double numIm = (m0 * k + m1) * omega;
