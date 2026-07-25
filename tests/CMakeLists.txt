@@ -51,4 +51,23 @@ if(BUILD_TEST_HARNESSES)
     # only, no forced -O2 so the header's assert preconditions stay armed.
     add_executable(simd_delay_check harnesses/cd/simd_delay_check.cpp)
     target_link_libraries(simd_delay_check PRIVATE SharedCode)
+
+    # SimdDelayLine SIMD-vs-scalar parity harness: process() (4-wide SIMD kernel)
+    # vs processScalar() (scalar dot6), compared to a tolerance across block
+    # sizes, fractional delays, stereo, mono, ring-wrap, and the delay-move
+    # crossfade region (see harnesses/simd/simd_delay_parity.cpp). Parity is
+    # to a tolerance, not bit-exact, because the MAC tree reassociates. Forced
+    # -O2 and -Xarch_x86_64 -mfma (matching tan_bench) so the SIMD kernel
+    # inlines and simde_mm_fmadd_ps lowers to a fused multiply-add, matching
+    # the plugin target's x86_64 slice.
+    add_executable(simd_delay_parity harnesses/simd/simd_delay_parity.cpp)
+    target_link_libraries(simd_delay_parity PRIVATE SharedCode)
+    if(MSVC)
+        target_compile_options(simd_delay_parity PRIVATE /O2)
+    else()
+        target_compile_options(simd_delay_parity PRIVATE -O2)
+    endif()
+    if(APPLE)
+        target_compile_options(simd_delay_parity PRIVATE "-Xarch_x86_64" "-mfma")
+    endif()
 endif()
