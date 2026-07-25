@@ -6,7 +6,6 @@
 #include <cmath>
 #include <algorithm>
 #include "simd/Config.h"
-#include <simde/x86/fma.h>
 
 // MSVC's <cmath> does not expose the POSIX M_PI / M_2_PI macros unless
 // _USE_MATH_DEFINES is defined before include.
@@ -33,7 +32,7 @@ namespace MinimaxSinCoeffs
 
 inline M128 mulAdd(const M128 a, const M128 b, const M128 c) noexcept
 {
-    return simde_mm_fmadd_ps(a, b, c);
+    return FMADD(a, b, c);
 }
 
 inline float minimaxSinApprox(const float x) noexcept

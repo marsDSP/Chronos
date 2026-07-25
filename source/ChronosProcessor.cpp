@@ -147,14 +147,12 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
     if (numSamples <= 0) return;
 
     const double fs = parameters.getSampleRate();
-    const double fsSafe = (fs > 0.0) ? fs : 48000.0;
+    const double fsSafe = fs > 0.0 ? fs : 48000.0;
 
-    // the SimdDelayLine owns the per-sub-block delay-position smoothing internally
-    // (raw ms->samples) handed in as the start/end target for this block.
     delayLine.setInterpolation(parameters.getInterpolation());
 
     float* data0 = buffer.getWritePointer(0);
-    float* data1 = (totalNumInputChannels > 1) ? buffer.getWritePointer(1) : nullptr;
+    float* data1 = totalNumInputChannels > 1 ? buffer.getWritePointer(1) : nullptr;
 
     if (static_cast<int>(wetBufL_.size()) < numSamples)
     {
@@ -164,7 +162,8 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
 
     const float delaySamples = parameters.getDelaySamples();
     delayLine.process(data0, data1,
-                      wetBufL_.data(), (data1 != nullptr) ? wetBufR_.data() : nullptr,
+                      wetBufL_.data(),
+                      data1 != nullptr ? wetBufR_.data() : nullptr,
                       numSamples, delaySamples, delaySamples);
 
     hpf.setCoeffForBlock(SVF::SVFType::HighPass, fsSafe, parameters.getHPFFreq(), svfQ, 0.0, numSamples);
@@ -190,7 +189,7 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
             wet1 = wetBufR_[s];
         }
 
-        const M128 wetV = MM(set_ps)(0.0f, 0.0f, wet1, wet0);   // lane0=L, lane1=R
+        const M128 wetV = MM(set_ps)(0.0f, 0.0f, wet1, wet0);
         const M128 hpV  = hpf.processBlockStep(wetV);
         const M128 lpV  = lpf.processBlockStep(hpV);
         alignas(16) float out[4];

@@ -47,6 +47,7 @@
     #endif
     #endif
     #include <simde/x86/sse4.2.h>
+    #include <simde/x86/fma.h>
 #endif
 // ══════════════════════════════════════════════════════════════
 // Branch A: Native x86 OR SIMDe is unavailable
@@ -73,6 +74,13 @@
 #define M128D simde__m128d
 #define MM_SHUFFLE SIMDE_MM_SHUFFLE
 #endif
+// ══════════════════════════════════════════════════════════════
+// FMA: single fused multiply-add alias. simde_mm_fmadd_ps lowers to the
+// native vfmadd*ps on x86_64+FMA3 / arm64, and to a mul+add pair elsewhere.
+// Config.h is the one place that pulls in <simde/x86/fma.h>; use FMADD(a,b,c)
+// everywhere instead of naming simde_mm_fmadd_ps at call sites.
+// ══════════════════════════════════════════════════════════════
+#define FMADD simde_mm_fmadd_ps
 // ══════════════════════════════════════════════════════════════
 // Hard requirement: C++23 or later.
 // ══════════════════════════════════════════════════════════════
