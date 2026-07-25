@@ -91,12 +91,16 @@ namespace MarsDSP::Filters {
             const double fs = (sampleRate > 0.0) ? sampleRate : 48000.0;
             const double nyq = 0.49 * fs;
             freqHz = std::clamp(freqHz, 10.0, nyq);
+            setParamsFromG(type, Q, gainDB, mmTanScalar(pi * freqHz / fs));
+        }
+
+        void setParamsFromG(const SVFType type, double Q, const double gainDB, const double gt) noexcept
+        {
             Q = std::max(Q, 0.025);
 
             constexpr double ln10 = std::numbers::ln10_v<double>;
             const double A = std::exp(gainDB * (ln10 / 40.0));
             const double sqrtA = std::sqrt(A);
-            const double gt = mmTanScalar(pi * freqHz / fs);
             const double kk = 1.0 / Q;
 
             switch (type)

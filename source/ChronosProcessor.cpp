@@ -152,6 +152,11 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
 
     const int numSamples = buffer.getNumSamples();
 
+    constexpr double pi = std::numbers::pi_v<double>;
+    const double fs = parameters.getSampleRate();
+    const double fsSafe = (fs > 0.0) ? fs : 48000.0;
+    const double nyq = 0.49 * fsSafe;
+
     for (auto s {0uz}; s < numSamples; ++s)
     {
         parameters.smoothen();
@@ -162,16 +167,27 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
         const float dryGain = std::cos(theta);
         const float wetGain = std::sin(theta);
 
-        const double sr = parameters.getSampleRate();
+        const double hpfF = std::clamp(static_cast<double>(parameters.getHPFFreq()), 10.0, nyq);
+        const double lpfF = std::clamp(static_cast<double>(parameters.getLPFFreq()), 10.0, nyq);
+        alignas(16) const float angles[4] = {
+            static_cast<float>(pi * hpfF / fsSafe),  // ch0 HPF
+            static_cast<float>(pi * lpfF / fsSafe),  // ch0 LPF
+            static_cast<float>(pi * hpfF / fsSafe),  // ch1 HPF
+            static_cast<float>(pi * lpfF / fsSafe),  // ch1 LPF
+        };
+        alignas(16) float gt[4];
+        MM(storeu_ps)(gt, mmTan(MM(loadu_ps)(angles)));
+
         for (auto ch {0uz}; ch < totalNumInputChannels; ++ch)
         {
             auto *data = buffer.getWritePointer(static_cast<int>(ch));
             const float dry = data[s];
             delayLine.pushSample(static_cast<int>(ch), dry);
             float wet = delayLine.popSample(static_cast<int>(ch));
-            hpf[ch].setParams(SVF::SVFType::HighPass, sr, parameters.getHPFFreq(), svfQ, 0.0);
+            const std::size_t base = 2 * ch;
+            hpf[ch].setParamsFromG(SVF::SVFType::HighPass, svfQ, 0.0, gt[base + 0]);
             wet = hpf[ch].processSample(wet);
-            lpf[ch].setParams(SVF::SVFType::LowPass, sr, parameters.getLPFFreq(), svfQ, 0.0);
+            lpf[ch].setParamsFromG(SVF::SVFType::LowPass,  svfQ, 0.0, gt[base + 1]);
             wet = lpf[ch].processSample(wet);
             data[s] = dry * dryGain + wet * wetGain;
         }
