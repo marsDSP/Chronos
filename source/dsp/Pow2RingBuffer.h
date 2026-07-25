@@ -17,16 +17,49 @@ namespace MarsDSP::Buffers {
         static_assert(MirrorSamples > 0, "MirrorSamples must be positive");
         static_assert(MirrorSamples % 8 == 0, "MirrorSamples must be a multiple of 8");
 
-        void prepare(int numChannels, int minimumCapacitySamples);
+        void prepare(int numChannels, int minimumCapacitySamples)
+        {
+            assert(numChannels > 0);
+            assert(minimumCapacitySamples > 0);
 
-        void clear() noexcept;
+            // round up to pow2 and pin the storage invariants
+            const auto rounded = std::bit_ceil(static_cast<unsigned int>(minimumCapacitySamples));
+            const int newCapacity = static_cast<int>(rounded);
+            assert(std::has_single_bit(static_cast<unsigned int>(newCapacity)));
+            assert(newCapacity >= kMirrorSamples);
+
+            const int newStride = roundUpToMultipleOf8(newCapacity + kMirrorSamples);
+            const auto needElements = static_cast<size_t>(numChannels) * static_cast<size_t>(newStride);
+
+            // idempotent alloc
+            if (!storage_ || needElements > allocatedElements_)
+            {
+                const auto bytes = needElements * sizeof(SampleType);
+                const auto raw = ::operator new[](bytes, std::align_val_t{32});
+                storage_.reset(static_cast<SampleType *>(raw));
+                allocatedElements_ = needElements;
+            }
+
+            numChannels_ = numChannels;
+            capacity_ = newCapacity;
+            mask_ = newCapacity - 1;
+            stride_ = newStride;
+            writeIndex_ = 0;
+            zeroStorage();
+        }
+
+        void clear() noexcept
+        {
+            writeIndex_ = 0;
+            zeroStorage();
+        }
 
         // ---- geometry ----
-        int getCapacity() const noexcept;
-        int getMask() const noexcept;
-        int getNumChannels() const noexcept;
-        int getWriteIndex() const noexcept;
-        int wrap(int index) const noexcept;
+        int getCapacity() const noexcept { return capacity_; }
+        int getMask() const noexcept { return mask_; }
+        int getNumChannels() const noexcept { return numChannels_; }
+        int getWriteIndex() const noexcept { return writeIndex_; }
+        int wrap(int index) const noexcept { return index & mask_; }
 
         // ---- block write ----
         void writeAt(int channel, int startIndex, const SampleType *src, int numSamples) noexcept;
@@ -43,6 +76,45 @@ namespace MarsDSP::Buffers {
         Pow2RingBuffer &operator=(const Pow2RingBuffer &) = delete;
         Pow2RingBuffer(Pow2RingBuffer &&) noexcept = default;
         Pow2RingBuffer &operator=(Pow2RingBuffer &&) noexcept = default;
+
+    private:
+        struct AlignedDeleter
+        {
+            void operator()(SampleType *p) const noexcept
+            {
+                if (p) ::operator delete[](static_cast<void *>(p), std::align_val_t{32});
+            }
+        };
+        using AlignedPtr = std::unique_ptr<SampleType[], AlignedDeleter>;
+
+        static constexpr int kMirrorSamples = MirrorSamples;
+
+        static constexpr int roundUpToMultipleOf8(int n) noexcept { return n + 7 & ~7; }
+
+        SampleType *channelBase(int channel) noexcept
+        {
+            return storage_.get() + static_cast<size_t>(channel) * static_cast<size_t>(stride_);
+        }
+        const SampleType *channelBase(int channel) const noexcept
+        {
+            return storage_.get() + static_cast<size_t>(channel) * static_cast<size_t>(stride_);
+        }
+
+        void zeroStorage() noexcept
+        {
+            if (!storage_) return;
+            const auto bytes = static_cast<size_t>(numChannels_) * static_cast<size_t>(stride_) * sizeof(SampleType);
+            std::memset(storage_.get(), 0, bytes);
+        }
+
+        // ---- storage + state ----
+        AlignedPtr storage_;
+        size_t allocatedElements_ = 0;
+        int numChannels_ = 0;
+        int capacity_ = 0;
+        int mask_ = 0;
+        int stride_ = 0;
+        int writeIndex_ = 0;
     };
 }
 #endif
