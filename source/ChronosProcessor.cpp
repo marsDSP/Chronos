@@ -184,8 +184,8 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
         }
 
         const M128 wetV = MM(set_ps)(0.0f, 0.0f, wet1, wet0);   // lane0=L, lane1=R
-        const M128 hpV  = hpf.processSample(wetV);
-        const M128 lpV  = lpf.processSample(hpV);
+        const M128 hpV  = SVF::step(hpf, wetV);
+        const M128 lpV  = SVF::step(lpf, hpV);
         alignas(16) float out[4]; // change to std::vector? this is the hot path...
         MM(storeu_ps)(out, lpV);
 

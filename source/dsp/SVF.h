@@ -248,14 +248,31 @@ namespace MarsDSP::Filters
             setCoeffPostGK(type, mmTan(angles), Q, gainDB);
         }
 
-        M128 processSample(const M128 vin) noexcept
+        static M128 step(SimdSVF &svf, M128 input) noexcept
         {
-            const M128 v3 = MM(sub_ps)(vin, ic2eq);
-            const M128 v1 = MM(add_ps)(MM(mul_ps)(a1, ic1eq), MM(mul_ps)(a2, v3));
-            const M128 v2 = MM(add_ps)(ic2eq, MM(add_ps)(MM(mul_ps)(a2, ic1eq), MM(mul_ps)(a3, v3)));
-            ic1eq = MM(sub_ps)(MM(mul_ps)(two, v1), ic1eq);
-            ic2eq = MM(sub_ps)(MM(mul_ps)(two, v2), ic2eq);
-            return MM(add_ps)(MM(mul_ps)(m0, vin), MM(add_ps)(MM(mul_ps)(m1, v1), MM(mul_ps)(m2, v2)));
+            // v3 = v0 - ic2eq
+            const M128 v3 = MM(sub_ps)(input, svf.ic2eq);
+            // v1 = a1 * ic1eq + a2 * v3
+            const M128 v1 = MM(add_ps)(MM(mul_ps)(svf.a1, svf.ic1eq), MM(mul_ps)(svf.a2, v3));
+            // v2 = ic2eq + a2 * ic1eq + a3 * v3
+            const M128 v2 = MM(add_ps)(svf.ic2eq, MM(add_ps)(MM(mul_ps)(svf.a2, svf.ic1eq), MM(mul_ps)(svf.a3, v3)));
+            // ic1eq = 2 * v1 - ic1eq
+            svf.ic1eq = MM(sub_ps)(MM(mul_ps)(svf.two, v1), svf.ic1eq);
+            // ic2eq = 2 * v2 - ic2eq
+            svf.ic2eq = MM(sub_ps)(MM(mul_ps)(svf.two, v2), svf.ic2eq);
+            // (m0 * input) + ((m1 * v1) + (m2 * v2))
+            return MM(add_ps)(MM(mul_ps)(svf.m0, input), MM(add_ps)(MM(mul_ps)(svf.m1, v1), MM(mul_ps)(svf.m2, v2)));
+        }
+
+        // pack L/R into lanes 0,1, step, unpack
+        static void step(SimdSVF &svf, float &L, float &R) noexcept
+        {
+            const M128 input = MM(set_ps)(0, 0, R, L);
+            const M128 out = step(svf, input);
+            alignas(16) float lanes[4];
+            MM(store_ps)(lanes, out);
+            L = lanes[0];
+            R = lanes[1];
         }
 
     private:
