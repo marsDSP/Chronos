@@ -9,9 +9,6 @@
 #include "simd/Config.h"
 #include "math/Trigonometry.h"
 
-// Scalar bridge to the FMA-accurate mmTan(M128) kernel for bilinear pre-warping.
-// Precondition |π·f/fs| < 1.55 is enforced by the 0.49·fs clamp in setParams;
-// do not loosen to Cytomic's 0.499 (π·0.499 ≈ 1.568 would exceed the range).
 namespace
 {
     inline double mmTanScalar(const double x) noexcept
@@ -273,24 +270,8 @@ namespace MarsDSP::Filters
             const M128 vA = MM(set1_ps)(A);
             const M128 vSqrtA = MM(set1_ps)(sqrtA);
 
-            k = MM(set1_ps)(kk);
-            if (type == SVFType::Bell) k = MM(div_ps)(k, vA);
-
             g = gt;
-            switch (type)
-            {
-                case SVFType::LowShelf: g = MM(div_ps)(gt, vSqrtA);
-                    break;
-                case SVFType::HighShelf:
-                case SVFType::TiltShelf: g = MM(mul_ps)(gt, vSqrtA);
-                    break;
-                default: break;
-            }
-
-            gk = MM(add_ps)(g, k);
-            a1 = MM(div_ps)(one, MM(add_ps)(one, MM(mul_ps)(g, gk)));
-            a2 = MM(mul_ps)(g, a1);
-            a3 = MM(mul_ps)(g, a2);
+            k = MM(set1_ps)(kk);
 
             switch (type)
             {
@@ -320,26 +301,35 @@ namespace MarsDSP::Filters
                     m2 = MM(setzero_ps)();
                     break;
                 case SVFType::Bell:
+                    k = MM(div_ps)(k, vA);
                     m0 = one;
                     m1 = MM(mul_ps)(k, MM(sub_ps)(MM(mul_ps)(vA, vA), one));
                     m2 = MM(setzero_ps)();
                     break;
                 case SVFType::LowShelf:
+                    g = MM(div_ps)(gt, vSqrtA);
                     m0 = one;
                     m1 = MM(mul_ps)(k, MM(sub_ps)(vA, one));
                     m2 = MM(sub_ps)(MM(mul_ps)(vA, vA), one);
                     break;
                 case SVFType::HighShelf:
+                    g = MM(mul_ps)(gt, vSqrtA);
                     m0 = MM(mul_ps)(vA, vA);
                     m1 = MM(mul_ps)(MM(mul_ps)(k, MM(sub_ps)(one, vA)), vA);
                     m2 = MM(sub_ps)(one, MM(mul_ps)(vA, vA));
                     break;
                 case SVFType::TiltShelf:
+                    g = MM(mul_ps)(gt, vSqrtA);
                     m0 = vA;
                     m1 = MM(mul_ps)(k, MM(sub_ps)(one, vA));
                     m2 = MM(sub_ps)(MM(div_ps)(one, vA), vA);
                     break;
             }
+
+            gk = MM(add_ps)(g, k);
+            a1 = MM(div_ps)(one, MM(add_ps)(one, MM(mul_ps)(g, gk)));
+            a2 = MM(mul_ps)(g, a1);
+            a3 = MM(mul_ps)(g, a2);
         }
 
         M128 ic1eq{MM(setzero_ps)()};

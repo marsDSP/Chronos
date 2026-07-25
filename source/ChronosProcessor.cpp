@@ -130,7 +130,6 @@ float ChronosProcessor::nextUniform(uint32_t &state) noexcept
     state ^= state >> 17;
     state ^= state << 5;
 
-    // map the high 24-bits to a float in [0, 1)
     return static_cast<float>(state >> 8) * (1.0f / 8388608.0f);
 }
 
@@ -152,7 +151,6 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
 
     const int numSamples = buffer.getNumSamples();
 
-    // Sample rate is block-constant
     const double fs = parameters.getSampleRate();
     const double fsSafe = (fs > 0.0) ? fs : 48000.0;
 
@@ -166,15 +164,9 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
         const float dryGain = std::cos(theta);
         const float wetGain = std::sin(theta);
 
-        // One setCoeff per filter per sample. HPF/LPF cutoffs are shared across
-        // the stereo pair, so the broadcast overload (scalar clamp + scalar
-        // mmTanScalar, broadcast across 4 lanes) is the right fit - lanes 0,1
-        // carry the stereo signal, lanes 2,3 are unused
         hpf.setCoeff(SVF::SVFType::HighPass, fsSafe, parameters.getHPFFreq(), svfQ, 0.0);
         lpf.setCoeff(SVF::SVFType::LowPass,  fsSafe, parameters.getLPFFreq(), svfQ, 0.0);
 
-        // Collect the wet delay taps for both channels, then run HPF->LPF as one
-        // SIMD pass each (stereo packed into lanes 0,1 of a single SimdSVF)
         float* data0 = buffer.getWritePointer(0);
         const float dry0 = data0[s];
         delayLine.pushSample(0, dry0);
@@ -194,7 +186,7 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
         const M128 wetV = MM(set_ps)(0.0f, 0.0f, wet1, wet0);   // lane0=L, lane1=R
         const M128 hpV  = hpf.processSample(wetV);
         const M128 lpV  = lpf.processSample(hpV);
-        alignas(16) float out[4];
+        alignas(16) float out[4]; // change to std::vector? this is the hot path...
         MM(storeu_ps)(out, lpV);
 
         data0[s] = dry0 * dryGain + out[0] * wetGain;
