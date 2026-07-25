@@ -42,4 +42,13 @@ if(BUILD_TEST_HARNESSES)
     # past the allocation far more directly than a value comparison does.
     # target_compile_options(ring_buffer_check PRIVATE -fsanitize=address,undefined)
     # target_link_options(ring_buffer_check PRIVATE -fsanitize=address,undefined)
+
+    # SimdDelayLine correctness harness: integer impulse, polynomial
+    # reproduction (centroid / flaw-B guard), stereo independence, multi-block
+    # delay, delay-move settling, ring-wrap endurance, zero-in/zero-out, mono
+    # path (see harnesses/cd/simd_delay_check.cpp). Same conventions as
+    # ring_buffer_check: plain main() + exit code + printf, links SharedCode
+    # only, no forced -O2 so the header's assert preconditions stay armed.
+    add_executable(simd_delay_check harnesses/cd/simd_delay_check.cpp)
+    target_link_libraries(simd_delay_check PRIVATE SharedCode)
 endif()
