@@ -10,9 +10,12 @@
 //                  FAIL if max relative error > 1e-4.  The float32 kernel ceiling
 //                  is ~4e-6 near the pole, so 1e-4 catches coefficient corruption
 //                  without flaking on float32 rounding noise.
-//   2. Performance – ns/tan for std::tan, the mmTanScalar bridge SVF actually
+//   2. Tan perf  – ns/tan for std::tan, the mmTanScalar bridge SVF actually
 //                  calls, and the raw mmTan(M128) 4-lane kernel.  FAIL (regression)
 //                  if mmTanScalar is more than 5% slower than std::tan.
+//   3. SVF perf  – SimdSVF block-ramp throughput (setCoeffForBlock +
+//                  processBlockStep, M128 stereo in lanes 0,1).  Informational
+//                  baseline (~6.3 ns/sample on arm64); not a pass/fail check.
 //
 // Build:  cmake -S . -B build -DBUILD_TEST_HARNESSES=ON
 //         cmake --build build --target tan_bench
@@ -107,7 +110,7 @@ std::vector<float> makeInputsF(std::size_t groups)
 // (min) ns/tan and sink the accumulators into sinkOut so the loop body stays
 // live.  Min is the most representative throughput sample (least contention).
 template <class Fn>
-double benchNsPerTan(Fn fn, std::size_t ops, std::size_t reps, double& sinkOut)
+double benchNsPerOp(Fn fn, std::size_t ops, std::size_t reps, double& sinkOut)
 {
     double best  = std::numeric_limits<double>::infinity();
     double total = 0.0;
@@ -209,24 +212,82 @@ int main()
     };
 
     double sink = 0.0;
-    const double nsStdTan = benchNsPerTan(runStdTan,      scalarOps, reps, sink);
-    const double nsScalar = benchNsPerTan(runMmTanScalar, scalarOps, reps, sink);
-    const double nsM128   = benchNsPerTan(runMmTanM128,   vecOps,    reps, sink);
+    const double nsStdTan = benchNsPerOp(runStdTan,      scalarOps, reps, sink);
+    const double nsScalar = benchNsPerOp(runMmTanScalar, scalarOps, reps, sink);
+    const double nsM128   = benchNsPerOp(runMmTanM128,   vecOps,    reps, sink);
 
-    const bool perfOk = nsScalar <= nsStdTan * kPerfRegression;
+    const bool tanPerfOk = nsScalar <= nsStdTan * kPerfRegression;
 
-    std::printf("[perf] ns/tan (min of %zu reps):\n", reps);
+    std::printf("[tan perf] ns/tan (min of %zu reps):\n", reps);
     std::printf("       std::tan        : %7.3f ns/tan\n", nsStdTan);
     std::printf("       mmTanScalar     : %7.3f ns/tan  (%.2fx vs std::tan)\n",
                 nsScalar, nsStdTan / nsScalar);
     std::printf("       mmTan(M128) 4la : %7.3f ns/tan  (%.2fx vs std::tan)\n",
                 nsM128, nsStdTan / nsM128);
     std::printf("       -> %s (mmTanScalar <= %.2fx std::tan)\n\n",
-                perfOk ? "PASS" : "FAIL", kPerfRegression);
+                tanPerfOk ? "PASS" : "FAIL", kPerfRegression);
+
+    // ---- SVF throughput: SimdSVF block-ramp self-baseline ----
+    // Varying cutoff (slow sine) simulates the 20ms smoothed parameter so the
+    // block-ramp deltas are non-zero (realistic).  Informational — no pass/fail
+    // since the scalar TwoPoleSVF baseline has been removed; compare against the
+    // documented ~6.3 ns/sample on arm64 for regression detection.
+    constexpr std::size_t kBlockSize  = 256;
+    constexpr std::size_t kSvfSamples = 1'000'000;
+    constexpr std::size_t kSvfBlocks  = kSvfSamples / kBlockSize;
+    constexpr double kSvfQ      = 0.7071;   // Butterworth, matches processor
+    constexpr double kSvfHpfF   = 200.0;
+    constexpr double kSvfLpfF   = 8000.0;
+
+    // Precomputed stereo input + per-sample cutoff (sine sweep around base).
+    std::vector<float> inL(kSvfSamples), inR(kSvfSamples);
+    std::vector<double> cutHpf(kSvfSamples), cutLpf(kSvfSamples);
+    for (std::size_t i = 0; i < kSvfSamples; ++i)
+    {
+        inL[i]    = static_cast<float>(std::sin(2.0 * kPi * 440.0 * static_cast<double>(i) / kFs));
+        inR[i]    = static_cast<float>(std::sin(2.0 * kPi * 330.0 * static_cast<double>(i) / kFs));
+        cutHpf[i] = kSvfHpfF * (1.0 + 0.1 * std::sin(2.0 * kPi * 0.5 * static_cast<double>(i) / kFs));
+        cutLpf[i] = kSvfLpfF * (1.0 + 0.1 * std::sin(2.0 * kPi * 0.3 * static_cast<double>(i) / kFs));
+    }
+
+    // SimdSVF, block-ramp setCoeffForBlock + per-sample processBlockStep,
+    // stereo packed into lanes 0,1 of a single M128.  Coefficient computation is
+    // off the per-sample path; float32 SIMD arithmetic.
+    auto runNewSVF = [&]() -> double {
+        MarsDSP::Filters::SimdSVF hpf, lpf;
+        hpf.reset(); lpf.reset();
+        double acc = 0.0;
+        for (std::size_t b = 0; b < kSvfBlocks; ++b)
+        {
+            const std::size_t bs = b * kBlockSize;   // block-start cutoff (realistic)
+            hpf.setCoeffForBlock(MarsDSP::Filters::SimdSVF::SVFType::HighPass,
+                                 kFs, cutHpf[bs], kSvfQ, 0.0, static_cast<int>(kBlockSize));
+            lpf.setCoeffForBlock(MarsDSP::Filters::SimdSVF::SVFType::LowPass,
+                                 kFs, cutLpf[bs], kSvfQ, 0.0, static_cast<int>(kBlockSize));
+            for (std::size_t i = 0; i < kBlockSize; ++i)
+            {
+                const std::size_t idx = bs + i;
+                const M128 wetV = MM(set_ps)(0.0f, 0.0f, inR[idx], inL[idx]);
+                const M128 hpV  = hpf.processBlockStep(wetV);
+                const M128 lpV  = lpf.processBlockStep(hpV);
+                alignas(16) float out[4];
+                MM(storeu_ps)(out, lpV);
+                acc += static_cast<double>(out[0] + out[1]);
+                doNotOptimize(acc);
+            }
+        }
+        return acc;
+    };
+
+    const double nsNewSVF = benchNsPerOp(runNewSVF, kSvfSamples, reps, sink);
+
+    std::printf("[svf perf] ns/sample, stereo HPF+LPF wet path (min of %zu reps):\n", reps);
+    std::printf("       SimdSVF (block-ramp, M128 float32) : %7.3f ns/sample  (info: ~6.3 on arm64)\n\n",
+                nsNewSVF);
 
     std::printf("(sink=%f)\n", sink);
 
-    const bool ok = accOk && perfOk;
+    const bool ok = accOk && tanPerfOk;
     std::printf("=== %s ===\n", ok ? "NO REGRESSION" : "REGRESSION DETECTED");
     return ok ? 0 : 1;
 }
