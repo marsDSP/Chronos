@@ -24,7 +24,7 @@ namespace MarsDSP::Buffers {
 
             // round up to pow2 and pin the storage invariants
             const auto rounded = std::bit_ceil(static_cast<unsigned int>(minimumCapacitySamples));
-            const int newCapacity = static_cast<int>(rounded);
+            const auto newCapacity = static_cast<int>(rounded);
             assert(std::has_single_bit(static_cast<unsigned int>(newCapacity)));
             assert(newCapacity >= kMirrorSamples);
 
@@ -55,11 +55,11 @@ namespace MarsDSP::Buffers {
         }
 
         // ---- geometry ----
-        int getCapacity() const noexcept { return capacity_; }
-        int getMask() const noexcept { return mask_; }
-        int getNumChannels() const noexcept { return numChannels_; }
-        int getWriteIndex() const noexcept { return writeIndex_; }
-        int wrap(int index) const noexcept { return index & mask_; }
+        [[nodiscard]] int getCapacity() const noexcept { return capacity_; }
+        [[nodiscard]] int getMask() const noexcept { return mask_; }
+        [[nodiscard]] int getNumChannels() const noexcept { return numChannels_; }
+        [[nodiscard]] int getWriteIndex() const noexcept { return writeIndex_; }
+        [[nodiscard]] int wrap(int index) const noexcept { return index & mask_; }
 
         // ---- block write ----
         void writeAt(int channel, int startIndex, const SampleType *src, int numSamples) noexcept
