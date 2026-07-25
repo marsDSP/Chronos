@@ -150,9 +150,13 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
     parameters.update();
 
     const int numSamples = buffer.getNumSamples();
+    if (numSamples <= 0) return;
 
     const double fs = parameters.getSampleRate();
     const double fsSafe = (fs > 0.0) ? fs : 48000.0;
+
+    hpf.setCoeffForBlock(SVF::SVFType::HighPass, fsSafe, parameters.getHPFFreq(), svfQ, 0.0, numSamples);
+    lpf.setCoeffForBlock(SVF::SVFType::LowPass,  fsSafe, parameters.getLPFFreq(), svfQ, 0.0, numSamples);
 
     for (auto s {0uz}; s < numSamples; ++s)
     {
@@ -163,9 +167,6 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
         const float theta = mixNorm * (std::numbers::pi_v<float> * 0.5f);
         const float dryGain = std::cos(theta);
         const float wetGain = std::sin(theta);
-
-        hpf.setCoeff(SVF::SVFType::HighPass, fsSafe, parameters.getHPFFreq(), svfQ, 0.0);
-        lpf.setCoeff(SVF::SVFType::LowPass,  fsSafe, parameters.getLPFFreq(), svfQ, 0.0);
 
         float* data0 = buffer.getWritePointer(0);
         const float dry0 = data0[s];
@@ -184,9 +185,9 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
         }
 
         const M128 wetV = MM(set_ps)(0.0f, 0.0f, wet1, wet0);   // lane0=L, lane1=R
-        const M128 hpV  = SVF::step(hpf, wetV);
-        const M128 lpV  = SVF::step(lpf, hpV);
-        alignas(16) float out[4]; // change to std::vector? this is the hot path...
+        const M128 hpV  = hpf.processBlockStep(wetV);
+        const M128 lpV  = lpf.processBlockStep(hpV);
+        alignas(16) float out[4];
         MM(storeu_ps)(out, lpV);
 
         data0[s] = dry0 * dryGain + out[0] * wetGain;

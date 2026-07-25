@@ -231,6 +231,13 @@ namespace MarsDSP::Filters
         {
             ic1eq = MM(setzero_ps)();
             ic2eq = MM(setzero_ps)();
+            firstBlock = true;
+            da1 = MM(setzero_ps)();
+            da2 = MM(setzero_ps)();
+            da3 = MM(setzero_ps)();
+            dm0 = MM(setzero_ps)();
+            dm1 = MM(setzero_ps)();
+            dm2 = MM(setzero_ps)();
         }
 
         void setCoeff(const SVFType type, const double sampleRate, double freqHz, double Q, const double gainDB) noexcept
@@ -250,25 +257,72 @@ namespace MarsDSP::Filters
 
         static M128 step(SimdSVF &svf, M128 input) noexcept
         {
-            // v3 = v0 - ic2eq
             const M128 v3 = MM(sub_ps)(input, svf.ic2eq);
-            // v1 = a1 * ic1eq + a2 * v3
             const M128 v1 = MM(add_ps)(MM(mul_ps)(svf.a1, svf.ic1eq), MM(mul_ps)(svf.a2, v3));
-            // v2 = ic2eq + a2 * ic1eq + a3 * v3
             const M128 v2 = MM(add_ps)(svf.ic2eq, MM(add_ps)(MM(mul_ps)(svf.a2, svf.ic1eq), MM(mul_ps)(svf.a3, v3)));
-            // ic1eq = 2 * v1 - ic1eq
             svf.ic1eq = MM(sub_ps)(MM(mul_ps)(svf.two, v1), svf.ic1eq);
-            // ic2eq = 2 * v2 - ic2eq
             svf.ic2eq = MM(sub_ps)(MM(mul_ps)(svf.two, v2), svf.ic2eq);
-            // (m0 * input) + ((m1 * v1) + (m2 * v2))
             return MM(add_ps)(MM(mul_ps)(svf.m0, input), MM(add_ps)(MM(mul_ps)(svf.m1, v1), MM(mul_ps)(svf.m2, v2)));
         }
 
-        // pack L/R into lanes 0,1, step, unpack
         static void step(SimdSVF &svf, float &L, float &R) noexcept
         {
             const M128 input = MM(set_ps)(0, 0, R, L);
             const M128 out = step(svf, input);
+            alignas(16) float lanes[4];
+            MM(store_ps)(lanes, out);
+            L = lanes[0];
+            R = lanes[1];
+        }
+
+        void setCoeffForBlock(const SVFType type, const double sampleRate, double freqHz,
+                              double Q, const double gainDB, const int numSamples) noexcept
+        {
+            const M128 a1_prior = a1;
+            const M128 a2_prior = a2;
+            const M128 a3_prior = a3;
+            const M128 m0_prior = m0;
+            const M128 m1_prior = m1;
+            const M128 m2_prior = m2;
+
+            setCoeff(type, sampleRate, freqHz, Q, gainDB);
+
+            if (firstBlock)
+            {
+                da1 = MM(setzero_ps)();  da2 = MM(setzero_ps)();  da3 = MM(setzero_ps)();
+                dm0 = MM(setzero_ps)();  dm1 = MM(setzero_ps)();  dm2 = MM(setzero_ps)();
+                firstBlock = false;
+                return;
+            }
+
+            const M128 obs = MM(set1_ps)(1.0f / static_cast<float>(numSamples));
+            da1 = MM(mul_ps)(MM(sub_ps)(a1, a1_prior), obs);
+            da2 = MM(mul_ps)(MM(sub_ps)(a2, a2_prior), obs);
+            da3 = MM(mul_ps)(MM(sub_ps)(a3, a3_prior), obs);
+            dm0 = MM(mul_ps)(MM(sub_ps)(m0, m0_prior), obs);
+            dm1 = MM(mul_ps)(MM(sub_ps)(m1, m1_prior), obs);
+            dm2 = MM(mul_ps)(MM(sub_ps)(m2, m2_prior), obs);
+
+            a1 = a1_prior;  a2 = a2_prior;  a3 = a3_prior;
+            m0 = m0_prior;  m1 = m1_prior;  m2 = m2_prior;
+        }
+
+        M128 processBlockStep(const M128 input) noexcept
+        {
+            const M128 out = step(*this, input);
+            a1 = MM(add_ps)(a1, da1);
+            a2 = MM(add_ps)(a2, da2);
+            a3 = MM(add_ps)(a3, da3);
+            m0 = MM(add_ps)(m0, dm0);
+            m1 = MM(add_ps)(m1, dm1);
+            m2 = MM(add_ps)(m2, dm2);
+            return out;
+        }
+
+        void processBlockStep(float &L, float &R) noexcept
+        {
+            const M128 input = MM(set_ps)(0, 0, R, L);
+            const M128 out = processBlockStep(input);
             alignas(16) float lanes[4];
             MM(store_ps)(lanes, out);
             L = lanes[0];
@@ -364,6 +418,14 @@ namespace MarsDSP::Filters
         M128 negOne{MM(set1_ps)(-1.0f)};
         M128 two{MM(set1_ps)(2.0f)};
         M128 negTwo{MM(set1_ps)(-2.0f)};
+
+        bool firstBlock{true};
+        M128 da1{MM(setzero_ps)()};
+        M128 da2{MM(setzero_ps)()};
+        M128 da3{MM(setzero_ps)()};
+        M128 dm0{MM(setzero_ps)()};
+        M128 dm1{MM(setzero_ps)()};
+        M128 dm2{MM(setzero_ps)()};
     };
 }
 #endif
