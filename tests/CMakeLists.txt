@@ -29,4 +29,17 @@ if(BUILD_TEST_HARNESSES)
         # baseline (Haswell/FMA3) note that applies to the x86_64 slice.
         target_compile_options(tan_bench PRIVATE "-Xarch_x86_64" "-mfma")
     endif()
+
+    # Pow2RingBuffer correctness harness: exhaustive window/mirror/contiguity
+    # checks against a naive modulo oracle (see harnesses/cd/ring_buffer_check.cpp).
+    # Plain main() + exit code + printf, matching tan_bench. Links SharedCode only.
+    # No forced -O2: this is a correctness test, and leaving the build unoptimized
+    # keeps the header's assert preconditions armed in a Debug configure.
+    add_executable(ring_buffer_check harnesses/cd/ring_buffer_check.cpp)
+    target_link_libraries(ring_buffer_check PRIVATE SharedCode)
+    # Optional sanitizer pass: uncomment to run the two-memcpy
+    # split and the mirror region under ASan+UBSan, which catches an off-by-one
+    # past the allocation far more directly than a value comparison does.
+    # target_compile_options(ring_buffer_check PRIVATE -fsanitize=address,undefined)
+    # target_link_options(ring_buffer_check PRIVATE -fsanitize=address,undefined)
 endif()
