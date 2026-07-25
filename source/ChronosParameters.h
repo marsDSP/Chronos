@@ -110,6 +110,7 @@ public:
     [[nodiscard]] float getGain() const noexcept { return gain; }
     [[nodiscard]] int getBits() const noexcept { return bits; }
     [[nodiscard]] float getDelaySamples() const noexcept { return delaySamples; }
+    [[nodiscard]] float getDelayMs() const noexcept { return delayParam != nullptr ? delayParam->get() : 500.0f; }
     [[nodiscard]] float getHPFFreq() const noexcept { return hpfFreq; }
     [[nodiscard]] float getLPFFreq() const noexcept { return lpfFreq; }
     [[nodiscard]] float getMix() const noexcept { return mix; }

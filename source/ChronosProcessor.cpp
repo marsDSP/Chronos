@@ -49,7 +49,17 @@ bool ChronosProcessor::isMidiEffect() const
 
 double ChronosProcessor::getTailLengthSeconds() const
 {
-    return 0.0;
+    const double sr = getSampleRate();
+    if (sr <= 0.0) return 0.0;
+
+    const double delaySeconds = static_cast<double>(parameters.getDelayMs()) * 0.001;
+
+    // Margin for the wet-path SVF ring-down. The slowest case is the HPF at
+    // its minimum cutoff (20 Hz, Butterworth Q ≈ 0.7071): ~5300 samples to
+    // reach -60 dB at 48 kHz, ~21000 at 192 kHz. 32768 samples covers that
+    // with headroom at any supported rate.
+    constexpr int kMargin = 32768;
+    return delaySeconds + static_cast<double>(kMargin) / sr;
 }
 
 int ChronosProcessor::getNumPrograms()
