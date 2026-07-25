@@ -124,6 +124,19 @@ namespace MarsDSP::Buffers {
             return nullptr;
         }
 
+        // ---- block convenience ----
+        int pushBlock(const SampleType *const *channelData, int numChannels, int numSamples) noexcept
+        {
+            assert(numChannels == numChannels_);
+            assert(numSamples > 0 && numSamples <= capacity_);
+            const int startIndex = writeIndex_;
+            for (int ch = 0; ch < numChannels_; ++ch)
+                writeAt(ch, startIndex, channelData[ch], numSamples);
+            refreshMirror();
+            advance(numSamples);
+            return startIndex;
+        }
+
         // ---- copy / move ----
         Pow2RingBuffer() noexcept = default;
         Pow2RingBuffer(const Pow2RingBuffer &) = delete;
