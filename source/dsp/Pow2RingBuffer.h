@@ -45,7 +45,7 @@ namespace MarsDSP::Delays
         [[nodiscard]] int getCapacity() const noexcept { return capacity_; }
         [[nodiscard]] int mask() const noexcept { return mask_; }
 
-        void writeBlock(const float *src, int startIdx, int n) noexcept
+        void writeBlock(const float *src, int startIdx, int n) const noexcept
         {
             assert(startIdx >= 0 && startIdx < capacity_);
             assert(n > 0 && n <= capacity_);
@@ -56,12 +56,11 @@ namespace MarsDSP::Delays
             if (remainder > 0) std::memcpy(storage_.get(), src + first, static_cast<size_t>(remainder) * sizeof(float));
         }
 
-        void refreshMirror(int startIdx, int n) noexcept
+        void refreshMirror(int startIdx, int n) const noexcept
         {
             const bool wrapped = startIdx + n > capacity_;
             const bool touchedHead = startIdx < kTail;
-            if (wrapped || touchedHead)
-                std::memcpy(storage_.get() + capacity_, storage_.get(), static_cast<size_t>(kTail) * sizeof(float));
+            if (wrapped || touchedHead) std::memcpy(storage_.get() + capacity_, storage_.get(), static_cast<size_t>(kTail) * sizeof(float));
         }
 
         void readWindow(float *dst, int startIdx, int len) const noexcept
@@ -72,9 +71,7 @@ namespace MarsDSP::Delays
             const int first = std::min(len, capacity_ + kTail - startIdx);
             std::memcpy(dst, storage_.get() + startIdx, static_cast<size_t>(first) * sizeof(float));
             const int remainder = len - first;
-            if (remainder > 0)
-                std::memcpy(dst + first, storage_.get() + kTail,
-                            static_cast<size_t>(remainder) * sizeof(float));
+            if (remainder > 0) std::memcpy(dst + first, storage_.get() + kTail, static_cast<size_t>(remainder) * sizeof(float));
         }
 
         // ---- copy / move ----
@@ -89,7 +86,7 @@ namespace MarsDSP::Delays
         {
             void operator()(float *p) const noexcept
             {
-                if (p) ::operator delete[](p, std::align_val_t{16});
+                if (p) operator delete[](p, std::align_val_t{16});
             }
         };
 
