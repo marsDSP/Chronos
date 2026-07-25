@@ -97,8 +97,8 @@ void ChronosProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     delayLine.setMaximumDelayInSamples(maxDelayInSamples);
     delayLine.reset();
 
-    for (auto& f : hpf) f.reset();
-    for (auto& f : lpf) f.reset();
+    hpf.reset();
+    lpf.reset();
 }
 
 void ChronosProcessor::releaseResources()
@@ -152,10 +152,9 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
 
     const int numSamples = buffer.getNumSamples();
 
-    constexpr double pi = std::numbers::pi_v<double>;
+    // Sample rate is block-constant
     const double fs = parameters.getSampleRate();
     const double fsSafe = (fs > 0.0) ? fs : 48000.0;
-    const double nyq = 0.49 * fsSafe;
 
     for (auto s {0uz}; s < numSamples; ++s)
     {
@@ -167,30 +166,39 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
         const float dryGain = std::cos(theta);
         const float wetGain = std::sin(theta);
 
-        const double hpfF = std::clamp(static_cast<double>(parameters.getHPFFreq()), 10.0, nyq);
-        const double lpfF = std::clamp(static_cast<double>(parameters.getLPFFreq()), 10.0, nyq);
-        alignas(16) const float angles[4] = {
-            static_cast<float>(pi * hpfF / fsSafe),  // ch0 HPF
-            static_cast<float>(pi * lpfF / fsSafe),  // ch0 LPF
-            static_cast<float>(pi * hpfF / fsSafe),  // ch1 HPF
-            static_cast<float>(pi * lpfF / fsSafe),  // ch1 LPF
-        };
-        alignas(16) float gt[4];
-        MM(storeu_ps)(gt, mmTan(MM(loadu_ps)(angles)));
+        // One setCoeff per filter per sample. HPF/LPF cutoffs are shared across
+        // the stereo pair, so the broadcast overload (scalar clamp + scalar
+        // mmTanScalar, broadcast across 4 lanes) is the right fit - lanes 0,1
+        // carry the stereo signal, lanes 2,3 are unused
+        hpf.setCoeff(SVF::SVFType::HighPass, fsSafe, parameters.getHPFFreq(), svfQ, 0.0);
+        lpf.setCoeff(SVF::SVFType::LowPass,  fsSafe, parameters.getLPFFreq(), svfQ, 0.0);
 
-        for (auto ch {0uz}; ch < totalNumInputChannels; ++ch)
+        // Collect the wet delay taps for both channels, then run HPF->LPF as one
+        // SIMD pass each (stereo packed into lanes 0,1 of a single SimdSVF)
+        float* data0 = buffer.getWritePointer(0);
+        const float dry0 = data0[s];
+        delayLine.pushSample(0, dry0);
+        const float wet0 = delayLine.popSample(0);
+
+        float dry1 = 0.0f;
+        float wet1 = 0.0f;
+        float* data1 = nullptr;
+        if (totalNumInputChannels > 1)
         {
-            auto *data = buffer.getWritePointer(static_cast<int>(ch));
-            const float dry = data[s];
-            delayLine.pushSample(static_cast<int>(ch), dry);
-            float wet = delayLine.popSample(static_cast<int>(ch));
-            const std::size_t base = 2 * ch;
-            hpf[ch].setParamsFromG(SVF::SVFType::HighPass, svfQ, 0.0, gt[base + 0]);
-            wet = hpf[ch].processSample(wet);
-            lpf[ch].setParamsFromG(SVF::SVFType::LowPass,  svfQ, 0.0, gt[base + 1]);
-            wet = lpf[ch].processSample(wet);
-            data[s] = dry * dryGain + wet * wetGain;
+            data1 = buffer.getWritePointer(1);
+            dry1 = data1[s];
+            delayLine.pushSample(1, dry1);
+            wet1 = delayLine.popSample(1);
         }
+
+        const M128 wetV = MM(set_ps)(0.0f, 0.0f, wet1, wet0);   // lane0=L, lane1=R
+        const M128 hpV  = hpf.processSample(wetV);
+        const M128 lpV  = lpf.processSample(hpV);
+        alignas(16) float out[4];
+        MM(storeu_ps)(out, lpV);
+
+        data0[s] = dry0 * dryGain + out[0] * wetGain;
+        if (totalNumInputChannels > 1) data1[s] = dry1 * dryGain + out[1] * wetGain;
 
         const float gainLin = parameters.getGain();
         const float lsb = std::ldexp(1.0f, 1 - parameters.getBits());

@@ -62,10 +62,12 @@ private:
 
     dsp::DelayLine<float> delayLine;
 
-    // wet-path tone shaping: HPF then LPF on the delay taps only (dry is summed unfiltered)
-    using SVF = MarsDSP::Filters::TwoPoleSVF;
-    std::array<SVF, 2> hpf;
-    std::array<SVF, 2> lpf;
+    // wet-path tone shaping: HPF then LPF on the delay taps only (dry is summed unfiltered).
+    // One SimdSVF per filter type. The stereo pair is packed into lanes 0,1.
+    // a single processSample(M128) advances both channels at once.
+    using SVF = MarsDSP::Filters::SimdSVF;
+    SVF hpf;
+    SVF lpf;
     static constexpr double svfQ { 0.7071 }; // Butterworth, maximally flat passband
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChronosProcessor)
