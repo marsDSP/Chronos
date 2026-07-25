@@ -60,7 +60,7 @@ namespace MarsDSP::Filters {
             constexpr double pi = std::numbers::pi_v<double>;
             if (gNorm <= 0.0) return 1.0;
             const double fs = (sampleRate > 0.0) ? sampleRate : 48000.0;
-            const double omega = mmTan(pi * (freqHz / fs)) / gNorm;
+            const double omega = mmTanScalar(pi * (freqHz / fs)) / gNorm;
             const double denom = std::sqrt(1.0 + (omega * omega));
             return (type == Type::LowPass) ? (1.0 / denom) : (omega / denom);
         }
@@ -188,7 +188,7 @@ namespace MarsDSP::Filters {
             constexpr double pi = std::numbers::pi_v<double>;
             if (g <= 0.0) return 1.0;
             const double fs = (sampleRate > 0.0) ? sampleRate : 48000.0;
-            const double omega = mmTan (pi * freqHz / fs) / g;
+            const double omega = mmTanScalar(pi * freqHz / fs) / g;
             const double w2 = omega * omega;
             const double numRe = -m0 * w2 + (m0 + m2);
             const double numIm = (m0 * k + m1) * omega;
