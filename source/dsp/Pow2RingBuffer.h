@@ -10,131 +10,71 @@
 #include <new>
 #include <algorithm>
 
-namespace MarsDSP::Buffers {
-    template<typename SampleType, int MirrorSamples = 32>
-    class Pow2RingBuffer {
+namespace MarsDSP::Delays
+{
+    class Pow2RingBuffer
+    {
     public:
-        static_assert(MirrorSamples > 0, "MirrorSamples must be positive");
-        static_assert(MirrorSamples % 8 == 0, "MirrorSamples must be a multiple of 8");
+        static constexpr int kTail = 8;
 
-        void prepare(int numChannels, int minimumCapacitySamples)
+        void prepare(int minimumCapacity) noexcept
         {
-            assert(numChannels > 0);
-            assert(minimumCapacitySamples > 0);
-
-            // round up to pow2 and pin the storage invariants
-            const auto rounded = std::bit_ceil(static_cast<unsigned int>(minimumCapacitySamples));
+            assert(minimumCapacity > 0);
+            const auto rounded = std::bit_ceil(static_cast<unsigned int>(minimumCapacity));
             const auto newCapacity = static_cast<int>(rounded);
             assert(std::has_single_bit(static_cast<unsigned int>(newCapacity)));
-            assert(newCapacity >= kMirrorSamples);
+            assert(newCapacity >= kTail);
 
-            const int newStride = roundUpToMultipleOf8(newCapacity + kMirrorSamples);
-            const auto needElements = static_cast<size_t>(numChannels) * static_cast<size_t>(newStride);
-
-            // idempotent alloc
-            if (!storage_ || needElements > allocatedElements_)
+            if (const int need = newCapacity + kTail; !storage_ || need > allocated_)
             {
-                const auto bytes = needElements * sizeof(SampleType);
-                const auto raw = operator new[](bytes, std::align_val_t{32});
-                storage_.reset(static_cast<SampleType *>(raw));
-                allocatedElements_ = needElements;
+                const auto bytes = static_cast<size_t>(need) * sizeof(float);
+                const auto raw = operator new[](bytes, std::align_val_t{16});
+                storage_.reset(static_cast<float *>(raw));
+                allocated_ = need;
             }
-
-            numChannels_ = numChannels;
             capacity_ = newCapacity;
             mask_ = newCapacity - 1;
-            stride_ = newStride;
-            writeIndex_ = 0;
-            zeroStorage();
+            clear();
         }
 
         void clear() noexcept
         {
-            writeIndex_ = 0;
-            zeroStorage();
+            if (storage_) std::memset(storage_.get(), 0, static_cast<size_t>(capacity_ + kTail) * sizeof(float));
         }
 
-        // ---- geometry ----
         [[nodiscard]] int getCapacity() const noexcept { return capacity_; }
-        [[nodiscard]] int getMask() const noexcept { return mask_; }
-        [[nodiscard]] int getNumChannels() const noexcept { return numChannels_; }
-        [[nodiscard]] int getWriteIndex() const noexcept { return writeIndex_; }
-        [[nodiscard]] int wrap(int index) const noexcept { return index & mask_; }
+        [[nodiscard]] int mask() const noexcept { return mask_; }
 
-        // ---- block write ----
-        void writeAt(int channel, int startIndex, const SampleType *src, int numSamples) noexcept
+        void writeBlock(const float *src, int startIdx, int n) noexcept
         {
-            assert(channel >= 0 && channel < numChannels_);
-            assert(startIndex >= 0 && startIndex < capacity_);
-            assert(numSamples > 0 && numSamples <= capacity_);
+            assert(startIdx >= 0 && startIdx < capacity_);
+            assert(n > 0 && n <= capacity_);
 
-            SampleType *base = channelBase(channel);
-            const int first = std::min(numSamples, capacity_ - startIndex);
-            std::memcpy(base + startIndex, src, static_cast<size_t>(first) * sizeof(SampleType));
-            const int remainder = numSamples - first;
+            const int first = std::min(n, capacity_ - startIdx);
+            std::memcpy(storage_.get() + startIdx, src, static_cast<size_t>(first) * sizeof(float));
+            const int remainder = n - first;
+            if (remainder > 0) std::memcpy(storage_.get(), src + first, static_cast<size_t>(remainder) * sizeof(float));
+        }
+
+        void refreshMirror(int startIdx, int n) noexcept
+        {
+            const bool wrapped = startIdx + n > capacity_;
+            const bool touchedHead = startIdx < kTail;
+            if (wrapped || touchedHead)
+                std::memcpy(storage_.get() + capacity_, storage_.get(), static_cast<size_t>(kTail) * sizeof(float));
+        }
+
+        void readWindow(float *dst, int startIdx, int len) const noexcept
+        {
+            assert(startIdx >= 0 && startIdx < capacity_);
+            assert(len > 0 && len <= capacity_);
+
+            const int first = std::min(len, capacity_ + kTail - startIdx);
+            std::memcpy(dst, storage_.get() + startIdx, static_cast<size_t>(first) * sizeof(float));
+            const int remainder = len - first;
             if (remainder > 0)
-                std::memcpy(base, src + first, static_cast<size_t>(remainder) * sizeof(SampleType));
-        }
-
-        void refreshMirror() noexcept
-        {
-            if (!storage_) return;
-            for (int ch = 0; ch < numChannels_; ++ch)
-            {
-                SampleType *base = channelBase(ch);
-                std::memcpy(base + capacity_, base, static_cast<size_t>(kMirrorSamples) * sizeof(SampleType));
-            }
-        }
-
-        void advance(int numSamples) noexcept
-        {
-            assert(numSamples >= 0);
-            writeIndex_ = wrap(writeIndex_ + numSamples);
-        }
-
-        // ---- window read ----
-        void readWindow(int channel, int startIndex, SampleType *dst, int length) const noexcept
-        {
-            assert(channel >= 0 && channel < numChannels_);
-            assert(startIndex >= 0 && startIndex < capacity_);
-            assert(length > 0 && length <= capacity_);
-
-            const SampleType *src = tryGetContiguous(channel, startIndex, length);
-            if (src)
-            {
-                std::memcpy(dst, src, static_cast<size_t>(length) * sizeof(SampleType));
-                return;
-            }
-
-            const SampleType *base = channelBase(channel);
-            const int first = std::min(length, capacity_ + kMirrorSamples - startIndex);
-            std::memcpy(dst, base + startIndex, static_cast<size_t>(first) * sizeof(SampleType));
-            const int remainder = length - first;
-            if (remainder > 0)
-                std::memcpy(dst + first, base + kMirrorSamples, static_cast<size_t>(remainder) * sizeof(SampleType));
-        }
-
-        const SampleType *tryGetContiguous(int channel, int startIndex, int length) const noexcept
-        {
-            assert(channel >= 0 && channel < numChannels_);
-            assert(startIndex >= 0 && startIndex < capacity_);
-            assert(length > 0);
-            if (startIndex + length <= capacity_ + kMirrorSamples)
-                return channelBase(channel) + startIndex;
-            return nullptr;
-        }
-
-        // ---- block convenience ----
-        int pushBlock(const SampleType *const *channelData, int numChannels, int numSamples) noexcept
-        {
-            assert(numChannels == numChannels_);
-            assert(numSamples > 0 && numSamples <= capacity_);
-            const int startIndex = writeIndex_;
-            for (int ch = 0; ch < numChannels_; ++ch)
-                writeAt(ch, startIndex, channelData[ch], numSamples);
-            refreshMirror();
-            advance(numSamples);
-            return startIndex;
+                std::memcpy(dst + first, storage_.get() + kTail,
+                            static_cast<size_t>(remainder) * sizeof(float));
         }
 
         // ---- copy / move ----
@@ -145,43 +85,20 @@ namespace MarsDSP::Buffers {
         Pow2RingBuffer &operator=(Pow2RingBuffer &&) noexcept = default;
 
     private:
-        struct AlignedDeleter
+        struct Deleter
         {
-            void operator()(SampleType *p) const noexcept
+            void operator()(float *p) const noexcept
             {
-                if (p) operator delete[](static_cast<void *>(p), std::align_val_t{32});
+                if (p) ::operator delete[](p, std::align_val_t{16});
             }
         };
-        using AlignedPtr = std::unique_ptr<SampleType[], AlignedDeleter>;
 
-        static constexpr int kMirrorSamples = MirrorSamples;
+        using Ptr = std::unique_ptr<float[], Deleter>;
 
-        static constexpr int roundUpToMultipleOf8(int n) noexcept { return n + 7 & ~7; }
-
-        SampleType *channelBase(int channel) noexcept
-        {
-            return storage_.get() + static_cast<size_t>(channel) * static_cast<size_t>(stride_);
-        }
-        const SampleType *channelBase(int channel) const noexcept
-        {
-            return storage_.get() + static_cast<size_t>(channel) * static_cast<size_t>(stride_);
-        }
-
-        void zeroStorage() noexcept
-        {
-            if (!storage_) return;
-            const auto bytes = static_cast<size_t>(numChannels_) * static_cast<size_t>(stride_) * sizeof(SampleType);
-            std::memset(storage_.get(), 0, bytes);
-        }
-
-        // ---- storage + state ----
-        AlignedPtr storage_;
-        size_t allocatedElements_ = 0;
-        int numChannels_ = 0;
+        Ptr storage_;
+        int allocated_ = 0;
         int capacity_ = 0;
         int mask_ = 0;
-        int stride_ = 0;
-        int writeIndex_ = 0;
     };
 }
 #endif

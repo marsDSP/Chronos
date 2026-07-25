@@ -56,7 +56,7 @@ namespace MarsDSP::Smoothers {
         void processN(int n) noexcept
         {
             if (n <= 0) return;
-            const T decay = (n == cachedN_) ? cachedDecay_ : std::pow(T(1) - alpha, static_cast<T>(n));
+            const T decay = n == cachedN_ ? cachedDecay_ : std::pow(T(1) - alpha, static_cast<T>(n));
             current = target + (current - target) * decay;
         }
 
