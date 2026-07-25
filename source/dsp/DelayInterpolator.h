@@ -3,6 +3,7 @@
 #ifndef CHRONOS_DELAY_INTERPOLATOR_H
 #define CHRONOS_DELAY_INTERPOLATOR_H
 
+#include <array>
 #include <cassert>
 #include <cmath>
 
@@ -16,7 +17,7 @@ namespace MarsDSP::Delays {
 
     struct Coeffs6
     {
-        float c[6] = {};
+        std::array<float, 6> c{};
     };
 
     inline Coeffs6 makeCoeffs(Interpolation mode, float f) noexcept
@@ -45,23 +46,23 @@ namespace MarsDSP::Delays {
         {
             case Interpolation::Linear:
             {
-                constexpr int S[] = {2, 3};
+                constexpr std::array<int, 2> S{2, 3};
                 for (int j : S)
-                    out.c[j] = basis(S, 2, j, e);
+                    out.c[j] = basis(S.data(), 2, j, e);
                 break;
             }
             case Interpolation::Lagrange3rd:
             {
-                constexpr int S[] = {1, 2, 3, 4};
+                constexpr std::array<int, 4> S{1, 2, 3, 4};
                 for (int j : S)
-                    out.c[j] = basis(S, 4, j, e);
+                    out.c[j] = basis(S.data(), 4, j, e);
                 break;
             }
             case Interpolation::Lagrange5th:
             {
-                constexpr int S[] = {0, 1, 2, 3, 4, 5};
+                constexpr std::array<int, 6> S{0, 1, 2, 3, 4, 5};
                 for (int j : S)
-                    out.c[j] = basis(S, 6, j, e);
+                    out.c[j] = basis(S.data(), 6, j, e);
                 break;
             }
         }

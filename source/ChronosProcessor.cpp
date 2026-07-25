@@ -192,8 +192,8 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
         const M128 wetV = MM(set_ps)(0.0f, 0.0f, wet1, wet0);
         const M128 hpV  = hpf.processBlockStep(wetV);
         const M128 lpV  = lpf.processBlockStep(hpV);
-        alignas(16) float out[4];
-        MM(storeu_ps)(out, lpV);
+        alignas(16) std::array<float, 4> out;
+        MM(storeu_ps)(out.data(), lpV);
 
         data0[s] = dry0 * dryGain + out[0] * wetGain;
         if (data1 != nullptr) data1[s] = dry1 * dryGain + out[1] * wetGain;

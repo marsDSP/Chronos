@@ -9,6 +9,7 @@
 #include "simd/Config.h"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cassert>
 #include <cmath>
@@ -140,27 +141,27 @@ namespace MarsDSP::Delays
                 const int bNew = (blockStart + sampleOffset - iNew - 3) & mask;
 
                 const int winLen = subN + kTail;
-                bufL_.readWindow(scratchOldL_, bOld, winLen);
-                bufL_.readWindow(scratchNewL_, bNew, winLen);
+                bufL_.readWindow(scratchOldL_.data(), bOld, winLen);
+                bufL_.readWindow(scratchNewL_.data(), bNew, winLen);
 
                 if (hasR)
                 {
-                    bufR_.readWindow(scratchOldR_, bOld, winLen);
-                    bufR_.readWindow(scratchNewR_, bNew, winLen);
+                    bufR_.readWindow(scratchOldR_.data(), bOld, winLen);
+                    bufR_.readWindow(scratchNewR_.data(), bNew, winLen);
                 }
 
                 const float invSubN = 1.0f / static_cast<float>(subN);
 
                 if constexpr (UseSimd)
                 {
-                    const M128 cbOld[6] = {
+                    const std::array<M128, 6> cbOld{{
                         MM(set1_ps)(cOld.c[0]), MM(set1_ps)(cOld.c[1]), MM(set1_ps)(cOld.c[2]),
                         MM(set1_ps)(cOld.c[3]), MM(set1_ps)(cOld.c[4]), MM(set1_ps)(cOld.c[5])
-                    };
-                    const M128 cbNew[6] = {
+                    }};
+                    const std::array<M128, 6> cbNew{{
                         MM(set1_ps)(cNew.c[0]), MM(set1_ps)(cNew.c[1]), MM(set1_ps)(cNew.c[2]),
                         MM(set1_ps)(cNew.c[3]), MM(set1_ps)(cNew.c[4]), MM(set1_ps)(cNew.c[5])
-                    };
+                    }};
                     const M128 laneOff = MM(mul_ps)(MM(set_ps)(3.0f, 2.0f, 1.0f, 0.0f), MM(set1_ps)(invSubN));
 
                     // Evaluate 4 consecutive output samples starting at j0 into dst.
@@ -192,8 +193,8 @@ namespace MarsDSP::Delays
                     const int jFull = subN & ~3; // largest multiple of 4 ≤ subN
                     for (int j0 = 0; j0 + 4 <= subN; j0 += 4)
                     {
-                        eval4(scratchOldL_, scratchNewL_, wetL + sampleOffset + j0, j0);
-                        if (hasR) eval4(scratchOldR_, scratchNewR_, wetR + sampleOffset + j0, j0);
+                        eval4(scratchOldL_.data(), scratchNewL_.data(), wetL + sampleOffset + j0, j0);
+                        if (hasR) eval4(scratchOldR_.data(), scratchNewR_.data(), wetR + sampleOffset + j0, j0);
                     }
                     // ---- scalar tail for the 0..3 remaining samples ----
                     for (int j = jFull; j < subN; ++j)
@@ -245,10 +246,10 @@ namespace MarsDSP::Delays
         Smoothers::OnePoleSmoother<float> posSmoother_;
         bool firstBlock_ = true;
 
-        alignas(16) float scratchOldL_[kScratchLen] = {};
-        alignas(16) float scratchNewL_[kScratchLen] = {};
-        alignas(16) float scratchOldR_[kScratchLen] = {};
-        alignas(16) float scratchNewR_[kScratchLen] = {};
+        alignas(16) std::array<float, kScratchLen> scratchOldL_{};
+        alignas(16) std::array<float, kScratchLen> scratchNewL_{};
+        alignas(16) std::array<float, kScratchLen> scratchOldR_{};
+        alignas(16) std::array<float, kScratchLen> scratchNewR_{};
     };
 }
 #endif
