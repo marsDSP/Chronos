@@ -70,4 +70,25 @@ if(BUILD_TEST_HARNESSES)
     if(APPLE)
         target_compile_options(simd_delay_parity PRIVATE "-Xarch_x86_64" "-mfma")
     endif()
+
+    # SimdDelayLine throughput benchmark vs juce::dsp::DelayLine (the old
+    # per-sample baseline) + SIMD-vs-scalar + per-mode cost
+    # (see harnesses/perf/delay_line_bench.cpp). First harness to link a JUCE
+    # module: juce::juce_dsp pulls in juce::dsp::DelayLine; SharedCode
+    # propagates the JUCE module config defines (JUCE_GLOBAL_MODULE_SETTINGS_INCLUDED
+    # etc.) via INTERFACE, so <juce_dsp/juce_dsp.h> can be included directly.
+    # Forced -O2 and -Xarch_x86_64 -mfma (matching tan_bench) so the SIMD kernel
+    # inlines and FMADD lowers to a fused multiply-add, matching the plugin's
+    # x86_64 slice. Gate: SIMD ns/sample <= 1.05x scalar (regression check);
+    # the juce::dsp::DelayLine ratio is informational (machine-dependent).
+    add_executable(delay_line_bench harnesses/perf/delay_line_bench.cpp)
+    target_link_libraries(delay_line_bench PRIVATE SharedCode juce::juce_dsp)
+    if(MSVC)
+        target_compile_options(delay_line_bench PRIVATE /O2)
+    else()
+        target_compile_options(delay_line_bench PRIVATE -O2)
+    endif()
+    if(APPLE)
+        target_compile_options(delay_line_bench PRIVATE "-Xarch_x86_64" "-mfma")
+    endif()
 endif()
