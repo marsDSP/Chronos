@@ -75,7 +75,16 @@ namespace MarsDSP::Buffers {
             if (remainder > 0)
                 std::memcpy(base, src + first, static_cast<size_t>(remainder) * sizeof(SampleType));
         }
-        void refreshMirror() noexcept;
+
+        void refreshMirror() noexcept
+        {
+            if (!storage_) return;
+            for (int ch = 0; ch < numChannels_; ++ch)
+            {
+                SampleType *base = channelBase(ch);
+                std::memcpy(base + capacity_, base, static_cast<size_t>(kMirrorSamples) * sizeof(SampleType));
+            }
+        }
 
         void advance(int numSamples) noexcept
         {
