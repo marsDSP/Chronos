@@ -8,6 +8,7 @@
 
 #include "dsp/StateVariable.h"
 #include "dsp/SimdDelayLine.h"
+#include "dsp/align/SaturatorAlign.h"
 #include "dsp/nonlinear/ADAA1.h"
 #include "dsp/nonlinear/ADAA2.h"
 #include "dsp/nonlinear/Nonlinearities.h"
@@ -78,10 +79,8 @@ private:
     MarsDSP::Nonlinear::ADAA2<MarsDSP::Nonlinear::TanhNL> adaa2L_;
     MarsDSP::Nonlinear::ADAA2<MarsDSP::Nonlinear::TanhNL> adaa2R_;
 
-    float dryZ1L_{};
-    float dryZ1R_{};
-    float wetZ1L_{};
-    float wetZ1R_{};
+    MarsDSP::Align::SaturatorAlign alignL_;
+    MarsDSP::Align::SaturatorAlign alignR_;
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChronosProcessor)
 };

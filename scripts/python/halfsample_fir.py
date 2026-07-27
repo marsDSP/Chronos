@@ -5,7 +5,10 @@ import sys
 
 import numpy as np
 
-N = 16
+N = int(sys.argv[1]) if len(sys.argv) > 1 else 16
+if N < 4 or N % 2 != 0:
+    print(f"N must be even and >= 4, got {N}", file=sys.stderr)
+    sys.exit(2)
 
 PASSBAND_EDGE = 0.42
 
@@ -119,7 +122,10 @@ def main() -> int:
         print(f"    {float(np.float32(v)):.9g},")
     print("]")
 
-    # Regression check against the header values.
+    if N != 16:
+        print(f"\nN = {N}: design sweep (regression check is N=16 only).")
+        return 0
+
     if not HEADER_COEFFS:
         print("\nHEADER_COEFFS is empty -- copy the Python block above into this")
         print("script (and the C++ block above into the header), then re-run to verify.")
