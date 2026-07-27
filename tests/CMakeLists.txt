@@ -57,6 +57,19 @@ if(BUILD_TEST_HARNESSES)
     add_executable(halfsample_fir_check harnesses/cd/halfsample_fir_check.cpp)
     target_link_libraries(halfsample_fir_check PRIVATE SharedCode)
 
+    # ShortDelay correctness harness: the fixed-capacity integer delay used
+    # by SaturatorAlign to pad the wet path to kBudget in Off/ADAA2 modes
+    # (see harnesses/cd/short_delay_check.cpp). For every d in [0, MaxDelay]:
+    # impulse (exactly 1.0f at sample d, 0 elsewhere in [0, 4*MaxDelay]),
+    # ramp (y[n]==x[n-d] bit-exact over 1000 samples, many ring wraps), and
+    # reset reproducibility. Tested at MaxDelay=8 (the real kBudget) and
+    # MaxDelay=1 (the d in {0,1} edge). Same conventions as ring_buffer_check
+    # / halfsample_fir_check: plain main() + exit code + printf, links
+    # SharedCode only, no forced -O2 so the header's assert preconditions
+    # stay armed in a Debug configure.
+    add_executable(short_delay_check harnesses/cd/short_delay_check.cpp)
+    target_link_libraries(short_delay_check PRIVATE SharedCode)
+
     # ADAA throughput microbenchmark + branch histogram: ADAA1<TanhNL>,
     # ADAA2<TanhNL>, ADAA2<AlgebraicNL>, and plain std::tanh as the no-
     # antialiasing floor, plus the ADAA2 branch histogram on a 48 kHz sine
