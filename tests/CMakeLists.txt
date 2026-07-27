@@ -43,6 +43,27 @@ if(BUILD_TEST_HARNESSES)
     # target_compile_options(ring_buffer_check PRIVATE -fsanitize=address,undefined)
     # target_link_options(ring_buffer_check PRIVATE -fsanitize=address,undefined)
 
+    # ADAA throughput microbenchmark + branch histogram: ADAA1<TanhNL>,
+    # ADAA2<TanhNL>, ADAA2<AlgebraicNL>, and plain std::tanh as the no-
+    # antialiasing floor, plus the ADAA2 branch histogram on a 48 kHz sine
+    # sweep at several drive levels (see harnesses/perf/adaa_bench.cpp). A
+    # benchmark is meaningless at -O0/Debug: `inline` is not honored there, so
+    # the ADAA2 template logic and the 50-term dilogarithm series become real
+    # out-of-line calls, while std::tanh stays a single libm call. Force
+    # optimization on this target regardless of CMAKE_BUILD_TYPE so the kernel
+    # inlines. Links SharedCode only; no JUCE. Informational only — no pass/
+    # fail gate, cost per sample is not the constraint at this stage.
+    add_executable(adaa_bench harnesses/perf/adaa_bench.cpp)
+    target_link_libraries(adaa_bench PRIVATE SharedCode)
+    if(MSVC)
+        target_compile_options(adaa_bench PRIVATE /O2)
+    else()
+        target_compile_options(adaa_bench PRIVATE -O2)
+    endif()
+    if(APPLE)
+        target_compile_options(adaa_bench PRIVATE "-Xarch_x86_64" "-mfma")
+    endif()
+
     # SimdDelayLine correctness harness: integer impulse, polynomial
     # reproduction (centroid / flaw-B guard), stereo independence, multi-block
     # delay, delay-move settling, ring-wrap endurance, zero-in/zero-out, mono
