@@ -57,7 +57,7 @@ namespace MarsDSP::Nonlinear {
 
     private:
         static constexpr double kEpsInner = 1e-4;
-        static constexpr double kEpsOuter = 1e-4;
+        static constexpr double kEpsOuter = 1e-6;
 
         double x1_{};
         double x2_{};

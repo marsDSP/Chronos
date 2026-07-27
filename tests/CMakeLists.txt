@@ -70,6 +70,20 @@ if(BUILD_TEST_HARNESSES)
     add_executable(nonlinearity_check harnesses/cd/nonlinearity_check.cpp)
     target_link_libraries(nonlinearity_check PRIVATE SharedCode)
 
+    # ADAA2 correctness harness: the four-branch second-order ADAA kernel
+    # (see harnesses/cd/adaa2_check.cpp). Static curve, the confluent
+    # outer-node branch (the Nyquist "a,b,a,b" case), branch-seam continuity,
+    # an error surface over x_k = A sin(w(n-k)) that gates the exit code,
+    # degenerate node patterns, reset determinism, and parity. The oracle is
+    # a Hermite-Genocchi quadrature rather than a long double replay of the
+    # same formula: long double is 64-bit on arm64, so the latter would be
+    # bit-identical to the code under test. Same conventions as
+    # ring_buffer_check / dilog_check / nonlinearity_check: plain main() +
+    # exit code + printf, links SharedCode only, no forced -O2 so assert
+    # preconditions stay armed.
+    add_executable(adaa2_check harnesses/cd/adaa2_check.cpp)
+    target_link_libraries(adaa2_check PRIVATE SharedCode)
+
     # SimdDelayLine SIMD-vs-scalar parity harness: process() (4-wide SIMD kernel)
     # vs processScalar() (scalar dot6), compared to a tolerance across block
     # sizes, fractional delays, stereo, mono, ring-wrap, and the delay-move
