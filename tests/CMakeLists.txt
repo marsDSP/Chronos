@@ -61,6 +61,15 @@ if(BUILD_TEST_HARNESSES)
     add_executable(dilog_check harnesses/cd/dilog_check.cpp)
     target_link_libraries(dilog_check PRIVATE SharedCode)
 
+    # Nonlinearity policy correctness harness: TanhNL / AlgebraicNL f/F1/F2
+    # (see harnesses/cd/nonlinearity_check.cpp). F1'=f and F2'=F1 by central
+    # difference, parity (F1 even, F2 odd, bit-exact), origin values, no
+    # overflow at +-700, and the tanh F1/G tail. Same conventions as
+    # ring_buffer_check / dilog_check: plain main() + exit code + printf,
+    # links SharedCode only, no forced -O2 so assert preconditions stay armed.
+    add_executable(nonlinearity_check harnesses/cd/nonlinearity_check.cpp)
+    target_link_libraries(nonlinearity_check PRIVATE SharedCode)
+
     # SimdDelayLine SIMD-vs-scalar parity harness: process() (4-wide SIMD kernel)
     # vs processScalar() (scalar dot6), compared to a tolerance across block
     # sizes, fractional delays, stereo, mono, ring-wrap, and the delay-move
