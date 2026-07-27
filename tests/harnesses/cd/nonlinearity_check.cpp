@@ -12,15 +12,14 @@
 //                  1e5 points. F1 is even, F2 is odd for both curves.
 //   4. Origin    – F2(0) == 0.0 exactly; F1(0) == the policy's defining value
 //                  exactly (0.0 for TanhNL, 1.0 for AlgebraicNL — whose
-//                  F1 = sqrt(1+x^2), so F1(0) = 1, NOT 0. The spec's check #4
-//                  "F1(0)==0 for each policy" is inconsistent with its own
-//                  AlgebraicNL definition; the per-policy value is used here).
+//                  F1 = sqrt(1+x^2), so F1(0) = 1, NOT 0. "F1(0)==0 for each
+//                  policy" would be inconsistent with AlgebraicNL's definition,
+//                  so the per-policy value is used here).
 //   5. Overflow  – F1(+-700), F2(+-700) all finite. Catches a naive log(cosh).
 //   6. Tail      – TanhNL only: |F1(8) - (8 - ln2)| = log1p(e^-16) ≈ 1.13e-7,
-//                  checked < 2e-7 (a correct bound; the spec's 6e-8 is the
-//                  *G*-tail bound from the Background, |G(8)-pi^2/24|<6e-8,
-//                  verified separately here). The F1 tail is log1p(exp(-2|x|)),
-//                  ~1.9x larger than the G tail at |x|=8.
+//                  checked < 2e-7 (6e-8 is the *G*-tail bound,
+//                  |G(8)-pi^2/24|<6e-8, verified separately here — the F1 tail
+//                  is log1p(exp(-2|x|)), ~1.9x larger than the G tail at |x|=8).
 //
 // Conventions (matching ring_buffer_check / dilog_check): plain main(), exit
 // code, printf, always-live CHECK/FAIL (NOT assert). Links SharedCode only;
@@ -133,13 +132,13 @@ void checkTanhTail()
     std::printf("  F1 tail @ |x|=8: |F1(8)-(8-ln2)| = %.4e  (log1p(e^-16) = %.4e, |diff| = %.2e)\n",
                 tailF1, tailExact, eFormula);
     CHECK(eFormula <= 1e-15);        // F1 is exactly the overflow-safe identity
-    CHECK(tailF1 < 2e-7);            // asymptote; spec's 6e-8 is the G bound, see below
+    CHECK(tailF1 < 2e-7);            // asymptote; 6e-8 is the G bound, see below
 
-    // The Background's 6e-8 bound is on G, not F1: |G(8) - pi^2/24| < 6e-8,
+    // The 6e-8 bound is on G, not F1: |G(8) - pi^2/24| < 6e-8,
     // G(a) = 1/2 Li2(-e^-2a) + pi^2/24.
     const double g8 = 0.5 * MarsDSP::Math::dilogNeg(std::exp(-16.0)) + kPiSqOver24;
     const double gTail = std::fabs(g8 - kPiSqOver24);
-    std::printf("  G tail @ |x|=8: |G(8)-pi^2/24| = %.4e (spec bound 6e-8)\n", gTail);
+    std::printf("  G tail @ |x|=8: |G(8)-pi^2/24| = %.4e (bound 6e-8)\n", gTail);
     CHECK(gTail < 6e-8);
     std::printf("  tail checks: PASS\n");
 }

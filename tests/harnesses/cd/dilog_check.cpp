@@ -13,8 +13,8 @@
 //   5. Independent   – dilogNeg vs a Simpson-quadrature oracle of
 //                      -integral_0^t ln(1+u)/u du (a genuinely different method
 //                      from the series). Substitutes for the inversion FE
-//                      Li2(-t)+Li2(-1/t) = -pi^2/6 - 1/2 ln^2 t, which the spec
-//                      names but which is out of domain for the given t (none
+//                      Li2(-t)+Li2(-1/t) = -pi^2/6 - 1/2 ln^2 t, which is
+//                      out of domain for the test points used here (none
 //                      of {0.2,0.5,0.9} has both -t and -1/t in [0,1]); long
 //                      double is 64-bit on arm64 so a higher-precision series
 //                      would not help here. The domain of dilogNeg is not
