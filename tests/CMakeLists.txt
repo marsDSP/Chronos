@@ -70,6 +70,23 @@ if(BUILD_TEST_HARNESSES)
     add_executable(short_delay_check harnesses/cd/short_delay_check.cpp)
     target_link_libraries(short_delay_check PRIVATE SharedCode)
 
+    # SaturatorAlign correctness harness: the constant-latency dry/wet
+    # alignment layer for the ADAA saturator stage
+    # (see harnesses/cd/align_check.cpp). The harness that verifies the
+    # property the whole layer exists for: dry is an exact integer delay
+    # (I1), wet total group delay equals kBudget in every mode (the ADAA
+    # stage kernel is prepended analytically -- box [0.5,0.5] for ADAA1,
+    # triangle [0.25,0.5,0.25] for ADAA2), modes 0/2 are bit-exact pure
+    # delays, mode 1 is linear phase (I3), dry/wet null (mode 0 bit-
+    # identical), cross-mode phase coherence at 1/5/10/15 kHz (the test
+    # that would have caught a first-order-allpass design), reset, and
+    # mode switching (no NaN). Same conventions as ring_buffer_check /
+    # halfsample_fir_check / short_delay_check: plain main() + exit code
+    # + printf, links SharedCode only, no forced -O2 so the header's
+    # assert preconditions stay armed in a Debug configure.
+    add_executable(align_check harnesses/cd/align_check.cpp)
+    target_link_libraries(align_check PRIVATE SharedCode)
+
     # ADAA throughput microbenchmark + branch histogram: ADAA1<TanhNL>,
     # ADAA2<TanhNL>, ADAA2<AlgebraicNL>, and plain std::tanh as the no-
     # antialiasing floor, plus the ADAA2 branch histogram on a 48 kHz sine

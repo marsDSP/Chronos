@@ -10,23 +10,19 @@
 #include <new>
 #include <algorithm>
 
-namespace MarsDSP::Delays
-{
-    class Pow2RingBuffer
-    {
+namespace MarsDSP::Delays {
+    class Pow2RingBuffer {
     public:
         static constexpr int kTail = 8;
 
-        void prepare(int minimumCapacity) noexcept
-        {
+        void prepare(int minimumCapacity) noexcept {
             assert(minimumCapacity > 0);
             const auto rounded = std::bit_ceil(static_cast<unsigned int>(minimumCapacity));
             const auto newCapacity = static_cast<int>(rounded);
             assert(std::has_single_bit(static_cast<unsigned int>(newCapacity)));
             assert(newCapacity >= kTail);
 
-            if (const int need = newCapacity + kTail; !storage_ || need > allocated_)
-            {
+            if (const int need = newCapacity + kTail; !storage_ || need > allocated_) {
                 const auto bytes = static_cast<size_t>(need) * sizeof(float);
                 const auto raw = operator new[](bytes, std::align_val_t{16});
                 storage_.reset(static_cast<float *>(raw));
@@ -45,8 +41,7 @@ namespace MarsDSP::Delays
         [[nodiscard]] int getCapacity() const noexcept { return capacity_; }
         [[nodiscard]] int mask() const noexcept { return mask_; }
 
-        void writeBlock(const float *src, int startIdx, int n) const noexcept
-        {
+        void writeBlock(const float *src, int startIdx, int n) const noexcept {
             assert(startIdx >= 0 && startIdx < capacity_);
             assert(n > 0 && n <= capacity_);
 
@@ -56,15 +51,13 @@ namespace MarsDSP::Delays
             if (remainder > 0) std::memcpy(storage_.get(), src + first, static_cast<size_t>(remainder) * sizeof(float));
         }
 
-        void refreshMirror(int startIdx, int n) const noexcept
-        {
+        void refreshMirror(int startIdx, int n) const noexcept {
             const bool wrapped = startIdx + n > capacity_;
             const bool touchedHead = startIdx < kTail;
             if (wrapped || touchedHead) std::memcpy(storage_.get() + capacity_, storage_.get(), static_cast<size_t>(kTail) * sizeof(float));
         }
 
-        void readWindow(float *dst, int startIdx, int len) const noexcept
-        {
+        void readWindow(float *dst, int startIdx, int len) const noexcept {
             assert(startIdx >= 0 && startIdx < capacity_);
             assert(len > 0 && len <= capacity_);
 
@@ -82,10 +75,8 @@ namespace MarsDSP::Delays
         Pow2RingBuffer &operator=(Pow2RingBuffer &&) noexcept = default;
 
     private:
-        struct Deleter
-        {
-            void operator()(float *p) const noexcept
-            {
+        struct Deleter {
+            void operator()(float *p) const noexcept {
                 if (p) operator delete[](p, std::align_val_t{16});
             }
         };
@@ -99,3 +90,4 @@ namespace MarsDSP::Delays
     };
 }
 #endif
+
