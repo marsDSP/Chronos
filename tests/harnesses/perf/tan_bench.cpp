@@ -32,7 +32,7 @@
 #include <numbers>
 #include <vector>
 
-#include "dsp/SVF.h"            // mmTanScalar (anon namespace; identical to SVF's path)
+#include "dsp/StateVariable.h"            // mmTanScalar (anon namespace; identical to SVF's path)
 #include "math/Trigonometry.h"  // mmTan(M128), mmTan(float)
 
 namespace {

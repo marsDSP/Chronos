@@ -6,7 +6,7 @@
 #include <random>
 #include <vector>
 
-#include "dsp/SVF.h"
+#include "dsp/StateVariable.h"
 #include "dsp/SimdDelayLine.h"
 #include "ChronosParameters.h"
 //==============================================================================
