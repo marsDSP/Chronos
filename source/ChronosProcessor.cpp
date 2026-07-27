@@ -51,15 +51,9 @@ double ChronosProcessor::getTailLengthSeconds() const
 {
     const double sr = getSampleRate();
     if (sr <= 0.0) return 0.0;
-
     const double delaySeconds = static_cast<double>(parameters.getDelayMs()) * 0.001;
-
-    // Margin for the wet-path SVF ring-down. The slowest case is the HPF at
-    // its minimum cutoff (20 Hz, Butterworth Q ≈ 0.7071): ~5300 samples to
-    // reach -60 dB at 48 kHz, ~21000 at 192 kHz. 32768 samples covers that
-    // with headroom at any supported rate.
     constexpr int kMargin = 32768;
-    return delaySeconds + static_cast<double>(kMargin) / sr;
+    return delaySeconds + static_cast<double>(kMargin) / sr + 1.0 / sr;
 }
 
 int ChronosProcessor::getNumPrograms()
@@ -105,6 +99,11 @@ void ChronosProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     lpf.reset();
     adaa1L_.reset(); adaa1R_.reset();
     adaa2L_.reset(); adaa2R_.reset();
+
+    dryZ1L_ = 0.0f; dryZ1R_ = 0.0f;
+    wetZ1L_ = 0.0f; wetZ1R_ = 0.0f;
+
+    setLatencySamples(1);
 }
 
 void ChronosProcessor::releaseResources()
@@ -195,14 +194,30 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
         const float wetGain = mmSin(theta);
 
         const float dry0 = data0[s];
-        const float wet0 = wetBufL_[s];
+        const float dry0d = dryZ1L_;   // dry delayed 1 sample to align with the wet path
+        dryZ1L_ = dry0;
+
+        float wet0 = wetBufL_[s];
 
         float dry1 = 0.0f;
+        float dry1d = 0.0f;
         float wet1 = 0.0f;
         if (data1 != nullptr)
         {
             dry1 = data1[s];
+            dry1d = dryZ1R_;
+            dryZ1R_ = dry1;
             wet1 = wetBufR_[s];
+        }
+
+        // In "Off" mode the wet path has no saturator latency, so delay it by
+        // 1 sample to match the dry delay. ADAA2 already delays the wet by 1;
+        // ADAA1 delays it by 0.5 (residual misalignment, documented in the
+        // header) and is left alone.
+        if (adaaOrder == 0)
+        {
+            const float w0 = wetZ1L_; wetZ1L_ = wet0; wet0 = w0;
+            if (data1 != nullptr) { const float w1 = wetZ1R_; wetZ1R_ = wet1; wet1 = w1; }
         }
 
         float sat0;
@@ -229,8 +244,8 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
         alignas(16) std::array<float, 4> out;
         MM(storeu_ps)(out.data(), lpV);
 
-        data0[s] = dry0 * dryGain + out[0] * wetGain;
-        if (data1 != nullptr) data1[s] = dry1 * dryGain + out[1] * wetGain;
+        data0[s] = dry0d * dryGain + out[0] * wetGain;
+        if (data1 != nullptr) data1[s] = dry1d * dryGain + out[1] * wetGain;
 
         const float gainLin = parameters.getGain();
         const float lsb = std::ldexp(1.0f, 1 - parameters.getBits());
@@ -239,7 +254,6 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
         {
             auto *data = buffer.getWritePointer(static_cast<int>(ch));
             auto &state = ch == 0uz ? xorshiftL : xorshiftR;
-
             const float scaled = data[s] * gainLin;
             const float dither = (nextUniform(state) - nextUniform(state)) * lsb;
             data[s] = std::round((scaled + dither) / lsb) * lsb;

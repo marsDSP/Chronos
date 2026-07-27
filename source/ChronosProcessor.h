@@ -62,29 +62,26 @@ private:
     uint32_t xorshiftL;
     uint32_t xorshiftR;
 
-    // xorshift32 -> uniform float in [0, 1), using the high 24 bits
     static float nextUniform(uint32_t& state) noexcept;
 
     MarsDSP::Delays::SimdDelayLine delayLine;
     std::vector<float> wetBufL_;
     std::vector<float> wetBufR_;
 
-    // wet-path tone shaping: HPF then LPF on the delay taps only (dry is summed unfiltered).
-    // One SimdSVF per filter type. The stereo pair is packed into lanes 0,1.
-    // a single processSample(M128) advances both channels at once.
     using SVF = MarsDSP::Filters::SimdSVF;
     SVF hpf;
     SVF lpf;
-    static constexpr double svfQ { 0.7071 }; // Butterworth, maximally flat passband
+    static constexpr double svfQ { 0.7071 };
 
-    // Wet-path tanh saturator. ADAA1 (first-order) and ADAA2 (second-order)
-    // antiderivative antialiasing, two instances per order for stereo. Scalar
-    // double internally; no M128 overload (the double requirement halves lane
-    // width and the branch hierarchy diverges per lane). ADAA2 is the
-    // production path; ADAA1 exists for the alias_check A/B comparison and is
-    // not a release-quality path (half-sample latency, see AGENTS.md).
-    MarsDSP::Nonlinear::ADAA1<MarsDSP::Nonlinear::TanhNL> adaa1L_, adaa1R_;
-    MarsDSP::Nonlinear::ADAA2<MarsDSP::Nonlinear::TanhNL> adaa2L_, adaa2R_;
+    MarsDSP::Nonlinear::ADAA1<MarsDSP::Nonlinear::TanhNL> adaa1L_;
+    MarsDSP::Nonlinear::ADAA1<MarsDSP::Nonlinear::TanhNL> adaa1R_;
+    MarsDSP::Nonlinear::ADAA2<MarsDSP::Nonlinear::TanhNL> adaa2L_;
+    MarsDSP::Nonlinear::ADAA2<MarsDSP::Nonlinear::TanhNL> adaa2R_;
+
+    float dryZ1L_{};
+    float dryZ1R_{};
+    float wetZ1L_{};
+    float wetZ1R_{};
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChronosProcessor)
 };
