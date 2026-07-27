@@ -27,7 +27,7 @@
 // preconditions stay armed in a Debug configure.
 // ──────────────────────────────────────────────────────────────────────────
 
-#include "dsp/nonlinear/Dilogarithm.h"
+#include "../../../source/math/Dilogarithm.h"
 
 #include <cmath>
 #include <cstdio>
