@@ -43,6 +43,20 @@ if(BUILD_TEST_HARNESSES)
     # target_compile_options(ring_buffer_check PRIVATE -fsanitize=address,undefined)
     # target_link_options(ring_buffer_check PRIVATE -fsanitize=address,undefined)
 
+    # HalfSampleFir correctness harness: the symmetric half-sample-delay FIR
+    # that compensates ADAA1's 0.5-sample box-kernel wet-path latency
+    # (see harnesses/cd/halfsample_fir_check.cpp). Coefficient symmetry
+    # (bit-exact), DC gain, impulse-response centroid, flat group delay
+    # (< 1e-9 ripple), passband magnitude (gate > -0.1 dB at 15 kHz), Nyquist
+    # null, a dormant Lagrange cross-check at kHalfSampleTaps == 6, and reset
+    # reproducibility. Coefficients re-derived by scripts/python/halfsample_fir.py
+    # (Kaiser-windowed sinc), which doubles as a regression check. Same
+    # conventions as ring_buffer_check: plain main() + exit code + printf,
+    # links SharedCode only, no forced -O2 so the header's static_assert / any
+    # assert preconditions stay armed in a Debug configure.
+    add_executable(halfsample_fir_check harnesses/cd/halfsample_fir_check.cpp)
+    target_link_libraries(halfsample_fir_check PRIVATE SharedCode)
+
     # ADAA throughput microbenchmark + branch histogram: ADAA1<TanhNL>,
     # ADAA2<TanhNL>, ADAA2<AlgebraicNL>, and plain std::tanh as the no-
     # antialiasing floor, plus the ADAA2 branch histogram on a 48 kHz sine
