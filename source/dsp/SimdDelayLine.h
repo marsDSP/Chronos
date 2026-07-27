@@ -33,7 +33,7 @@ namespace MarsDSP::Delays
             assert(maxDelayMs > 0.0f);
 
             const auto fs = sampleRate > 0.0 ? sampleRate : 48000.0;
-            const int maxDelaySamples = static_cast<int>(std::ceil(static_cast<double>(maxDelayMs) * fs / 1000.0));
+            const auto maxDelaySamples = static_cast<int>(std::ceil(static_cast<double>(maxDelayMs) * fs / 1000.0));
             const int blk = std::max(maxBlockSize, 1);
 
             const int raw = maxDelaySamples + blk + kTail + kGuard;
