@@ -71,6 +71,7 @@ inline M128 mmSin(const M128 x) noexcept
     const auto den = mulAdd(x2, denInner, vD0); // D0 + x²·(…)
     return MM(div_ps)(num, den);
 }
+
 // ═══════════════════════════════════════════════════════════
 // cos(x) ≈ P(x²) / Q(x²) [6/6] even rational minimax on [-π, π]
 // ───────────────────────────────────────────────────────────
@@ -134,6 +135,7 @@ inline M128 mmCos(const M128 x) noexcept
 
     return MM(div_ps)(num, den);
 }
+
 // ═══════════════════════════════════════════════════════════
 // tan(x) ≈ x·P(x²) / Q(x²) [7/6] odd rational minimax on [-1.55, 1.55]
 // ───────────────────────────────────────────────────────────
@@ -197,10 +199,10 @@ inline M128 mmTan(const M128 x) noexcept
 
     return MM(div_ps)(num, den);
 }
+
 //==============================================================================//
 namespace PadeTanCoeffs
 {
-    // (7,6) pade approximant of tan(x)
     constexpr float N0 = -135135.0f;
     constexpr float N1 = 17325.0f;
     constexpr float N2 = -378.0f;
@@ -255,6 +257,200 @@ inline M128 fasterTan(const M128 x) noexcept
     const auto den = MM(add_ps)(vD0, MM(mul_ps)(x2, denInner));
 
     return MM(div_ps)(num, den);
+}
+
+//==============================================================================//
+// pade exp(x) ≈ N(x) / D(x)
+// [4/4] approximant coefficients for exp(x)
+//
+//             N0 + x·(N1 + x·(N2 + x·(N3 + x)))
+// exp(x) ≈  ─────────────────────────────────────
+//             D0 + x·(D1 + x·(D2 + x·(D3 + x)))
+//
+// N(x) = 1680 + x·(  840 + x·(180 + x·(  20 + x)))
+// D(x) = 1680 + x·( -840 + x·(180 + x·( -20 + x)))
+//
+// exp is neither even nor odd so unlike sin/cos/tan/tanh here we expand
+// in x directly rather than in x²
+//
+// near-double-precision around zero; degrades for |x| beyond ~5.
+// not safe as a general-purpose exp for arbitrary-range inputs!
+
+namespace PadeExpCoeffs
+{
+    constexpr float N0 = 1680.0f; // num x⁰
+    constexpr float N1 = 840.0f; // num x¹
+    constexpr float N2 = 180.0f; // num x²
+    constexpr float N3 = 20.0f; // num x³ (implicit x⁴ coefficient = 1)
+
+    constexpr float D0 = 1680.0f; // den x⁰
+    constexpr float D1 = -840.0f; // den x¹
+    constexpr float D2 = 180.0f; // den x²
+    constexpr float D3 = -20.0f; // den x³ (implicit x⁴ coefficient = 1)
+}
+
+inline float padeExpApprox(const float x) noexcept
+{
+    using namespace PadeExpCoeffs;
+
+    // horner evaluation inside-out in x
+    const auto num = N0 + x * (N1 + x * (N2 + x * (N3 + x)));
+    const auto den = D0 + x * (D1 + x * (D2 + x * (D3 + x)));
+
+    return num / den;
+}
+
+inline float fasterExp(const float x) noexcept
+{
+    return padeExpApprox(x);
+}
+
+inline M128 fasterExp(const M128 x) noexcept
+{
+    using namespace PadeExpCoeffs;
+
+    // broadcast each coeff across 4 lanes
+    const auto vN0 = MM(set1_ps)(N0);
+    const auto vN1 = MM(set1_ps)(N1);
+    const auto vN2 = MM(set1_ps)(N2);
+    const auto vN3 = MM(set1_ps)(N3);
+
+    const auto vD0 = MM(set1_ps)(D0);
+    const auto vD1 = MM(set1_ps)(D1);
+    const auto vD2 = MM(set1_ps)(D2);
+    const auto vD3 = MM(set1_ps)(D3);
+
+    // numerator: N0 + x·(N1 + x·(N2 + x·(N3 + x))) | innermost first
+    auto numInner = MM(add_ps)(vN3, x); // N3 + x
+    numInner = MM(add_ps)(vN2, MM(mul_ps)(x, numInner)); // N2 + x·(…)
+    numInner = MM(add_ps)(vN1, MM(mul_ps)(x, numInner)); // N1 + x·(…)
+    const auto num = MM(add_ps)(vN0, MM(mul_ps)(x, numInner)); // N0 + x·(…)
+
+    // denominator: D0 + x·(D1 + x·(D2 + x·(D3 + x)))
+    auto denInner = MM(add_ps)(vD3, x); // D3 + x
+    denInner = MM(add_ps)(vD2, MM(mul_ps)(x, denInner)); // D2 + x·(…)
+    denInner = MM(add_ps)(vD1, MM(mul_ps)(x, denInner)); // D1 + x·(…)
+    const auto den = MM(add_ps)(vD0, MM(mul_ps)(x, denInner)); // D0 + x·(…)
+
+    return MM(div_ps)(num, den);
+}
+//==============================================================================//
+// SIMD log Cephes-style, ~6 decimal digits for x > 0.
+// log(x) = n*ln2 + log(m) with x = 2^n * m, m in [sqrt(2)/2, sqrt(2)].
+// log(m) via a Horner polynomial in (m - 1).
+inline M128 fasterLog(const M128 xin) noexcept
+{
+    // keep inputs strictly positive to avoid NaN on zero/negatives.
+    const auto xMin = MM(set1_ps)(1.17549435e-38f);
+    const auto x = MM(max_ps)(xin, xMin);
+
+    // exponent e and fraction m of the float.
+    auto e = MM(srli_epi32)(MM(castps_si128)(x), 23);
+    e = MM(sub_epi32)(e, MM(set1_epi32)(127));
+    auto ef = MM(cvtepi32_ps)(e);
+
+    const auto mantMask = MM(castsi128_ps)(MM(set1_epi32)(0x007FFFFF));
+    const auto oneBits = MM(castsi128_ps)(MM(set1_epi32)(0x3F800000));
+
+    auto m = MM(or_ps)(MM(and_ps)(x, mantMask), oneBits);
+
+    // Mantissa extraction gives m in [1, 2). Fold the upper half down:
+    // if m > sqrt(2), halve it and bump the exponent. That lands m in
+    // (sqrt(2)/2, sqrt(2)] so (m - 1) ~ [-0.293, 0.414]. Without this fold,
+    // m-1 can be as large as ~1.0, which drives the polynomial far outside its
+    // sweet spot and produces audible noise in downstream consumers!
+    const auto SQRT2 = MM(set1_ps)(1.4142135623730951f);
+    const auto mask = MM(cmpgt_ps)(m, SQRT2);
+    const auto halfM = MM(mul_ps)(m, MM(set1_ps)(0.5f));
+
+    m = MM(or_ps)(MM(and_ps)(mask, halfM), MM(andnot_ps)(mask, m));
+    ef = MM(add_ps)(ef, MM(and_ps)(mask, MM(set1_ps)(1.0f)));
+    m = MM(sub_ps)(m, MM(set1_ps)(1.0f));
+
+    // minimax polynomial for log(1+m) * m^3 on m in ~[-0.293, 0.414].
+    const auto m2 = MM(mul_ps)(m, m);
+    auto poly = MM(set1_ps)(7.0376836292E-2f);
+
+    poly = MM(add_ps)(MM(mul_ps)(poly, m), MM(set1_ps)(-1.1514610310E-1f));
+    poly = MM(add_ps)(MM(mul_ps)(poly, m), MM(set1_ps)(1.1676998740E-1f));
+    poly = MM(add_ps)(MM(mul_ps)(poly, m), MM(set1_ps)(-1.2420140846E-1f));
+    poly = MM(add_ps)(MM(mul_ps)(poly, m), MM(set1_ps)(1.4249322787E-1f));
+    poly = MM(add_ps)(MM(mul_ps)(poly, m), MM(set1_ps)(-1.6668057665E-1f));
+    poly = MM(add_ps)(MM(mul_ps)(poly, m), MM(set1_ps)(2.0000714765E-1f));
+    poly = MM(add_ps)(MM(mul_ps)(poly, m), MM(set1_ps)(-2.4999993993E-1f));
+    poly = MM(add_ps)(MM(mul_ps)(poly, m), MM(set1_ps)(3.3333331174E-1f));
+    poly = MM(mul_ps)(MM(mul_ps)(poly, m), m2);
+
+    poly = MM(sub_ps)(poly, MM(mul_ps)(ef, MM(set1_ps)(2.12194440e-4f)));
+    poly = MM(sub_ps)(poly, MM(mul_ps)(m2, MM(set1_ps)(0.5f)));
+
+    auto result = MM(add_ps)(m, poly);
+    result = MM(add_ps)(result, MM(mul_ps)(ef, MM(set1_ps)(0.693359375f)));
+
+    return result;
+}
+
+inline float fasterLog(const float x) noexcept
+{
+    alignas(16) float out[4];
+    MM(store_ps)(out, fasterLog(MM(set1_ps)(x)));
+    return out[0];
+}
+
+//==============================================================================//
+inline float boundToPi(const float angle)
+{
+    // fast path: already in canonical range
+    if (angle <= M_PI && angle >= -M_PI)
+        return angle;
+
+    // shift from [-π, π] target into [0, 2π) working range
+    const float shifted = angle + M_PI;
+
+    constexpr float invTwoPi = 1.0f / (2.0f * M_PI);
+
+    // how many whole turns of 2π fit inside `shifted` (truncated toward zero)
+    const int wholeTurns = static_cast<int>(shifted * invTwoPi);
+
+    // remainder after removing those whole turns; lies in (-2π, 2π)
+    float wrapped = shifted - 2.0f * M_PI * wholeTurns;
+
+    // fold any negative remainder up into [0, 2π)
+    if (wrapped < 0.0f)
+        wrapped += 2.0f * M_PI;
+
+    // undo the initial π shift → result in [-π, π]
+    return wrapped - M_PI;
+}
+
+inline M128 boundToPiSIMD(const M128 angle)
+{
+    // [π, π, π, π]
+    const auto vPi = MM(set1_ps)(M_PI);
+
+    // [2π, 2π, 2π, 2π]
+    const auto vTwoPi = MM(set1_ps)(2.0f * M_PI);
+    const auto vInvTwoPi = MM(set1_ps)(1.0f / (2.0f * M_PI));
+    const auto vZero = MM(setzero_ps)();
+
+    // shift range so we can work in [0, 2π) per lane
+    const auto shifted = MM(add_ps)(angle, vPi);
+
+    // trunc(shifted / 2π) per lane, kept as float for the next multiply.
+    // float → int32 (truncating) → float round-trip mimics static_cast<int>.
+    const auto wholeTurns = MM(cvtepi32_ps)(MM(cvttps_epi32)(MM(mul_ps)(shifted, vInvTwoPi)));
+
+    // remainder after stripping out whole 2π turns; lies in (-2π, 2π)
+    auto wrapped = MM(sub_ps)(shifted, MM(mul_ps)(vTwoPi, wholeTurns));
+
+    // branchless "if (wrapped < 0) wrapped += 2π":
+    //   cmplt_ps  → mask: all-1 bits where lane is negative, all-0 elsewhere
+    //   and_ps    → picks 2π on negative lanes, 0.0 on non-negative lanes
+    const auto negFixup = MM(and_ps)(MM(cmplt_ps)(wrapped, vZero), vTwoPi);
+    wrapped = MM(add_ps)(wrapped, negFixup);
+
+    // undo the initial π shift → every lane now in [-π, π]
+    return MM(sub_ps)(wrapped, vPi);
 }
 //==============================================================================//
 #endif
