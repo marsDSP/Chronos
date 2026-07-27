@@ -5,19 +5,9 @@
 
 #include <cmath>
 
-namespace MarsDSP::Nonlinear
-{
-    // First-order antiderivative antialiasing (ADAA1).
-    //
-    // For a memoryless nonlinearity f with F1 = integral(f), the antialiased
-    // output at sample n is the first divided difference of F1 over the last
-    // two input samples x0 = x[n], x1 = x[n-1]:
-    //
-    //   y = (F1(x0) - F1(x1)) / (x0 - x1)
-    //
+namespace MarsDSP::Nonlinear {
     template <typename NL>
-    class ADAA1
-    {
+    class ADAA1 {
     public:
         void reset() noexcept
         {
