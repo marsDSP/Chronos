@@ -8,6 +8,9 @@
 
 #include "dsp/StateVariable.h"
 #include "dsp/SimdDelayLine.h"
+#include "dsp/nonlinear/ADAA1.h"
+#include "dsp/nonlinear/ADAA2.h"
+#include "dsp/nonlinear/Nonlinearities.h"
 #include "ChronosParameters.h"
 //==============================================================================
 class ChronosProcessor final : public AudioProcessor
@@ -73,6 +76,15 @@ private:
     SVF hpf;
     SVF lpf;
     static constexpr double svfQ { 0.7071 }; // Butterworth, maximally flat passband
+
+    // Wet-path tanh saturator. ADAA1 (first-order) and ADAA2 (second-order)
+    // antiderivative antialiasing, two instances per order for stereo. Scalar
+    // double internally; no M128 overload (the double requirement halves lane
+    // width and the branch hierarchy diverges per lane). ADAA2 is the
+    // production path; ADAA1 exists for the alias_check A/B comparison and is
+    // not a release-quality path (half-sample latency, see AGENTS.md).
+    MarsDSP::Nonlinear::ADAA1<MarsDSP::Nonlinear::TanhNL> adaa1L_, adaa1R_;
+    MarsDSP::Nonlinear::ADAA2<MarsDSP::Nonlinear::TanhNL> adaa2L_, adaa2R_;
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChronosProcessor)
 };

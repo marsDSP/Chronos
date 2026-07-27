@@ -14,6 +14,8 @@ const ParameterID hpfFreqParamID { "hpfFreq", 1 };
 const ParameterID lpfFreqParamID { "lpfFreq", 1 };
 const ParameterID mixParamID { "mix", 1 };
 const ParameterID interpolationParamID { "interpolation", 1 };
+const ParameterID driveParamID { "drive", 1 };
+const ParameterID adaaOrderParamID { "adaaOrder", 1 };
 
 template<typename T>
 static void castParameter(const AudioProcessorValueTreeState& apvts, const ParameterID& id, T& destination)
@@ -34,6 +36,8 @@ public:
         castParameter(apvts, lpfFreqParamID, lpfParam);
         castParameter(apvts, mixParamID, mixParam);
         castParameter(apvts, interpolationParamID, interpolationParam);
+        castParameter(apvts, driveParamID, driveParam);
+        castParameter(apvts, adaaOrderParamID, adaaOrderParam);
     }
 
     static AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
@@ -48,6 +52,9 @@ public:
         layout.add(std::make_unique<AudioParameterFloat>(mixParamID, "Mix", NormalisableRange{ 0.0f, 100.0f }, 100.0f));
         layout.add(std::make_unique<AudioParameterChoice>(interpolationParamID, "Interpolation",
             StringArray { "Linear", "Lagrange 3rd", "Lagrange 5th" }, 2));
+        layout.add(std::make_unique<AudioParameterFloat>(driveParamID, "Drive", NormalisableRange{ 0.0f, 40.0f }, 0.0f));
+        layout.add(std::make_unique<AudioParameterChoice>(adaaOrderParamID, "ADAA Order",
+            StringArray { "Off", "1st", "2nd" }, 2));
         return layout;
     }
 
@@ -60,6 +67,7 @@ public:
         hpfSmoother.reset(sr, dur);
         lpfSmoother.reset(sr, dur);
         mixSmoother.reset(sr, dur);
+        driveSmoother.reset(sr, dur);
     }
 
     void reset() noexcept
@@ -68,6 +76,7 @@ public:
         bits = 0.0f;
         delaySamples = 0.0f;
         mix = 0.0f;
+        drive = 0.0f;
         if (gainParam != nullptr)
             gainSmoother.setCurrentAndTargetValue(Decibels::decibelsToGain(gainParam->get()));
         if (bitsParam != nullptr)
@@ -80,6 +89,8 @@ public:
             lpfSmoother.setCurrentAndTargetValue(lpfParam->get());
         if (mixParam != nullptr)
             mixSmoother.setCurrentAndTargetValue(mixParam->get());
+        if (driveParam != nullptr)
+            driveSmoother.setCurrentAndTargetValue(Decibels::decibelsToGain(driveParam->get()));
     }
 
     void update() noexcept
@@ -96,6 +107,8 @@ public:
             lpfSmoother.setTargetValue(lpfParam->get());
         if (mixParam != nullptr)
             mixSmoother.setTargetValue(mixParam->get());
+        if (driveParam != nullptr)
+            driveSmoother.setTargetValue(Decibels::decibelsToGain(driveParam->get()));
     }
 
     void smoothen() noexcept
@@ -105,6 +118,7 @@ public:
         hpfFreq = hpfSmoother.getNextValue();
         lpfFreq = lpfSmoother.getNextValue();
         mix = mixSmoother.getNextValue();
+        drive = driveSmoother.getNextValue();
     }
 
     [[nodiscard]] float getGain() const noexcept { return gain; }
@@ -114,6 +128,7 @@ public:
     [[nodiscard]] float getHPFFreq() const noexcept { return hpfFreq; }
     [[nodiscard]] float getLPFFreq() const noexcept { return lpfFreq; }
     [[nodiscard]] float getMix() const noexcept { return mix; }
+    [[nodiscard]] float getDrive() const noexcept { return drive; }
     [[nodiscard]] double getSampleRate() const noexcept { return sampleRate; }
     [[nodiscard]] bool getBypass() const noexcept { return bypassParam != nullptr && bypassParam->get(); }
     [[nodiscard]] AudioProcessorParameter* getBypassParameter() const noexcept { return bypassParam; }
@@ -126,6 +141,11 @@ public:
             case 1:  return MarsDSP::Delays::Interpolation::Lagrange3rd;
             default: return MarsDSP::Delays::Interpolation::Lagrange5th;
         }
+    }
+    [[nodiscard]] int getADAAOrder() const noexcept
+    {
+        if (adaaOrderParam == nullptr) return 2;
+        return adaaOrderParam->getIndex();
     }
 
     static constexpr float minDelayTime = 5.0f;
@@ -143,6 +163,7 @@ private:
     float hpfFreq {};
     float lpfFreq {};
     float mix {};
+    float drive {};
 
     AudioParameterFloat* gainParam {};
     AudioParameterInt* bitsParam {};
@@ -152,12 +173,15 @@ private:
     AudioParameterFloat* mixParam {};
     AudioParameterChoice* interpolationParam {};
     AudioParameterBool* bypassParam {};
+    AudioParameterFloat* driveParam {};
+    AudioParameterChoice* adaaOrderParam {};
 
     LinearSmoothedValue<float> gainSmoother;
     LinearSmoothedValue<float> bitsSmoother;
     LinearSmoothedValue<float> hpfSmoother;
     LinearSmoothedValue<float> lpfSmoother;
     LinearSmoothedValue<float> mixSmoother;
+    LinearSmoothedValue<float> driveSmoother;
 
     double sampleRate {};
 };

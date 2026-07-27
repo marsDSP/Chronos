@@ -103,6 +103,8 @@ void ChronosProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 
     hpf.reset();
     lpf.reset();
+    adaa1L_.reset(); adaa1R_.reset();
+    adaa2L_.reset(); adaa2R_.reset();
 }
 
 void ChronosProcessor::releaseResources()
@@ -179,10 +181,13 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
     hpf.setCoeffForBlock(SVF::SVFType::HighPass, fsSafe, parameters.getHPFFreq(), svfQ, 0.0, numSamples);
     lpf.setCoeffForBlock(SVF::SVFType::LowPass,  fsSafe, parameters.getLPFFreq(), svfQ, 0.0, numSamples);
 
+    const int adaaOrder = parameters.getADAAOrder();
+
     for (auto s {0uz}; s < numSamples; ++s)
     {
         parameters.smoothen();
 
+        const float driveLin = parameters.getDrive();
         const float mixNorm = parameters.getMix() * 0.01f;
         const float theta = mixNorm * (std::numbers::pi_v<float> * 0.5f);
 
@@ -200,7 +205,25 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
             wet1 = wetBufR_[s];
         }
 
-        const M128 wetV = MM(set_ps)(0.0f, 0.0f, wet1, wet0);
+        float sat0;
+        float sat1 = 0.0f;
+        switch (adaaOrder)
+        {
+            case 0:
+                sat0 = wet0;
+                if (data1 != nullptr) sat1 = wet1;
+                break;
+            case 1:
+                sat0 = static_cast<float>(adaa1L_.process(driveLin * wet0));
+                if (data1 != nullptr) sat1 = static_cast<float>(adaa1R_.process(driveLin * wet1));
+                break;
+            default:
+                sat0 = static_cast<float>(adaa2L_.process(driveLin * wet0));
+                if (data1 != nullptr) sat1 = static_cast<float>(adaa2R_.process(driveLin * wet1));
+                break;
+        }
+
+        const M128 wetV = MM(set_ps)(0.0f, 0.0f, sat1, sat0);
         const M128 hpV  = hpf.processBlockStep(wetV);
         const M128 lpV  = lpf.processBlockStep(hpV);
         alignas(16) std::array<float, 4> out;
