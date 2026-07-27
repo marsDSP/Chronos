@@ -52,6 +52,15 @@ if(BUILD_TEST_HARNESSES)
     add_executable(simd_delay_check harnesses/cd/simd_delay_check.cpp)
     target_link_libraries(simd_delay_check PRIVATE SharedCode)
 
+    # Dilogarithm correctness harness: Li2(-t) via Landen-folded series used
+    # by TanhNL::F2 (see harnesses/cd/dilog_check.cpp). Zero, Li2(-1)=-pi^2/12,
+    # the Landen seam across t=0.5, known values, an independent Simpson-
+    # quadrature oracle, and strict monotonicity. Same conventions as
+    # ring_buffer_check: plain main() + exit code + printf, links SharedCode
+    # only, no forced -O2 so the header's assert preconditions stay armed.
+    add_executable(dilog_check harnesses/cd/dilog_check.cpp)
+    target_link_libraries(dilog_check PRIVATE SharedCode)
+
     # SimdDelayLine SIMD-vs-scalar parity harness: process() (4-wide SIMD kernel)
     # vs processScalar() (scalar dot6), compared to a tolerance across block
     # sizes, fractional delays, stereo, mono, ring-wrap, and the delay-move
