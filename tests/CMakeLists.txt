@@ -105,6 +105,26 @@ if(BUILD_TEST_HARNESSES)
     add_executable(adaa2_check harnesses/cd/adaa2_check.cpp)
     target_link_libraries(adaa2_check PRIVATE SharedCode)
 
+    # ADAA aliasing measurement (see harnesses/dsp/alias_check.cpp, a new
+    # harnesses/dsp/ subdirectory). Feeds a coherent sine, masks the legitimate
+    # harmonic bins with Goertzel, and takes the rest of the Parseval energy as
+    # alias energy; reports an f0 x drive matrix for no-ADAA / ADAA1 / ADAA2 /
+    # ADAA1@2x. Forced -O2: this one does real work (Goertzel over ~860
+    # harmonic bins per cell plus 513-tap Kaiser resampling), and at -O0 it
+    # takes minutes rather than seconds. Links SharedCode only; no JUCE and no
+    # FFT. Gate: ADAA2 beats no-ADAA by >= 20 dB at 110 Hz / 24 dB drive; the
+    # rest of the matrix is informational.
+    add_executable(alias_check harnesses/dsp/alias_check.cpp)
+    target_link_libraries(alias_check PRIVATE SharedCode)
+    if(MSVC)
+        target_compile_options(alias_check PRIVATE /O2)
+    else()
+        target_compile_options(alias_check PRIVATE -O2)
+    endif()
+    if(APPLE)
+        target_compile_options(alias_check PRIVATE "-Xarch_x86_64" "-mfma")
+    endif()
+
     # SimdDelayLine SIMD-vs-scalar parity harness: process() (4-wide SIMD kernel)
     # vs processScalar() (scalar dot6), compared to a tolerance across block
     # sizes, fractional delays, stereo, mono, ring-wrap, and the delay-move

@@ -18,19 +18,13 @@ namespace MarsDSP::Nonlinear {
         double process(double x0) noexcept
         {
             constexpr double kEps = 1e-4;
+            const double F1x0 = NL::F1(x0);
             const double dx = x0 - x1_;
-            double y;
-            if (std::fabs(dx) < kEps)
-            {
-                y = NL::f(0.5 * (x0 + x1_));
-            }
-            else
-            {
-                const double F1x0 = NL::F1(x0);
-                y = (F1x0 - F1x1_) / dx;
-                F1x1_ = F1x0;
-            }
+            const double y = (std::fabs(dx) < kEps)
+                                 ? NL::f(0.5 * (x0 + x1_))
+                                 : (F1x0 - F1x1_) / dx;
             x1_ = x0;
+            F1x1_ = F1x0;
             return y;
         }
 

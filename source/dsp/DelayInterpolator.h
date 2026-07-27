@@ -68,6 +68,5 @@ namespace MarsDSP::Delays {
         }
         return out;
     }
-
 }
 #endif
