@@ -1,0 +1,3 @@
+# region-I monomial basis condition for P(u), measured by remez_f2_region1.py
+# max_u sum_k |c_k| u^k / |P(u)| over u in [0, a0^2]
+1.22911268079   # at u = 1.0

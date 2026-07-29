@@ -89,6 +89,9 @@ if(BUILD_TEST_HARNESSES)
     add_executable(f2_oracle_check harnesses/cd/f2_oracle_check.cpp)
     target_link_libraries(f2_oracle_check PRIVATE SharedCode)
 
+    add_executable(f2_minimax_check harnesses/cd/f2_minimax_check.cpp)
+    target_link_libraries(f2_minimax_check PRIVATE SharedCode)
+
     add_executable(alias_check harnesses/dsp/alias_check.cpp)
     target_link_libraries(alias_check PRIVATE SharedCode)
     if(MSVC)
@@ -172,6 +175,7 @@ if(BUILD_TEST_HARNESSES)
     add_test(NAME nonlinearity_check     COMMAND nonlinearity_check)
     add_test(NAME adaa2_check            COMMAND adaa2_check)
     add_test(NAME f2_oracle_check        COMMAND f2_oracle_check)
+    add_test(NAME f2_minimax_check       COMMAND f2_minimax_check)
     add_test(NAME alias_check            COMMAND alias_check)
     add_test(NAME simd_delay_parity      COMMAND simd_delay_parity)
 

@@ -88,3 +88,13 @@ jobs:
 
       - name: Test (correctness harnesses)
         run: ctest --test-dir build -C Release --output-on-failure -LE bench
+
+      - name: Derivation scripts (coefficient drift checks)
+        run: |
+          python -m pip install numpy mpmath
+          cd scripts/python
+          python f2_regions.py
+          python remez_f2_region1.py
+          python remez_f1_region1.py
+          python remez_dilog_psi.py
+          python remez_log1p_small.py

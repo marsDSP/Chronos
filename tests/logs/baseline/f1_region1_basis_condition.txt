@@ -1,0 +1,3 @@
+# region-I monomial basis condition for S(u), measured by remez_f1_region1.py
+# max_u sum_k |c_k| u^k / |S(u)| over u in [0, a0^2]
+1.41920804845   # at u = 1.0

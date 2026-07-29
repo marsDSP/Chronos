@@ -5,24 +5,9 @@
 // changes, and it provides the oracle that later kernels are measured
 // against.
 //
-// Why double-double (DD) arithmetic: long double is 64-bit on arm64, so it
-// is bit-identical to the code under test. DD carries two doubles as an
-// unevaluated sum. It gives roughly 31 significant decimal digits.
-//
-// Two independent oracles are implemented and cross-checked:
-//   1. Closed form. The same formula the production code evaluates, but in
-//      DD with a 100-term dilogarithm series. Near x = 0 the closed form
-//      cancels badly, so there it switches to the Taylor series of F2. The
-//      series coefficients come from a recurrence on the tanh series, which
-//      follows from tanh' = 1 - tanh^2. The recurrence is stable and needs
-//      no transcribed constants.
-//   2. Quadrature. F2(x) = integral_0^x ln cosh(u) du by composite
-//      Gauss-Legendre-16 with panels of width <= 0.5. Nodes and weights
-//      come from a Newton solve on the Legendre recurrence, computed in DD.
-//      Double nodes and weights would cap the oracle at about 1e-16, which
-//      would void the 1e-25 agreement gate. The integrand ln cosh(u) uses
-//      log1p(2*sinh^2(u/2)) for u <= 0.5. That form has only positive
-//      terms, so it cannot cancel.
+// The oracle machinery lives in f2_dd_oracle.h (shared with
+// f2_minimax_check.cpp): a double-double (DD) closed form and a DD
+// Gauss-Legendre quadrature. See that header for the design notes.
 //
 // The two oracles must agree to < 1e-25 relative. Then the harness measures
 // the current TanhNL::F1 / TanhNL::F2 against the closed-form oracle and
@@ -50,16 +35,17 @@
 
 #include "dsp/nonlinear/Nonlinearities.h"
 
-#include <cassert>
+#include "f2_dd_oracle.h"
+
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <vector>
 
 namespace {
 
 using MarsDSP::Nonlinear::TanhNL;
+using namespace F2Oracle;
 
 const char* g_section = "(startup)";
 
@@ -69,354 +55,12 @@ const char* g_section = "(startup)";
 #define FAIL(fmt, ...) \
     do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
 
-constexpr double kU   = 2.220446049250313e-16;  // DBL_EPSILON
-constexpr double kLn2 = 0.6931471805599453;
-
-// ── Double-double arithmetic ─────────────────────────────────────────────
-// A DD value x represents hi + lo, with |lo| <= half a ulp of |hi|.
-// The algorithms are the standard Dekker/Knuth pair. Their error is about
-// 2^-105 times the largest operand magnitude. Every use below keeps the
-// result within a small condition number of the operands, so the relative
-// error stays near 2^-105.
-
-struct DD { double hi, lo; };
-
-DD dd_from(double v) noexcept { return { v, 0.0 }; }
-DD dd_one() noexcept { return { 1.0, 0.0 }; }
-DD dd_neg(DD a) noexcept { return { -a.hi, -a.lo }; }
-
-// s + e == a + b exactly (Knuth 2Sum, branch-free).
-void twoSum(double a, double b, double& s, double& e) noexcept
-{
-    s = a + b;
-    const double v = s - a;
-    e = (a - (s - v)) + (b - v);
-}
-
-// p + e == a * b exactly (Dekker two-product, fused multiply-add).
-void twoProd(double a, double b, double& p, double& e) noexcept
-{
-    p = a * b;
-    e = std::fma(a, b, -p);
-}
-
-// Normalize s + e into a DD pair. Requires |e| <= about |s|.
-DD quickTwoSum(double s, double e) noexcept
-{
-    const double hi = s + e;
-    return { hi, e - (hi - s) };
-}
-
-DD dd_add(DD a, DD b) noexcept
-{
-    double s, e;
-    twoSum(a.hi, b.hi, s, e);
-    e += a.lo + b.lo;
-    return quickTwoSum(s, e);
-}
-
-DD dd_add_d(DD a, double b) noexcept
-{
-    double s, e;
-    twoSum(a.hi, b, s, e);
-    e += a.lo;
-    return quickTwoSum(s, e);
-}
-
-DD dd_sub(DD a, DD b) noexcept { return dd_add(a, dd_neg(b)); }
-
-DD dd_mul(DD a, DD b) noexcept
-{
-    double p, e;
-    twoProd(a.hi, b.hi, p, e);
-    e += a.hi * b.lo + a.lo * b.hi;
-    return quickTwoSum(p, e);
-}
-
-DD dd_mul_d(DD a, double s) noexcept
-{
-    double p, e;
-    twoProd(a.hi, s, p, e);
-    e += a.lo * s;
-    return quickTwoSum(p, e);
-}
-
-// Multiply by a small exact integer.
-DD dd_mul_int(DD a, int k) noexcept { return dd_mul_d(a, static_cast<double>(k)); }
-
-DD dd_div(DD a, DD b) noexcept
-{
-    const double q1 = a.hi / b.hi;
-    const DD r = dd_sub(a, dd_mul_d(b, q1));
-    const double q2 = r.hi / b.hi;
-    return quickTwoSum(q1, q2);
-}
-
-// Divide by a small exact integer. A correctly rounded reciprocal would
-// inject about 1e-16 of relative error and void the DD precision, so this
-// uses the full DD division path.
-DD dd_div_int(DD a, int k) noexcept { return dd_div(a, dd_from(static_cast<double>(k))); }
-
-double dd_abs_hi(DD a) noexcept { return std::fabs(a.hi); }
-
-// ── DD constants ─────────────────────────────────────────────────────────
-
-// ln(2), split hi/lo. The pair sums to ln(2) with a residual of 5.7e-34.
-constexpr DD kLn2DD { 0.6931471805599453, 2.3190468138462996e-17 };
-// pi, split hi/lo.
-constexpr DD kPiDD { 3.141592653589793, 1.2246467991473532e-16 };
-
-// Reference anchors, measured with mpmath at 60 digits and split hi/lo.
-constexpr DD kAnchorExpNeg2 { 0.1353352832366127, -1.042381423288669e-17 };   // e^-2
-constexpr DD kAnchorLi2     { -0.13101248471442378, 1.1246570985943699e-17 }; // Li2(-e^-2)
-constexpr DD kAnchorF1at1   { 0.4337808304830272, 7.081895146469789e-18 };    // ln cosh(1)
-constexpr DD kAnchorF2at1   { 0.15258009379489942, -9.965501769494956e-18 };  // F2(1)
-
-// pi^2 / 24, computed once in DD from kPiDD.
-DD gPiSq24;
-
-// ── DD transcendentals ───────────────────────────────────────────────────
-
-// e^(-2a) for a >= 0. Reduction r = y - k*ln2 with the hi/lo ln2 pair,
-// then a Taylor series for exp(r), then ldexp for 2^k. For large a the
-// result underflows to exactly +0.0. That is a contract, not an accident.
-DD ddExpNeg2(DD a) noexcept
-{
-    assert(a.hi >= 0.0);
-    const DD y = dd_mul_d(a, -2.0);                 // exact: power of two
-    const long k = std::lround(y.hi / kLn2);
-    const DD r = dd_sub(y, dd_mul_d(kLn2DD, static_cast<double>(k)));
-    // |r| <= ln2/2 + a rounding whisker. exp(r) by Horner on r^m/m!.
-    // Divisions stay exact through dd_div_int.
-    DD acc = dd_one();
-    for (int m = 26; m >= 1; --m)
-        acc = dd_add_d(dd_div_int(dd_mul(r, acc), m), 1.0);
-    // 0.35^26 / 26! ~ 3e-41, far below the DD floor.
-    const int ki = static_cast<int>(k);
-    return { std::ldexp(acc.hi, ki), std::ldexp(acc.lo, ki) };
-}
-
-// log1p(y) for 0 <= y <= 1, through log1p(y) = 2*atanh(z), z = y/(2+y).
-// z <= 1/3, so the odd series converges fast. All terms are positive for
-// y >= 0, so there is no cancellation.
-DD ddLog1p(DD y) noexcept
-{
-    assert(y.hi >= 0.0 && y.hi <= 1.0);
-    if (y.hi == 0.0) return dd_from(0.0);
-    const DD z = dd_div(y, dd_add_d(y, 2.0));
-    const DD v = dd_mul(z, z);
-    // atanh(z)/z = sum_m v^m / (2m+1), Horner from the top.
-    constexpr int N = 40;                            // (1/3)^(2N+1) ~ 4e-39
-    DD acc = dd_div_int(dd_one(), 2 * N + 1);
-    for (int m = N - 1; m >= 0; --m)
-        acc = dd_add(dd_div_int(dd_one(), 2 * m + 1), dd_mul(v, acc));
-    return dd_mul_d(dd_mul(z, acc), 2.0);
-}
-
-// sinh(y) for 0 <= y <= 0.25, Horner on y^2 with factorial coefficients
-// from an exact integer recurrence. All terms positive.
-DD ddSinhSmall(DD y) noexcept
-{
-    assert(y.hi >= 0.0 && y.hi <= 0.25);
-    const DD v = dd_mul(y, y);
-    constexpr int N = 13;                            // v^14/29! ~ 2e-47
-    DD c[N + 1];
-    c[0] = dd_one();                                 // c_m = 1/(2m+1)!
-    for (int m = 1; m <= N; ++m)
-        c[m] = dd_div_int(c[m - 1], 2 * m * (2 * m + 1));
-    DD acc = c[N];
-    for (int m = N - 1; m >= 0; --m)
-        acc = dd_add(c[m], dd_mul(v, acc));
-    return dd_mul(y, acc);
-}
-
-// ln cosh(a) for a >= 0. Two routes, both free of cancellation:
-//   a <= 0.5: log1p(2*sinh^2(a/2)). cosh(a) - 1 = 2*sinh^2(a/2) is an
-//             exact identity, and every term is positive.
-//   a >  0.5: a - ln2 + log1p(e^-2a). The terms cancel at most a factor
-//             of about 6 at a = 0.5, which DD absorbs.
-DD ddLnCosh(DD a) noexcept
-{
-    assert(a.hi >= 0.0);
-    if (a.hi <= 0.5)
-    {
-        const DD w = ddSinhSmall(dd_mul_d(a, 0.5));
-        const DD v = dd_mul_d(dd_mul(w, w), 2.0);    // cosh(a) - 1
-        return ddLog1p(v);                           // v <= 0.128
-    }
-    const DD t = ddExpNeg2(a);
-    return dd_add(dd_sub(a, kLn2DD), ddLog1p(t));
-}
-
-// Li2(-t) for 0 <= t <= 0.5, alternating Horner, 100 terms. Mirrors the
-// structure of the production dilogSeries, lifted to DD. The Landen fold
-// is not needed: the closed-form F2 below only runs for a > 0.5, where
-// t < e^-1 < 0.5 always.
-DD ddDilogNegDirect(DD t) noexcept
-{
-    assert(t.hi >= 0.0 && t.hi <= 0.5);
-    if (t.hi == 0.0) return dd_from(0.0);
-    constexpr int kTerms = 100;                      // 0.5^100/100^2 ~ 8e-35
-    DD acc = dd_div_int(dd_one(), kTerms * kTerms);
-    for (int k = kTerms - 1; k >= 1; --k)
-        acc = dd_sub(dd_div_int(dd_one(), k * k), dd_mul(t, acc));
-    return dd_neg(dd_mul(t, acc));
-}
-
-// ── F2 Taylor series coefficients (region near zero) ─────────────────────
-// F2(x) = x*u*sum_k p_k u^k, u = x^2. Since F2'' = tanh' = 1 - tanh^2,
-// the tanh coefficients T_k in tanh(x) = sum_k T_k x^(2k-1) satisfy
-//   T_1 = 1,   T_{m+1} = -(sum_{i=1}^{m} T_i T_{m+1-i}) / (2m+1).
-// Integrating twice gives p_k = T_{k+1} / ((2k+2)(2k+3)).
-// The recurrence sums products of same-scale terms, so it is stable in DD.
-// No transcribed constants. T_k decays like (2/pi)^(2k), so 37 terms give
-// a truncation of about 0.101^37 ~ 1e-37 at u = 0.25.
-
-constexpr int kP2N = 36;                             // terms used at u <= 0.25
-DD gT[kP2N + 2];                                     // tanh coefficients T_1..T_37
-DD gP2[kP2N];                                        // F2 series coefficients
-
-void buildF2Series() noexcept
-{
-    gT[1] = dd_one();
-    for (int m = 1; m <= kP2N; ++m)
-    {
-        DD s = dd_from(0.0);
-        for (int i = 1; i <= m; ++i)
-            s = dd_add(s, dd_mul(gT[i], gT[m + 1 - i]));
-        gT[m + 1] = dd_neg(dd_div_int(s, 2 * m + 1));
-    }
-    for (int k = 0; k < kP2N; ++k)
-        gP2[k] = dd_div_int(dd_div_int(gT[k + 1], 2 * k + 2), 2 * k + 3);
-}
-
-// ── Closed-form oracle ───────────────────────────────────────────────────
-
-DD ddF2Closed(double x) noexcept
-{
-    const double a = std::fabs(x);
-    if (a == 0.0) return dd_from(0.0);
-    DD mag;
-    if (a <= 0.5)
-    {
-        const DD u = dd_mul(dd_from(a), dd_from(a)); // exact two-product
-        DD acc = gP2[kP2N - 1];
-        for (int k = kP2N - 2; k >= 0; --k)
-            acc = dd_add(gP2[k], dd_mul(u, acc));
-        mag = dd_mul(dd_from(a), dd_mul(u, acc));
-    }
-    else
-    {
-        const DD aa = dd_from(a);
-        const DD t = ddExpNeg2(aa);
-        const DD li = ddDilogNegDirect(t);
-        const DD g = dd_add(dd_mul_d(li, 0.5), gPiSq24);
-        const DD a2 = dd_mul(aa, aa);
-        // The production closed form, in DD: a^2/2 - a*ln2 + g.
-        mag = dd_add(dd_sub(dd_mul_d(a2, 0.5), dd_mul(aa, kLn2DD)), g);
-    }
-    return x < 0.0 ? dd_neg(mag) : mag;              // F2 is odd
-}
-
-// ── Quadrature oracle ────────────────────────────────────────────────────
-// Composite Gauss-Legendre-16 over panels of width 0.5, prefix-summed once
-// up to a = 1000. A partial panel at the top covers the remainder. The
-// panel centre and half-width of the partial panel are exact in DD:
-// a - b is a Sterbenz-exact subtraction and the centre uses a DD add.
-
-struct GaussDD
-{
-    static constexpr int N = 16;
-    DD x[N], w[N];
-
-    void build() noexcept
-    {
-        for (int i = 0; i < (N + 1) / 2; ++i)
-        {
-            const double seed = std::cos(3.141592653589793 * (i + 0.75) / (N + 0.5));
-            DD z = dd_from(seed);
-            DD pp = dd_one();
-            for (int it = 0; it < 60; ++it)
-            {
-                DD p1 = dd_one(), p2 = dd_from(0.0);
-                for (int j = 0; j < N; ++j)
-                {
-                    const DD p3 = p2;
-                    p2 = p1;
-                    p1 = dd_div_int(dd_sub(dd_mul_int(dd_mul(z, p2), 2 * j + 1),
-                                           dd_mul_int(p3, j)), j + 1);
-                }
-                pp = dd_mul_int(dd_div(dd_sub(dd_mul(z, p1), p2),
-                                       dd_sub(dd_mul(z, z), dd_one())), N);
-                const DD dz = dd_div(p1, pp);
-                z = dd_sub(z, dz);
-                if (dd_abs_hi(dz) < 1e-30) break;
-            }
-            x[i] = dd_neg(z);
-            x[N - 1 - i] = z;
-            const DD wk = dd_div(dd_from(2.0),
-                                 dd_mul(dd_sub(dd_one(), dd_mul(z, z)),
-                                        dd_mul(pp, pp)));
-            w[i] = wk;
-            w[N - 1 - i] = wk;
-        }
-    }
-};
-
-GaussDD g_gl;
-constexpr int kMaxPanels = 2000;                     // covers a <= 1000
-std::vector<DD> g_prefix;                            // prefix sums, size 2001
-
-void buildPanels() noexcept
-{
-    g_prefix.assign(kMaxPanels + 1, dd_from(0.0));
-    for (int p = 0; p < kMaxPanels; ++p)
-    {
-        const DD c = dd_from(0.5 * static_cast<double>(p) + 0.25); // exact
-        const DD r = dd_from(0.25);                                // exact
-        DD s = dd_from(0.0);
-        for (int k = 0; k < GaussDD::N; ++k)
-            s = dd_add(s, dd_mul(g_gl.w[k],
-                                 ddLnCosh(dd_add(c, dd_mul(r, g_gl.x[k])))));
-        g_prefix[p + 1] = dd_add(g_prefix[p], dd_mul(r, s));
-    }
-}
-
-DD ddF2Quad(double x) noexcept
-{
-    const double a = std::fabs(x);
-    if (a == 0.0) return dd_from(0.0);
-    assert(a <= 1000.0);
-    const int full = static_cast<int>(std::floor(2.0 * a)); // 2a is exact
-    DD total = g_prefix[full];
-    const double b = 0.5 * static_cast<double>(full);
-    if (a > b)
-    {
-        // b <= a <= 2b for b >= 0.5, so a - b is exact (Sterbenz).
-        // b == 0 gives a - b = a, also exact.
-        const DD r = dd_mul_d(dd_from(a - b), 0.5);
-        const DD c = dd_mul_d(dd_add(dd_from(a), dd_from(b)), 0.5);
-        DD s = dd_from(0.0);
-        for (int k = 0; k < GaussDD::N; ++k)
-            s = dd_add(s, dd_mul(g_gl.w[k],
-                                 ddLnCosh(dd_add(c, dd_mul(r, g_gl.x[k])))));
-        total = dd_add(total, dd_mul(r, s));
-    }
-    return x < 0.0 ? dd_neg(total) : total;
-}
+constexpr double kU = 2.220446049250313e-16;   // DBL_EPSILON
 
 // ── Harness body ─────────────────────────────────────────────────────────
 
 int gPoints = 200;    // region sweep density (default: CI-sized)
 int gAgree = 300;     // oracle-agreement grid size
-
-// Relative agreement between two DD values, measured on the hi parts.
-// The hi part of a DD difference carries magnitudes down to ~1e-32.
-double ddRelDiff(DD a, DD b) noexcept
-{
-    const DD d = dd_sub(a, b);
-    return dd_abs_hi(d) / std::fabs(b.hi);
-}
 
 void sectionSelfTest()
 {
@@ -497,7 +141,7 @@ void sectionAnchors()
                 dd_abs_hi(df));
     CHECK(dd_abs_hi(df) < 1e-26);
 
-    const DD f2 = ddF2Closed(1.0);
+    const DD f2 = f2DD(1.0);
     const DD dg = dd_sub(f2, kAnchorF2at1);
     std::printf("F2(1)     vs 60-digit anchor: |diff| = %.3e (gate 1e-26)\n",
                 dd_abs_hi(dg));
@@ -505,8 +149,8 @@ void sectionAnchors()
 
     // The series route must agree with the closed route at the a = 0.5
     // switch. Both are computed explicitly here.
-    const DD atHalf = ddF2Closed(0.5);
-    const DD quad = ddF2Quad(0.5);
+    const DD atHalf = f2DD(0.5);
+    const DD quad = quadDD(0.5);
     const double r = ddRelDiff(atHalf, quad);
     std::printf("series-vs-quadrature at a = 0.5: rel diff = %.3e (gate 1e-25)\n", r);
     CHECK(r < 1e-25);
@@ -523,14 +167,14 @@ void sectionAgreement()
     for (int i = 0; i < n; ++i)
     {
         const double x = 1e-12 * std::pow(1e15, static_cast<double>(i) / (n - 1));
-        const double r = ddRelDiff(ddF2Closed(x), ddF2Quad(x));
+        const double r = ddRelDiff(f2DD(x), quadDD(x));
         if (r > worst) { worst = r; worstX = x; }
     }
     // The a = 0.5 switch of the closed oracle, straddled by one ulp steps.
     const double edge[3] = { std::nextafter(0.5, 0.0), 0.5, std::nextafter(0.5, 1.0) };
     for (double x : edge)
     {
-        const double r = ddRelDiff(ddF2Closed(x), ddF2Quad(x));
+        const double r = ddRelDiff(f2DD(x), quadDD(x));
         if (r > worst) { worst = r; worstX = x; }
     }
     std::printf("closed form vs quadrature, %d log-spaced points in [1e-12, 1000]\n"
@@ -565,8 +209,7 @@ void sectionStatusQuoF2()
     for (const auto& rp : relPts)
     {
         const double got = TanhNL::F2(rp.x);
-        const DD ref = ddF2Closed(rp.x);
-        const double refd = ref.hi + ref.lo;
+        const double refd = toDouble(f2DD(rp.x));
         const double rel = std::fabs(got - refd) / std::fabs(refd);
         const double ratio = rel / rp.refRel;
         std::printf("    x = %8.1e : rel err = %.3e   ref %.3e   ratio %.2f %s\n",
@@ -582,8 +225,7 @@ void sectionStatusQuoF2()
     for (const auto& rp : absPts)
     {
         const double got = TanhNL::F2(rp.x);
-        const DD ref = ddF2Closed(rp.x);
-        const double refd = ref.hi + ref.lo;
+        const double refd = toDouble(f2DD(rp.x));
         const double absE = std::fabs(got - refd);
         const double ratio = absE / rp.refAbs;
         std::printf("    x = %8.1f : abs err = %.3e   ref %.3e   ratio %.2f %s\n",
@@ -603,9 +245,7 @@ void sweepRegion(const Region& rg, bool f1)
         const double x = rg.lo * std::pow(rg.hi / rg.lo,
                                           static_cast<double>(i) / (gPoints - 1));
         const double got = f1 ? TanhNL::F1(x) : TanhNL::F2(x);
-        const DD ref = ddF2Closed(x);
-        const DD refF1 = ddLnCosh(dd_from(x));
-        const double refd = f1 ? (refF1.hi + refF1.lo) : (ref.hi + ref.lo);
+        const double refd = f1 ? toDouble(f1DD(x)) : toDouble(f2DD(x));
         const double absE = std::fabs(got - refd);
         const double rel = absE / std::fabs(refd);
         if (rel > maxRel) { maxRel = rel; argRel = x; }
@@ -657,10 +297,7 @@ void sectionStatusQuoTables()
 
 int runAll()
 {
-    gPiSq24 = dd_div_int(dd_mul(kPiDD, kPiDD), 24);
-    buildF2Series();
-    g_gl.build();
-    buildPanels();
+    F2Oracle::init();
 
     sectionSelfTest();
     sectionAnchors();

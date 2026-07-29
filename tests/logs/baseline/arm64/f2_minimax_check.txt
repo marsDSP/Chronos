@@ -1,0 +1,37 @@
+=== Chronos TanhNL regional minimax kernel harness ===
+kernels: f1Tanh / f2Tanh (three regions, Estrin, two-part ln2)
+sweep density: 100000 points, agreement grid 300 points
+
+closed form vs quadrature, 300 points: max rel diff = 1.210e-30 at x = 1.0000e+03 (gate 1e-25)
+oracle agreement (1e-25): PASS
+    region I [1e-12, 1]     max rel err = 4.966e-16 = 2.236 ulp at x = 5.051461e-01
+    region II (1, 19)       max rel err = 3.980e-16 = 1.792 ulp at x = 1.758460e+01
+    region III [19, 1000]   max rel err = 3.848e-16 = 1.733 ulp at x = 5.507410e+02
+F2: max rel err 2.236 ulp at x = 5.051461e-01 (gate <= 3.0 ulp): PASS
+    region I [1e-12, 1]     max rel err = 3.838e-16 = 1.729 ulp at x = 1.907273e-01
+    region II (1, 19)       max rel err = 2.220e-16 = 1.000 ulp at x = 1.669676e+01
+    region III [19, 1000]   max rel err = 0.000e+00 = 0.000 ulp at x = 0.000000e+00
+F1: max rel err 1.729 ulp at x = 1.907273e-01 (gate <= 2.0 ulp): PASS
+    new kernel: max rel err = 4.241e-16 = 1.910 ulp at x = 4.0932e-04 (gate <= 3 ulp)
+    dilog era : max rel err = 3.719e+20 at x = 1.0380e-12 (unbounded, for the record)
+near-zero F2 relative accuracy (3 ulp, 10000 points in [1e-12, 1e-3]): PASS
+    seam a0: |F2_left - F2_right| = 0.000e+00 = 0.000 ulp (gate <= 1 ulp)
+    seam a0 slope: max err/bound = 0.424 at eps = 1.374e-11 (gate <= 1): PASS
+    seam a1: |F2_left - F2_right| = 0.000e+00 = 0.000 ulp (gate <= 1 ulp)
+    seam a1 slope: max err/bound = 0.317 at eps = 7.880e-11 (gate <= 1): PASS
+F2(0) == 0.0 and F1(0) == 0.0 exactly: PASS
+parity bit-exact over 1e6 points (7500 denormals) + both seams: PASS
+F1 non-decreasing on [0, 1000], F2 strictly increasing on [-1000, 1000] (1000000 pts): PASS
+F2' = F1: max err/tol = 0.017 at x = 0.000000
+F1' = tanh: max err/tol = 0.000 at x = -40.000000
+derivative consistency (h = 1e-5, tol 1e-6): PASS
+finite, normal output at +-700, +-1000, +-1e6: PASS
+F1(1000) = 999.30685281944011 vs 1000 - ln2 = 999.30685281944011: err = 0.000e+00 (gate 1 ulp = 1.137e-13)
+    P(u): measured 1.229113 vs committed 1.229113 (gate: 10%)
+    S(u): measured 1.419208 vs committed 1.419208 (gate: 10%)
+basis conditioning matches the committed derivation logs: PASS
+coefficient counts: P/S degree 14, psi/L degree 10: PASS
+    (the python derivation scripts re-derive these values and
+     exit non-zero on drift; they run in CI alongside this harness)
+
+=== ALL PROPERTIES HELD ===
