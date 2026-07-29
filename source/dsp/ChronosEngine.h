@@ -353,7 +353,9 @@ namespace MarsDSP {
                         // round-half-away-from-zero: trunc(q + copysign(0.5, q))
                         const M128 vSign = MM(and_ps)(vQ, vSignMask);
                         const M128 vShifted = MM(add_ps)(vQ, MM(or_ps)(vHalf, vSign));
-                        const M128 vRounded = MM(round_ps)(vShifted, 0x0B); // TO_ZERO | NO_EXC
+                        // trunc via cvtt+cvte (SSE2, no SSE4.1 needed)
+                        const M128I vInt = MM(cvttps_epi32)(vShifted);
+                        const M128 vRounded = MM(cvtepi32_ps)(vInt);
                         MM(storeu_ps)(data0 + offset + s, MM(mul_ps)(vRounded, vLsb));
                     }
                     if (hasR)
@@ -367,7 +369,8 @@ namespace MarsDSP {
                         const M128 vQ = MM(mul_ps)(MM(add_ps)(vScaled, vDither), vInvLsb);
                         const M128 vSign = MM(and_ps)(vQ, vSignMask);
                         const M128 vShifted = MM(add_ps)(vQ, MM(or_ps)(vHalf, vSign));
-                        const M128 vRounded = MM(round_ps)(vShifted, 0x0B);
+                        const M128I vInt = MM(cvttps_epi32)(vShifted);
+                        const M128 vRounded = MM(cvtepi32_ps)(vInt);
                         MM(storeu_ps)(data1 + offset + s, MM(mul_ps)(vRounded, vLsb));
                     }
                 }

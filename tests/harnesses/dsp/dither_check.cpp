@@ -45,7 +45,8 @@ float simdRound(float x) noexcept
     const M128 vSignMask = MM(set1_ps)(-0.0f);
     const M128 vSign = MM(and_ps)(vx, vSignMask);
     const M128 vShifted = MM(add_ps)(vx, MM(or_ps)(vHalf, vSign));
-    const M128 vRounded = MM(round_ps)(vShifted, 0x0B); // TO_ZERO | NO_EXC
+    const M128I vInt = MM(cvttps_epi32)(vShifted);
+    const M128 vRounded = MM(cvtepi32_ps)(vInt);
     alignas(16) float out[4];
     MM(store_ps)(out, vRounded);
     return out[0];

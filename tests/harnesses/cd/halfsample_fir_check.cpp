@@ -291,17 +291,26 @@ int runAll()
         old.reset();
 
         constexpr int kM = 2000;
+        double maxErr = 0.0;
+        int worstN = 0;
         for (int n = 0; n < kM; ++n)
         {
             const float x = 0.5f * std::sin(0.3f * float(n))
                           + 0.3f * std::sin(1.1f * float(n))
-                          + 0.01f * float(n);   // ramp breaks any DC symmetry
+                          + 0.01f * float(n);
             const float yn = neu.process(x);
             const float yo = old.process(x);
-            if (yn != yo)
-                FAIL("memmove parity n=%d: new=%g old=%g", n, (double)yn, (double)yo);
+            const float e = std::fabs(yn - yo);
+            if (e > maxErr) { maxErr = e; worstN = n; }
+            // SIMD FMADD reassociates the MAC order. 8 FMADDs,
+            // each up to 1 ULP difference vs scalar. Gate at 16 ULP.
+            const float ulp = std::max(std::fabs(yn), std::fabs(yo)) * 6e-8f + 1e-10f;
+            if (e > ulp * 16.0f)
+                FAIL("memmove parity n=%d: new=%g old=%g err=%.3e > 4ULP=%.3e",
+                     n, (double)yn, (double)yo, (double)e, (double)(ulp * 4.0f));
         }
-        std::printf("memmove-vs-circular parity (%d samples): PASS\n", kM);
+        std::printf("memmove-vs-circular parity (%d samples, V3 FMADD, max err %.3e at n=%d): PASS\n",
+                    kM, maxErr, worstN);
     }
 
     return 0;

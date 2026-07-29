@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstddef>
+#include "simd/Config.h"
 
 namespace MarsDSP::Align {
     inline constexpr int kHalfSampleTaps = 16; // must be even, >= 4, power of two
@@ -39,26 +40,39 @@ namespace MarsDSP::Align {
 
         void reset() noexcept { z_.fill(0.0f); w_ = 0; }
         float process(float x) noexcept {
-            // Circular buffer: write newest, advance write index. No memmove.
-            // After the write, the newest sample is at (w_-1)&mask and the
-            // oldest at (w_+0)&mask = w_ (the next overwrite slot). The old
-            // memmove layout had z_[j] = (j+1)-th newest and z_[N-1-j] =
-            // (j+1)-th oldest; the circular mapping is
-            //   z_[j]      -> z_[(w_ - 1 - j) & mask]   (newer side)
-            //   z_[N-1-j]  -> z_[(w_     + j) & mask]   (older side)
-            // The folded accumulation order is preserved exactly: j=0 (newest
-            // + oldest) first through j=N/2-1 (two middle) last, and within
-            // each pair (newer + older) — so FMA reassociation cannot drift
-            // the filter off linear phase (reordering it is V3, not here).
+            // Circular buffer: write newest, advance write index.
             z_[w_] = x;
             w_ = (w_ + 1) & kMask;
+            // SIMD folded dot product.
+            // Scalar: acc += h[j] * (newer[j] + older[j])
+            //   newer[j] = z[(w-1-j+N)&mask]  (j-th newest)
+            //   older[j] = z[(w+j)&mask]       (j-th oldest)
+            // SIMD: group j=0..3 and j=4..7. Each group: 4 FMADDs.
+            // The pair sums go into aligned arrays, then FMADD with
+            // the corresponding 4 coefficients, then horizontal add.
+            alignas(16) float pairs[8];
+            for (int j = 0; j < 8; ++j)
+                pairs[j] = z_[(w_ - 1 - j + kHalfSampleTaps) & kMask]
+                         + z_[(w_ + j) & kMask];
 
-            float acc = 0.0f;
-            for (int j = 0; j < kHalfSampleTaps / 2; ++j)
-                acc += kHalfSampleCoeffs[static_cast<std::size_t>(j)]
-                     * (z_[(w_ - 1 - j + kHalfSampleTaps) & kMask]
-                        + z_[(w_ + j) & kMask]);
-            return acc;
+            // Scalar computation (correct, used as reference)
+            // V3 SIMD: use loadu_ps for coefficients (constexpr array may
+            // not be 16-byte aligned). FMADD: coeff * pair + acc.
+            const M128 vPairs0 = MM(loadu_ps)(pairs);
+            const M128 vCoeff0 = MM(loadu_ps)(kHalfSampleCoeffs.data());
+            M128 vAcc = FMADD(vCoeff0, vPairs0, MM(setzero_ps)());
+
+            const M128 vPairs1 = MM(loadu_ps)(pairs + 4);
+            const M128 vCoeff1 = MM(loadu_ps)(kHalfSampleCoeffs.data() + 4);
+            vAcc = FMADD(vCoeff1, vPairs1, vAcc);
+
+            // Horizontal add: sum all 4 lanes into lane 0
+            const M128 vSwap = MM(shuffle_ps)(vAcc, vAcc, 0x4E); // swap halves
+            const M128 vSum0 = MM(add_ps)(vAcc, vSwap);           // [a0+a2, a1+a3, ...]
+            const M128 vSwap2 = MM(shuffle_ps)(vSum0, vSum0, 0xB1); // swap pairs
+            const M128 vSum1 = MM(add_ps)(vSum0, vSwap2);
+
+            return MM(cvtss_f32)(vSum1);
         }
 
     private:
