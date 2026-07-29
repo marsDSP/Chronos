@@ -107,6 +107,16 @@ void ChronosProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     p.bits = parameters.getRawBits();
     p.adaaOrder = parameters.getADAAOrder();
     p.interp = parameters.getInterpolation();
+    p.feedback = parameters.getRawFeedback();
+    p.dampHz = parameters.getRawDampHz();
+    p.crossFeed = parameters.getRawCrossFeed();
+    p.loopDrive = parameters.getRawLoopDrive();
+    p.loopSatOrder = parameters.getRawLoopSatOrder();
+    p.diffusion = parameters.getRawDiffusion();
+    p.diffuserSize = parameters.getRawDiffuserSize();
+    p.diffModDepth = parameters.getRawDiffModDepth();
+    p.diffModRateHz = parameters.getRawDiffModRateHz();
+    p.enableDiffuser = parameters.getRawEnableDiffuser();
     engine.resetParams(p);
 
     // Constant compile-time latency, reported once here
@@ -165,6 +175,16 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
     p.bits = parameters.getRawBits();
     p.adaaOrder = parameters.getADAAOrder();
     p.interp = parameters.getInterpolation();
+    p.feedback = parameters.getRawFeedback();
+    p.dampHz = parameters.getRawDampHz();
+    p.crossFeed = parameters.getRawCrossFeed();
+    p.loopDrive = parameters.getRawLoopDrive();
+    p.loopSatOrder = parameters.getRawLoopSatOrder();
+    p.diffusion = parameters.getRawDiffusion();
+    p.diffuserSize = parameters.getRawDiffuserSize();
+    p.diffModDepth = parameters.getRawDiffModDepth();
+    p.diffModRateHz = parameters.getRawDiffModRateHz();
+    p.enableDiffuser = parameters.getRawEnableDiffuser();
     engine.setParams(p);
 
     float *io[2] = {

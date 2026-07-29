@@ -77,6 +77,9 @@ if(BUILD_TEST_HARNESSES)
     add_executable(simd_delay_check harnesses/cd/simd_delay_check.cpp)
     target_link_libraries(simd_delay_check PRIVATE SharedCode)
 
+    add_executable(frac_delay_tap_check harnesses/cd/frac_delay_tap_check.cpp)
+    target_link_libraries(frac_delay_tap_check PRIVATE SharedCode)
+
     add_executable(dilog_check harnesses/cd/dilog_check.cpp)
     target_link_libraries(dilog_check PRIVATE SharedCode)
 
@@ -122,6 +125,21 @@ if(BUILD_TEST_HARNESSES)
         target_compile_options(simd_delay_parity PRIVATE "-mfma")
     endif()
 
+    add_executable(diffuser_parity harnesses/simd/diffuser_parity.cpp)
+    target_link_libraries(diffuser_parity PRIVATE SharedCode)
+    if(MSVC)
+        target_compile_options(diffuser_parity PRIVATE /O2)
+    else()
+        target_compile_options(diffuser_parity PRIVATE -O2)
+    endif()
+    if(APPLE)
+        target_compile_options(diffuser_parity PRIVATE "-Xarch_x86_64" "-mfma")
+    elseif(MSVC)
+        target_compile_options(diffuser_parity PRIVATE "/arch:AVX2")
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64|AMD64)")
+        target_compile_options(diffuser_parity PRIVATE "-mfma")
+    endif()
+
     add_executable(delay_line_bench harnesses/perf/delay_line_bench.cpp)
     target_link_libraries(delay_line_bench PRIVATE SharedCode juce::juce_dsp)
     if(MSVC)
@@ -153,7 +171,7 @@ if(BUILD_TEST_HARNESSES)
     endif()
 
     # ── CTest registration ──────────────────────────────────────────────
-    # 18 correctness harnesses: exit 0 = pass. The 4 benchmarks (tan_bench,
+    # 20 correctness harnesses: exit 0 = pass. The 4 benchmarks (tan_bench,
     # adaa_bench, delay_line_bench, chain_bench) are labeled "bench" so
     # `ctest -LE bench` excludes them. they report numbers rather than pass/fail
     # (delay_line_bench does carry a timing-dependent SIMD≤1.05×scalar gate
@@ -171,6 +189,7 @@ if(BUILD_TEST_HARNESSES)
     add_test(NAME crossfade_parity       COMMAND crossfade_parity)
     add_test(NAME dither_check            COMMAND dither_check)
     add_test(NAME simd_delay_check       COMMAND simd_delay_check)
+    add_test(NAME frac_delay_tap_check   COMMAND frac_delay_tap_check)
     add_test(NAME dilog_check            COMMAND dilog_check)
     add_test(NAME nonlinearity_check     COMMAND nonlinearity_check)
     add_test(NAME adaa2_check            COMMAND adaa2_check)
@@ -178,6 +197,7 @@ if(BUILD_TEST_HARNESSES)
     add_test(NAME f2_minimax_check       COMMAND f2_minimax_check)
     add_test(NAME alias_check            COMMAND alias_check)
     add_test(NAME simd_delay_parity      COMMAND simd_delay_parity)
+    add_test(NAME diffuser_parity        COMMAND diffuser_parity)
 
     # The 4 benchmarks are registered as tests but labeled "bench" so
     # `ctest -LE bench` excludes them. They report numbers, not pass/fail

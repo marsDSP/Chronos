@@ -11,6 +11,9 @@
 #include "nonlinear/Nonlinearities.h"
 #include "align/SaturatorAlign.h"
 #include "DelayInterpolator.h"
+#include "Diffuser.h"
+#include "FeedbackDelay.h"
+#include "FracDelayTap.h"
 #include "math/Trigonometry.h"
 
 #include <algorithm>
@@ -35,6 +38,17 @@ namespace MarsDSP {
             int bits;
             int adaaOrder;
             Delays::Interpolation interp;
+            // --- feedback / diffusion ---
+            float feedback       = 0.0f;   // 0..1.2; >1 self-oscillates, bounded
+            float dampHz         = 6000.0f; // loop lowpass
+            float crossFeed      = 0.0f;   // 0 straight, 1 full ping-pong
+            float loopDrive      = 1.0f;   // linear gain into the loop tanh
+            int   loopSatOrder   = 2;      // 0 hard, 1 ADAA1, 2 ADAA2
+            float diffusion      = 0.7f;   // 0..1 -> allpass coeff 0..0.92
+            float diffuserSize   = 0.5f;   // 0..1 (0 = full path lengths)
+            float diffModDepth   = 16.0f;  // samples, 0..62
+            float diffModRateHz  = 0.5f;   // 0..8
+            bool  enableDiffuser = false;  // off by default
         };
 
         void prepare(double sampleRate, int maxBlockSize, int numChannels) noexcept
@@ -48,6 +62,9 @@ namespace MarsDSP {
             wetBufCapacity_ = std::max(1, 2 * maxBlockSize);
 
             delayLine_.prepare(sampleRate, wetBufCapacity_, 5000.0f);
+
+            fbDelay_.prepare(sampleRate, wetBufCapacity_, delayLine_.getCapacity());
+            diffuser_.prepare(sampleRate);
             wetBufL_.resize(static_cast<std::size_t>(wetBufCapacity_));
             wetBufR_.resize(static_cast<std::size_t>(wetBufCapacity_));
 
@@ -88,6 +105,8 @@ namespace MarsDSP {
         void reset() noexcept
         {
             delayLine_.reset();
+            fbDelay_.reset();
+            diffuser_.reset();
             hpf_.reset();
             lpf_.reset();
             adaa1L_.reset(); adaa1R_.reset();
@@ -130,6 +149,11 @@ namespace MarsDSP {
             lpfSmoother_.setCurrentAndTargetValue(p.lpfHz);
             mixSmoother_.setCurrentAndTargetValue(p.mix);
             driveSmoother_.setCurrentAndTargetValue(p.driveLin);
+
+            feedback_ = p.feedback;
+            enableDiffuser_ = p.enableDiffuser;
+            applyFeedbackParams_(p, /*snap=*/true);
+            applyDiffuserParams_(p);
         }
 
         void setParams(const Params &p) noexcept
@@ -145,6 +169,11 @@ namespace MarsDSP {
             lpfSmoother_.setTargetValue(p.lpfHz);
             mixSmoother_.setTargetValue(p.mix);
             driveSmoother_.setTargetValue(p.driveLin);
+
+            feedback_ = p.feedback;
+            enableDiffuser_ = p.enableDiffuser;
+            applyFeedbackParams_(p, /*snap=*/false);
+            applyDiffuserParams_(p);
         }
 
         void process(float *const*io, int numChannels, int numSamples) noexcept
@@ -163,12 +192,34 @@ namespace MarsDSP {
             {
                 const int chunk = std::min(wetBufCapacity_, numSamples - offset);
 
-                // ── 1. Delay line (block-rate) ────────────────────────────
-                delayLine_.process(data0 + offset,
-                                   hasR ? data1 + offset : nullptr,
-                                   wetBufL_.data(),
-                                   hasR ? wetBufR_.data() : nullptr,
-                                   chunk, delaySamples_, delaySamples_);
+                // ── 1. Wet generation (block-rate) ─────────────────────────
+                if (feedback_ > 0.0f)
+                {
+                    fbDelay_.process(data0 + offset,
+                                     hasR ? data1 + offset : nullptr,
+                                     wetBufL_.data(),
+                                     hasR ? wetBufR_.data() : nullptr,
+                                     chunk);
+                }
+                else
+                {
+                    delayLine_.process(data0 + offset,
+                                       hasR ? data1 + offset : nullptr,
+                                       wetBufL_.data(),
+                                       hasR ? wetBufR_.data() : nullptr,
+                                       chunk, delaySamples_, delaySamples_);
+                }
+
+                //  Optional 8-section Schroeder allpass diffuser on the wet
+                //  path (input-diffuser placement). Off by default; when on it
+                //  runs in-place over the wet buffers before the per-sample
+                //  drive / ADAA / SVF tail. Adds 0 chain latency.
+                if (enableDiffuser_)
+                {
+                    diffuser_.processBlock(wetBufL_.data(),
+                                           hasR ? wetBufR_.data() : nullptr,
+                                           chunk);
+                }
 
                 // bits is block-rate int, no smoother. lsb is computed
                 // once per block
@@ -443,7 +494,37 @@ namespace MarsDSP {
             smoothedDrive_ = driveSmoother_.getNextValue();
         }
 
+        // Forward the feedback-loop params. FeedbackDelay owns its own
+        // smoothers; `snap` selects resetParams (transport jump) vs
+        // setParams (automation). No audio effect unless feedback_ > 0,
+        // but keeping the loop state warm avoids a click when feedback opens.
+        void applyFeedbackParams_(const Params &p, bool snap) noexcept
+        {
+            Delays::FeedbackDelay::Params fp;
+            fp.delaySamples = p.delaySamples;
+            fp.feedback     = p.feedback;
+            fp.dampHz       = p.dampHz;
+            fp.crossFeed    = p.crossFeed;
+            fp.loopDrive    = p.loopDrive;
+            fp.satOrder     = p.loopSatOrder;
+            if (snap) fbDelay_.resetParams(fp);
+            else      fbDelay_.setParams(fp);
+        }
+
+        // Diffuser setters target its internal LinearSmoothers; it has no
+        // snap API, so both resetParams and setParams call the same setters
+        // (a ~50 ms ramp from 0 on first enable, which is desirable).
+        void applyDiffuserParams_(const Params &p) noexcept
+        {
+            diffuser_.setDiffusion(p.diffusion);
+            diffuser_.setSize(p.diffuserSize);
+            diffuser_.setModDepthSamples(p.diffModDepth);
+            diffuser_.setModRateHz(p.diffModRateHz);
+        }
+
         Delays::SimdDelayLine delayLine_;
+        Delays::FeedbackDelay fbDelay_;
+        Diffusion::Diffuser diffuser_;
         std::vector<float> wetBufL_;
         std::vector<float> wetBufR_;
         int wetBufCapacity_{0};
@@ -529,6 +610,8 @@ namespace MarsDSP {
         float delaySamples_{0.0f};
         int adaaOrder_{2};
         Delays::Interpolation interp_{Delays::Interpolation::Lagrange5th};
+        float feedback_{0.0f};
+        bool enableDiffuser_{false};
     };
 }
 #endif

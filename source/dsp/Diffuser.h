@@ -1,0 +1,339 @@
+#pragma once
+
+#ifndef CHRONOS_DIFFUSER_H
+#define CHRONOS_DIFFUSER_H
+
+#include "FracDelayTap.h"
+#include "LinearSmoother.h"
+#include "Pow2RingBuffer.h"
+#include "simd/Config.h"
+
+#include <algorithm>
+#include <array>
+#include <cassert>
+#include <cmath>
+#include <cstring>
+#include <numbers>
+
+namespace MarsDSP::Diffusion {
+
+    class Diffuser {
+    public:
+        static constexpr int   kNumSections    = 8;
+        static constexpr float kMaxCoefficient = 0.92f;
+        static constexpr float kMaxSizeCut     = 0.90f; // size shortens delay by <= 90%
+        static constexpr int   kChunk          = 16;    // block-vectorized chunk
+        static constexpr float kMinDelay       = 32.0f; // MUST exceed kChunk: a chunk's
+                                                        // reads must not touch that same
+                                                        // chunk's writes.
+        static constexpr int   kModSectionA    = 2;
+        static constexpr int   kModSectionB    = 5;
+        static constexpr float kDetuneRatio    = 1.317f;
+
+        // Acoustic path lengths in meters
+        static constexpr std::array<float, kNumSections> kPathMetersL{
+            45.4125f, 39.3375f, 31.9125f, 29.2875f, 23.2875f, 20.1000f, 11.8875f, 8.2875f };
+        static constexpr std::array<float, kNumSections> kPathMetersR{
+            45.3000f, 39.2625f, 31.8375f, 29.1375f, 23.3625f, 19.9875f, 13.9125f, 7.9500f };
+
+        void prepare(double sampleRate) noexcept
+        {
+            assert(sampleRate > 0.0);
+            sampleRate_ = sampleRate;
+            const double samplesPerMeter = sampleRate / kSpeedOfSoundMps;
+
+            bool used[kMaxPrimeScan] = {};
+            for (int i = 0; i < kNumSections; ++i)
+            {
+                const int wantL = static_cast<int>(
+                    std::lround(static_cast<double>(kPathMetersL[static_cast<std::size_t>(i)]) * samplesPerMeter));
+                const int wantR = static_cast<int>(
+                    std::lround(static_cast<double>(kPathMetersR[static_cast<std::size_t>(i)]) * samplesPerMeter));
+                secL_[static_cast<std::size_t>(i)].len = distinctPrimeNear_(wantL, used);
+                secR_[static_cast<std::size_t>(i)].len = distinctPrimeNear_(wantR, used);
+            }
+
+            for (auto* bank : { &secL_, &secR_ })
+                for (auto& s : *bank)
+                    s.ring.prepare(s.len + kModHeadroom + Delays::Pow2RingBuffer::kTail + 8);
+
+            sizeSm_.reset(sampleRate, 0.050);
+            coefSm_.reset(sampleRate, 0.020);
+            depthSm_.reset(sampleRate, 0.050);
+            setModRateHz(0.5f);
+            reset();
+        }
+
+        void reset() noexcept
+        {
+            for (auto* bank : { &secL_, &secR_ })
+                for (auto& s : *bank) { s.ring.clear(); s.w = 0; }
+
+            oscAc_ = 1.0; oscAs_ = 0.0;
+            oscBc_ = 0.0; oscBs_ = 1.0;
+            sizeSm_.setCurrentAndTargetValue(sizeSm_.getTargetValue());
+            coefSm_.setCurrentAndTargetValue(coefSm_.getTargetValue());
+            depthSm_.setCurrentAndTargetValue(depthSm_.getTargetValue());
+        }
+
+        void setDiffusion(float amount01) noexcept
+        {
+            coefSm_.setTargetValue(kMaxCoefficient * std::clamp(amount01, 0.0f, 1.0f));
+        }
+
+        void setSize(float size01) noexcept
+        {
+            sizeSm_.setTargetValue(std::clamp(size01, 0.0f, 1.0f));
+        }
+
+        void setModDepthSamples(float depth) noexcept
+        {
+            depthSm_.setTargetValue(
+                std::clamp(depth, 0.0f, static_cast<float>(kModHeadroom - 2)));
+        }
+
+        void setModRateHz(float hz) noexcept
+        {
+            const double f = std::clamp(static_cast<double>(hz), 0.0, 8.0);
+            oscAk_ = 2.0 * std::sin(std::numbers::pi * f / sampleRate_);
+            oscBk_ = 2.0 * std::sin(std::numbers::pi * f
+                                    * static_cast<double>(kDetuneRatio) / sampleRate_);
+        }
+
+        void processBlock(float* left, float* right, int n) noexcept
+        {
+            assert(left != nullptr);
+            for (int off = 0; off < n; off += kChunk)
+            {
+                const int m = std::min(kChunk, n - off);
+
+                for (int j = 0; j < m; ++j)
+                {
+                    sizeRamp_[static_cast<std::size_t>(j)] = sizeSm_.getNextValue();
+                    gRamp_[static_cast<std::size_t>(j)] =
+                        std::clamp(coefSm_.getNextValue(), -kMaxCoefficient, kMaxCoefficient);
+                    const float depth = depthSm_.getNextValue();
+
+                    oscAs_ += oscAk_ * oscAc_;
+                    oscAc_ -= oscAk_ * oscAs_;
+                    oscBs_ += oscBk_ * oscBc_;
+                    oscBc_ -= oscBk_ * oscBs_;
+
+                    modAL_[static_cast<std::size_t>(j)] = depth * static_cast<float>(oscAc_);
+                    modBL_[static_cast<std::size_t>(j)] = depth * static_cast<float>(oscBc_);
+                    modAR_[static_cast<std::size_t>(j)] = depth * static_cast<float>(oscAs_);
+                    modBR_[static_cast<std::size_t>(j)] = depth * static_cast<float>(oscBs_);
+                }
+
+                const bool settled =
+                    (sizeRamp_[0] == sizeRamp_[static_cast<std::size_t>(m - 1)]);
+
+                chunk_(secL_, left + off, m, settled, modAL_.data(), modBL_.data());
+                if (right != nullptr)
+                    chunk_(secR_, right + off, m, settled, modAR_.data(), modBR_.data());
+            }
+        }
+
+        void processBlockRef(float* left, float* right, int n) noexcept
+        {
+            assert(left != nullptr);
+            for (int s = 0; s < n; ++s)
+            {
+                const float size  = sizeSm_.getNextValue();
+                const float g     = std::clamp(coefSm_.getNextValue(),
+                                               -kMaxCoefficient, kMaxCoefficient);
+                const float depth = depthSm_.getNextValue();
+
+                oscAs_ += oscAk_ * oscAc_;
+                oscAc_ -= oscAk_ * oscAs_;
+                oscBs_ += oscBk_ * oscBc_;
+                oscBc_ -= oscBk_ * oscBs_;
+
+                const float modAL = depth * static_cast<float>(oscAc_);
+                const float modBL = depth * static_cast<float>(oscBc_);
+                const float modAR = depth * static_cast<float>(oscAs_);
+                const float modBR = depth * static_cast<float>(oscBs_);
+
+                left[s] = chain_(secL_, left[s], size, g, modAL, modBL);
+                if (right != nullptr)
+                    right[s] = chain_(secR_, right[s], size, g, modAR, modBR);
+            }
+        }
+
+        [[nodiscard]] static constexpr int latencySamples() noexcept { return 0; }
+
+    private:
+        static constexpr double kSpeedOfSoundMps = 343.0;
+        static constexpr int    kModHeadroom     = 64;
+        static constexpr int    kMaxPrimeScan    = 1 << 16;
+
+        struct Section
+        {
+            Delays::Pow2RingBuffer ring;
+            int len = 0;
+            int w   = 0;
+        };
+        using Bank = std::array<Section, kNumSections>;
+
+        static bool isPrime_(int v) noexcept
+        {
+            if (v < 2) return false;
+            if (v % 2 == 0) return v == 2;
+            for (int d = 3; d * d <= v; d += 2)
+                if (v % d == 0) return false;
+            return true;
+        }
+
+        static int distinctPrimeNear_(int want, bool (&used)[kMaxPrimeScan]) noexcept
+        {
+            want = std::clamp(want, 5, kMaxPrimeScan - 2);
+            for (int d = 0; d < kMaxPrimeScan; ++d)
+            {
+                for (const int cand : { want + d, want - d })
+                {
+                    if (cand >= 5 && cand < kMaxPrimeScan
+                        && isPrime_(cand) && !used[cand])
+                    {
+                        used[cand] = true;
+                        return cand;
+                    }
+                }
+            }
+            return want | 1; // unreachable at sane rates
+        }
+
+        void chunk_(Bank& bank, float* io, int m, bool settled,
+                    const float* modA, const float* modB) noexcept
+        {
+            std::memcpy(tmp_.data(), io, static_cast<std::size_t>(m) * sizeof(float));
+
+            for (int i = 0; i < kNumSections; ++i)
+            {
+                auto& sec = bank[static_cast<std::size_t>(i)];
+                const int   mask = sec.ring.mask();
+                const float lenF = static_cast<float>(sec.len);
+                const bool  isMod = (i == kModSectionA || i == kModSectionB);
+
+                if (settled && !isMod)
+                {
+                    // ---- fast path: constant integer tap, 4-wide ----
+                    float eff = lenF * (1.0f - kMaxSizeCut * sizeRamp_[0]);
+                    eff = std::clamp(std::nearbyintf(eff), kMinDelay, lenF);
+                    const int D = static_cast<int>(eff);
+                    const int base = (sec.w - D) & mask;
+
+                    const float* d = sec.ring.windowPtr(base, m);
+                    if (d == nullptr)
+                    {
+                        sec.ring.readWindow(rd_.data(), base, m);
+                        d = rd_.data();
+                    }
+
+                    const int mv = m & ~3;
+                    for (int j = 0; j < mv; j += 4)
+                    {
+                        const M128 dv = MM(loadu_ps)(d + j);
+                        const M128 gv = MM(load_ps)(gRamp_.data() + j);
+                        const M128 xv = MM(load_ps)(tmp_.data() + j);
+                        const M128 vv = MM(sub_ps)(xv, MM(mul_ps)(gv, dv));
+                        const M128 yv = MM(add_ps)(dv, MM(mul_ps)(gv, vv));
+                        MM(store_ps)(wr_.data() + j, vv);
+                        MM(store_ps)(tmp_.data() + j, yv);
+                    }
+                    for (int j = mv; j < m; ++j)
+                    {
+                        const float dj = d[j];
+                        const float gj = gRamp_[static_cast<std::size_t>(j)];
+                        const float vj = tmp_[static_cast<std::size_t>(j)] - gj * dj;
+                        wr_[static_cast<std::size_t>(j)] = vj;
+                        tmp_[static_cast<std::size_t>(j)] = dj + gj * vj;
+                    }
+                    for (int j = 0; j < m; ++j)
+                        if (!std::isfinite(wr_[static_cast<std::size_t>(j)]))
+                            wr_[static_cast<std::size_t>(j)] = 0.0f;
+
+                    sec.ring.writeBlock(wr_.data(), sec.w, m);
+                    sec.ring.refreshMirror(sec.w, m);
+                    sec.w = (sec.w + m) & mask;
+                }
+                else
+                {
+                    // ---- exact path: per-sample fractional read ----
+                    for (int j = 0; j < m; ++j)
+                    {
+                        const float gj = gRamp_[static_cast<std::size_t>(j)];
+                        float eff = lenF * (1.0f - kMaxSizeCut * sizeRamp_[static_cast<std::size_t>(j)]);
+                        const float mm = (i == kModSectionA) ? modA[j]
+                                       : (i == kModSectionB) ? modB[j]
+                                                             : 0.0f;
+                        if (mm == 0.0f) eff = std::nearbyintf(eff);
+                        else            eff += mm;
+                        eff = std::clamp(eff, kMinDelay, lenF);
+
+                        const float dj = Delays::FracDelayTap::read(sec.ring, sec.w, eff);
+                        float vj = tmp_[static_cast<std::size_t>(j)] - gj * dj;
+                        if (!std::isfinite(vj)) vj = 0.0f;
+                        tmp_[static_cast<std::size_t>(j)] = dj + gj * vj;
+
+                        sec.ring.writeBlock(&vj, sec.w, 1);
+                        sec.ring.refreshMirror(sec.w, 1);
+                        sec.w = (sec.w + 1) & mask;
+                    }
+                }
+            }
+
+            std::memcpy(io, tmp_.data(), static_cast<std::size_t>(m) * sizeof(float));
+        }
+
+        // reference only -- do not optimize, do not delete.
+        float chain_(Bank& bank, float x, float size, float g,
+                     float modA, float modB) noexcept
+        {
+            for (int i = 0; i < kNumSections; ++i)
+            {
+                auto& sec = bank[static_cast<std::size_t>(i)];
+                const float lenF = static_cast<float>(sec.len);
+                float eff = lenF * (1.0f - kMaxSizeCut * size);
+
+                const float m = (i == kModSectionA) ? modA
+                              : (i == kModSectionB) ? modB
+                                                    : 0.0f;
+                if (m == 0.0f)
+                    eff = std::nearbyintf(eff);
+                else
+                    eff += m;
+                eff = std::clamp(eff, kMinDelay, lenF);
+
+                // canonical Schroeder: v = x - g*d ; y = d + g*v ; write v.
+                const float d = Delays::FracDelayTap::read(sec.ring, sec.w, eff);
+                float v = x - g * d;
+                if (!std::isfinite(v)) v = 0.0f; // scrub before it recirculates
+                const float y = d + g * v;
+
+                sec.ring.writeBlock(&v, sec.w, 1);
+                sec.ring.refreshMirror(sec.w, 1);
+                sec.w = (sec.w + 1) & sec.ring.mask();
+                x = y;
+            }
+            return x;
+        }
+
+        // chunk scratch, 16-byte aligned for load_ps/store_ps
+        alignas(16) std::array<float, kChunk> tmp_{};
+        alignas(16) std::array<float, kChunk> wr_{};
+        alignas(16) std::array<float, kChunk> rd_{};
+        alignas(16) std::array<float, kChunk> gRamp_{};
+        alignas(16) std::array<float, kChunk> sizeRamp_{};
+        alignas(16) std::array<float, kChunk> modAL_{}, modBL_{}, modAR_{}, modBR_{};
+
+        Bank secL_{}, secR_{};
+        double sampleRate_ = 48000.0;
+
+        Smoothers::LinearSmoother<float> sizeSm_, coefSm_, depthSm_;
+
+        // quadrature LFOs: double state (see header note 6), (c, s) pairs.
+        double oscAc_ = 1.0, oscAs_ = 0.0, oscAk_ = 0.0;
+        double oscBc_ = 0.0, oscBs_ = 1.0, oscBk_ = 0.0;
+    };
+}
+#endif

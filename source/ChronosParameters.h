@@ -16,6 +16,16 @@ const ParameterID mixParamID{"mix", 1};
 const ParameterID interpolationParamID{"interpolation", 1};
 const ParameterID driveParamID{"drive", 1};
 const ParameterID adaaOrderParamID{"adaaOrder", 1};
+const ParameterID feedbackParamID{"feedback", 1};
+const ParameterID dampHzParamID{"dampHz", 1};
+const ParameterID crossFeedParamID{"crossFeed", 1};
+const ParameterID loopDriveParamID{"loopDrive", 1};
+const ParameterID loopSatOrderParamID{"loopSatOrder", 1};
+const ParameterID diffusionParamID{"diffusion", 1};
+const ParameterID diffuserSizeParamID{"diffuserSize", 1};
+const ParameterID diffModDepthParamID{"diffModDepth", 1};
+const ParameterID diffModRateHzParamID{"diffModRateHz", 1};
+const ParameterID enableDiffuserParamID{"enableDiffuser", 1};
 
 template<typename T>
 static void castParameter(const AudioProcessorValueTreeState &apvts, const ParameterID &id, T &destination)
@@ -39,6 +49,16 @@ public:
         castParameter(apvts, interpolationParamID, interpolationParam);
         castParameter(apvts, driveParamID, driveParam);
         castParameter(apvts, adaaOrderParamID, adaaOrderParam);
+        castParameter(apvts, feedbackParamID, feedbackParam);
+        castParameter(apvts, dampHzParamID, dampHzParam);
+        castParameter(apvts, crossFeedParamID, crossFeedParam);
+        castParameter(apvts, loopDriveParamID, loopDriveParam);
+        castParameter(apvts, loopSatOrderParamID, loopSatOrderParam);
+        castParameter(apvts, diffusionParamID, diffusionParam);
+        castParameter(apvts, diffuserSizeParamID, diffuserSizeParam);
+        castParameter(apvts, diffModDepthParamID, diffModDepthParam);
+        castParameter(apvts, diffModRateHzParamID, diffModRateHzParam);
+        castParameter(apvts, enableDiffuserParamID, enableDiffuserParam);
     }
 
     static AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
@@ -60,6 +80,26 @@ public:
         layout.add(std::make_unique<AudioParameterFloat>(driveParamID, "Drive", NormalisableRange{0.0f, 40.0f}, 0.0f));
         layout.add(std::make_unique<AudioParameterChoice>(adaaOrderParamID, "ADAA Order",
                                                           StringArray{"Off", "1st", "2nd"}, 2));
+        // --- feedback / diffusion ---
+        layout.add(std::make_unique<AudioParameterFloat>(feedbackParamID, "Feedback",
+                                                         NormalisableRange{0.0f, 1.2f}, 0.0f));
+        layout.add(std::make_unique<AudioParameterFloat>(dampHzParamID, "Loop Damp",
+                                                         NormalisableRange{20.0f, 20000.0f}, 6000.0f));
+        layout.add(std::make_unique<AudioParameterFloat>(crossFeedParamID, "Cross Feed",
+                                                         NormalisableRange{0.0f, 1.0f}, 0.0f));
+        layout.add(std::make_unique<AudioParameterFloat>(loopDriveParamID, "Loop Drive",
+                                                         NormalisableRange{0.1f, 16.0f}, 1.0f));
+        layout.add(std::make_unique<AudioParameterChoice>(loopSatOrderParamID, "Loop Sat Order",
+                                                          StringArray{"Off", "1st", "2nd"}, 2));
+        layout.add(std::make_unique<AudioParameterFloat>(diffusionParamID, "Diffusion",
+                                                         NormalisableRange{0.0f, 1.0f}, 0.7f));
+        layout.add(std::make_unique<AudioParameterFloat>(diffuserSizeParamID, "Diffuser Size",
+                                                         NormalisableRange{0.0f, 1.0f}, 0.5f));
+        layout.add(std::make_unique<AudioParameterFloat>(diffModDepthParamID, "Diff Mod Depth",
+                                                         NormalisableRange{0.0f, 64.0f}, 16.0f));
+        layout.add(std::make_unique<AudioParameterFloat>(diffModRateHzParamID, "Diff Mod Rate",
+                                                         NormalisableRange{0.0f, 8.0f}, 0.5f));
+        layout.add(std::make_unique<AudioParameterBool>(enableDiffuserParamID, "Enable Diffuser", false));
         return layout;
     }
 
@@ -170,6 +210,17 @@ public:
     [[nodiscard]] float getRawHpfHz() const noexcept { return hpfParam ? hpfParam->get() : 20.0f; }
     [[nodiscard]] float getRawLpfHz() const noexcept { return lpfParam ? lpfParam->get() : 20000.0f; }
 
+    [[nodiscard]] float getRawFeedback() const noexcept { return feedbackParam ? feedbackParam->get() : 0.0f; }
+    [[nodiscard]] float getRawDampHz() const noexcept { return dampHzParam ? dampHzParam->get() : 6000.0f; }
+    [[nodiscard]] float getRawCrossFeed() const noexcept { return crossFeedParam ? crossFeedParam->get() : 0.0f; }
+    [[nodiscard]] float getRawLoopDrive() const noexcept { return loopDriveParam ? loopDriveParam->get() : 1.0f; }
+    [[nodiscard]] int getRawLoopSatOrder() const noexcept { return loopSatOrderParam ? loopSatOrderParam->getIndex() : 2; }
+    [[nodiscard]] float getRawDiffusion() const noexcept { return diffusionParam ? diffusionParam->get() : 0.7f; }
+    [[nodiscard]] float getRawDiffuserSize() const noexcept { return diffuserSizeParam ? diffuserSizeParam->get() : 0.5f; }
+    [[nodiscard]] float getRawDiffModDepth() const noexcept { return diffModDepthParam ? diffModDepthParam->get() : 16.0f; }
+    [[nodiscard]] float getRawDiffModRateHz() const noexcept { return diffModRateHzParam ? diffModRateHzParam->get() : 0.5f; }
+    [[nodiscard]] bool getRawEnableDiffuser() const noexcept { return enableDiffuserParam != nullptr && enableDiffuserParam->get(); }
+
     static constexpr float minDelayTime = 5.0f;
     static constexpr float maxDelayTime = 5000.0f;
 
@@ -197,6 +248,16 @@ private:
     AudioParameterBool *bypassParam{};
     AudioParameterFloat *driveParam{};
     AudioParameterChoice *adaaOrderParam{};
+    AudioParameterFloat *feedbackParam{};
+    AudioParameterFloat *dampHzParam{};
+    AudioParameterFloat *crossFeedParam{};
+    AudioParameterFloat *loopDriveParam{};
+    AudioParameterChoice *loopSatOrderParam{};
+    AudioParameterFloat *diffusionParam{};
+    AudioParameterFloat *diffuserSizeParam{};
+    AudioParameterFloat *diffModDepthParam{};
+    AudioParameterFloat *diffModRateHzParam{};
+    AudioParameterBool *enableDiffuserParam{};
 
     LinearSmoothedValue<float> gainSmoother;
     LinearSmoothedValue<float> bitsSmoother;
