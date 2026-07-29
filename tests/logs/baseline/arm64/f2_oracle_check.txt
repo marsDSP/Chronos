@@ -1,0 +1,52 @@
+=== Chronos TanhNL antiderivative oracle harness ===
+oracle: double-double closed form vs DD Gauss-Legendre-16 quadrature
+sweep density: 200 points/region, agreement grid 300 points
+
+twoSum/twoProd exactness: PASS
+dd mul/div int round-trip (bit-exact): PASS
+tanh series coefficient anchors (DD recurrence): PASS
+F2 series coefficient anchors: PASS
+Gauss-Legendre-16 rule in DD (sum w = 2): PASS
+exp(-2)   vs 60-digit anchor: |diff| = 0.000e+00 (gate 1e-28)
+Li2(-e^-2) vs 60-digit anchor: |diff| = 1.541e-33 (gate 1e-28)
+ln cosh(1) vs 60-digit anchor: |diff| = 0.000e+00 (gate 1e-26)
+F2(1)     vs 60-digit anchor: |diff| = 1.541e-33 (gate 1e-26)
+series-vs-quadrature at a = 0.5: rel diff = 4.262e-32 (gate 1e-25)
+dd transcendentals vs 60-digit anchors: PASS
+closed form vs quadrature, 300 log-spaced points in [1e-12, 1000]
+    plus the a = 0.5 switch: max rel diff = 1.210e-30 at x = 1.000000e+03 (gate 1e-25)
+oracle agreement (1e-25): PASS
+F2 single-point relative error vs reference (factor-2 gate):
+    x =  1.0e-08 : rel err = 1.541e+08   ref 4.600e+08   ratio 0.33 
+    x =  4.0e-06 : rel err = 1.702e+00   ref 1.700e+00   ratio 1.00 
+    x =  6.0e-06 : rel err = 8.332e-01   ref 8.300e-01   ratio 1.00 
+    x =  8.0e-06 : rel err = 3.704e-01   ref 3.700e-01   ratio 1.00 
+    x =  1.0e-05 : rel err = 1.279e-01   ref 1.300e-01   ratio 0.98 
+    x =  1.8e-05 : rel err = 5.459e-03   ref 5.500e-03   ratio 0.99 
+    x =  3.0e-05 : rel err = 8.106e-03   ref 8.100e-03   ratio 1.00 
+    x =  1.0e-04 : rel err = 2.526e-05   ref 2.500e-05   ratio 1.01 
+    x =  1.0e-03 : rel err = 1.432e-07   ref 1.400e-07   ratio 1.02 
+F2 single-point absolute error vs reference (factor-2 gate):
+    x =     17.6 : abs err = 2.842e-14   ref 2.970e-14   ratio 0.96 
+    x =    520.0 : abs err = 0.000e+00   ref 3.870e-11   ratio 0.00 
+status-quo F2 single-point gates: PASS
+F2 status-quo error table (200 points per region):
+  [  1e-09,   1e-03]  rel  2.15e+11 @ 1.072e-09 (unbounded)   abs  1.06e-16 @ 3.827e-05 (ref-bounded)
+  [  1e-03,   1e-01]  rel  2.01e-07 @ 1.123e-03 (ref 1.4e-7)   abs  9.71e-17 @ 7.488e-03 (ref-bounded)
+  [  1e-01,   5e-01]  rel  4.16e-13 @ 1.058e-01 (ref 5.5e-13)   abs  8.80e-17 @ 2.704e-01 (no ref)
+  [  5e-01,   1e+00]  rel  2.19e-15 @ 5.268e-01 (ref 3.2e-15)   abs  9.71e-17 @ 8.976e-01 (ref-bounded)
+  [  1e+00,   3e+00]  rel  3.58e-16 @ 1.161e+00 (ref 7.6e-16)   abs  4.44e-16 @ 2.628e+00 (no ref)
+  [  3e+00,   2e+01]  rel  2.15e-16 @ 8.798e+00 (ref 3.1e-16)   abs  2.84e-14 @ 1.700e+01 (ref-bounded)
+  [  2e+01,   7e+02]  rel  2.19e-16 @ 2.583e+02 (ref 3.0e-16)   abs  2.91e-11 @ 5.238e+02 (ref-bounded)
+status-quo F2 region table (factor-5 alarm): PASS
+F1 status-quo error table (200 points per region, informational):
+  [  1e-09,   1e-03]  rel  1.92e+02 @ 1.072e-09 (-)   abs  1.17e-16 @ 8.907e-06 (no ref)
+  [  1e-03,   1e-01]  rel  1.71e-10 @ 1.260e-03 (-)   abs  1.36e-16 @ 1.260e-03 (no ref)
+  [  1e-01,   5e-01]  rel  2.09e-14 @ 1.016e-01 (-)   abs  1.61e-16 @ 1.295e-01 (no ref)
+  [  5e-01,   1e+00]  rel  4.62e-16 @ 5.000e-01 (-)   abs  5.55e-17 @ 5.000e-01 (no ref)
+  [  1e+00,   3e+00]  rel  2.17e-16 @ 1.680e+00 (-)   abs  4.44e-16 @ 2.823e+00 (no ref)
+  [  3e+00,   2e+01]  rel  2.20e-16 @ 4.726e+00 (-)   abs  3.55e-15 @ 1.684e+01 (no ref)
+  [  2e+01,   7e+02]  rel  0.00e+00 @ 0.000e+00 (-)   abs  0.00e+00 @ 0.000e+00 (no ref)
+status-quo F1 region table: printed (no gates)
+
+=== ALL PROPERTIES HELD ===
