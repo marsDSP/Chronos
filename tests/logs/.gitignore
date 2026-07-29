@@ -1,0 +1,7 @@
+# Ad-hoc harness runs are scratch. Recorded baselines are tracked.
+*
+!.gitignore
+!baseline/
+!baseline/**
+!post-*/
+!post-*/**
