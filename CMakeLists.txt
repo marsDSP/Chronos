@@ -43,11 +43,6 @@ if(APPLE)
     set(CMAKE_XCODE_ATTRIBUTE_MACOSX_DEPLOYMENT_TARGET[arch=arm64] "11.0" CACHE STRING "arm 64 minimum deployment target" FORCE)
 endif()
 
-# Disable all warnings on non-MSVC compilers
-if(NOT MSVC)
-    add_definitions(-w)
-endif()
-
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE INTERNAL "")
 endif()
