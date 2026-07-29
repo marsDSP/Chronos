@@ -59,12 +59,13 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           set -euo pipefail
-          # GCC 13+ reports __cplusplus = 202302L for -std=c++23; GCC 12 reports
-          # 202100L, which fails Config.h's static_assert(__cplusplus >= 202302L).
+          # GCC 14 is the first to report __cplusplus = 202302L for -std=c++23;
+          # GCC 13 reports 202100L, which fails Config.h's
+          # static_assert(__cplusplus >= 202302L).
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc-13 g++-13
-          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 100
-          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-13 100
+          sudo apt-get install -y --no-install-recommends gcc-14 g++-14
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
           g++ --version
 
       - name: Set up Python 3

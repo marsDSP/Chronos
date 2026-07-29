@@ -45,6 +45,10 @@ endif()
 
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE INTERNAL "")
+    # MSVC reports __cplusplus = 199711L by default, which fails Config.h's
+    # static_assert(__cplusplus >= 202302L). /Zc:__cplusplus makes MSVC report
+    # the real value (202302L under /std:c++latest, which cxx_std_23 selects).
+    add_compile_options(/Zc:__cplusplus)
 endif()
 
 # Define the plugin
