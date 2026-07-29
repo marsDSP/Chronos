@@ -141,14 +141,30 @@ namespace MarsDSP::Delays
                 const int bNew = (blockStart + sampleOffset - iNew - 3) & mask;
 
                 const int winLen = subN + kTail;
-                bufL_.readWindow(scratchOldL_.data(), bOld, winLen);
-                bufL_.readWindow(scratchNewL_.data(), bNew, winLen);
+                // elide the contiguous-window copy. When windowPtr returns
+                // non-null the window is contiguous in the mirrored ring and
+                // read directly from it; otherwise fall back to readWindow
+                // into the 16-byte-aligned scratch. The SIMD eval4 below uses
+                // loadu_ps for the pointer path (a ring pointer is not 16-byte
+                // aligned in general) and load_ps for the scratch path
+                const float* oldL = bufL_.windowPtr(bOld, winLen);
+                const float* newL = bufL_.windowPtr(bNew, winLen);
+                if (oldL == nullptr) { bufL_.readWindow(scratchOldL_.data(), bOld, winLen); oldL = scratchOldL_.data(); }
+                if (newL == nullptr) { bufL_.readWindow(scratchNewL_.data(), bNew, winLen); newL = scratchNewL_.data(); }
 
+                const float* oldR = nullptr;
+                const float* newR = nullptr;
                 if (hasR)
                 {
-                    bufR_.readWindow(scratchOldR_.data(), bOld, winLen);
-                    bufR_.readWindow(scratchNewR_.data(), bNew, winLen);
+                    oldR = bufR_.windowPtr(bOld, winLen);
+                    newR = bufR_.windowPtr(bNew, winLen);
+                    if (oldR == nullptr) { bufR_.readWindow(scratchOldR_.data(), bOld, winLen); oldR = scratchOldR_.data(); }
+                    if (newR == nullptr) { bufR_.readWindow(scratchNewR_.data(), bNew, winLen); newR = scratchNewR_.data(); }
                 }
+                const bool oldLAligned = (oldL == scratchOldL_.data());
+                const bool newLAligned = (newL == scratchNewL_.data());
+                const bool oldRAligned = (oldR == scratchOldR_.data());
+                const bool newRAligned = (newR == scratchNewR_.data());
 
                 const float invSubN = 1.0f / static_cast<float>(subN);
 
@@ -165,7 +181,14 @@ namespace MarsDSP::Delays
                     const M128 laneOff = MM(mul_ps)(MM(set_ps)(3.0f, 2.0f, 1.0f, 0.0f), MM(set1_ps)(invSubN));
 
                     // Evaluate 4 consecutive output samples starting at j0 into dst.
-                    auto eval4 = [&](float const *scratchOld, float const *scratchNew, float *dst, int j0)
+                    // The `aligned` flags select load_ps (scratch path, 16-byte
+                    // aligned) vs loadu_ps (pointer path, ring address). On any
+                    // core from the last decade loadu_ps on an aligned address
+                    // is free, so the pointer path should win despite the
+                    // unaligned load
+                    auto eval4 = [&](float const *scratchOld, bool oldAligned,
+                                     float const *scratchNew, bool newAligned,
+                                     float *dst, int j0)
                     {
                         const M128 vAlpha = MM(add_ps)(laneOff, MM(set1_ps)(static_cast<float>(j0) * invSubN));
 
@@ -174,12 +197,12 @@ namespace MarsDSP::Delays
 
                         for (int t = 0; t < 6; ++t)
                         {
-                            const M128 wOld = (t == 0)
+                            const M128 wOld = (t == 0 && oldAligned)
                                                   ? MM(load_ps)(scratchOld + j0)
                                                   : MM(loadu_ps)(scratchOld + j0 + t);
                             vOld = FMADD(wOld, cbOld[static_cast<std::size_t>(t)], vOld);
 
-                            const M128 wNew = (t == 0)
+                            const M128 wNew = (t == 0 && newAligned)
                                                   ? MM(load_ps)(scratchNew + j0)
                                                   : MM(loadu_ps)(scratchNew + j0 + t);
                             vNew = FMADD(wNew, cbNew[static_cast<std::size_t>(t)], vNew);
@@ -193,20 +216,20 @@ namespace MarsDSP::Delays
                     const int jFull = subN & ~3; // largest multiple of 4 ≤ subN
                     for (int j0 = 0; j0 + 4 <= subN; j0 += 4)
                     {
-                        eval4(scratchOldL_.data(), scratchNewL_.data(), wetL + sampleOffset + j0, j0);
-                        if (hasR) eval4(scratchOldR_.data(), scratchNewR_.data(), wetR + sampleOffset + j0, j0);
+                        eval4(oldL, oldLAligned, newL, newLAligned, wetL + sampleOffset + j0, j0);
+                        if (hasR) eval4(oldR, oldRAligned, newR, newRAligned, wetR + sampleOffset + j0, j0);
                     }
                     // ---- scalar tail for the 0..3 remaining samples ----
                     for (int j = jFull; j < subN; ++j)
                     {
                         const float alpha = static_cast<float>(j) * invSubN;
-                        const float yOldL = dot6(cOld, &scratchOldL_[static_cast<std::size_t>(j)]);
-                        const float yNewL = dot6(cNew, &scratchNewL_[static_cast<std::size_t>(j)]);
+                        const float yOldL = dot6(cOld, oldL + j);
+                        const float yNewL = dot6(cNew, newL + j);
                         wetL[sampleOffset + j] = (1.0f - alpha) * yOldL + alpha * yNewL;
                         if (hasR)
                         {
-                            const float yOldR = dot6(cOld, &scratchOldR_[static_cast<std::size_t>(j)]);
-                            const float yNewR = dot6(cNew, &scratchNewR_[static_cast<std::size_t>(j)]);
+                            const float yOldR = dot6(cOld, oldR + j);
+                            const float yNewR = dot6(cNew, newR + j);
                             wetR[sampleOffset + j] = (1.0f - alpha) * yOldR + alpha * yNewR;
                         }
                     }
@@ -215,13 +238,13 @@ namespace MarsDSP::Delays
                     for (int j = 0; j < subN; ++j)
                     {
                         const float alpha = static_cast<float>(j) * invSubN;
-                        const float yOldL = dot6(cOld, &scratchOldL_[static_cast<std::size_t>(j)]);
-                        const float yNewL = dot6(cNew, &scratchNewL_[static_cast<std::size_t>(j)]);
+                        const float yOldL = dot6(cOld, oldL + j);
+                        const float yNewL = dot6(cNew, newL + j);
                         wetL[sampleOffset + j] = (1.0f - alpha) * yOldL + alpha * yNewL;
                         if (hasR)
                         {
-                            const float yOldR = dot6(cOld, &scratchOldR_[static_cast<std::size_t>(j)]);
-                            const float yNewR = dot6(cNew, &scratchNewR_[static_cast<std::size_t>(j)]);
+                            const float yOldR = dot6(cOld, oldR + j);
+                            const float yNewR = dot6(cNew, newR + j);
                             wetR[sampleOffset + j] = (1.0f - alpha) * yOldR + alpha * yNewR;
                         }
                     }

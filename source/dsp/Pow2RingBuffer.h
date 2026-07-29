@@ -67,6 +67,20 @@ namespace MarsDSP::Delays {
             if (remainder > 0) std::memcpy(dst + first, storage_.get() + kTail, static_cast<size_t>(remainder) * sizeof(float));
         }
 
+        // Returns a pointer directly into the ring when the window [startIdx,
+        // startIdx+len) is contiguous (does not wrap past capacity_), or nullptr
+        // if it wraps. When non-null, the caller can read `len` floats directly
+        // from the returned pointer instead of copying into a scratch buffer.
+        // The mirror region [capacity_, capacity_+kTail) makes windows that peek
+        // past the end (but before the second wrap) contiguous too.
+        [[nodiscard]] const float* windowPtr(int startIdx, int len) const noexcept {
+            assert(startIdx >= 0 && startIdx < capacity_);
+            assert(len > 0 && len <= capacity_);
+            return (startIdx + len <= capacity_ + kTail)
+                       ? storage_.get() + startIdx
+                       : nullptr;
+        }
+
         // ---- copy / move ----
         Pow2RingBuffer() noexcept = default;
         Pow2RingBuffer(const Pow2RingBuffer &) = delete;

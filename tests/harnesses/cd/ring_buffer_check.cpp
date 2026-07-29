@@ -16,6 +16,10 @@
 //                        Catches refreshMirror/write ordering bugs.
 //   5. Large capacity  – sampled subset at 1 << 18 with starts clustered near
 //                        the wrap, catching overflow in startIdx + length.
+//   6. windowPtr parity – for every (startIdx, len) where windowPtr is
+//                        non-null, it returns the same data as readWindow;
+//                        and windowPtr returns null exactly when a naive
+//                        modulo oracle says the window wraps past the mirror.
 //
 // Conventions (matching tan_bench): plain main(), exit code, printf, always-
 // live CHECK/FAIL (NOT assert — NDEBUG in Release would void every test).
@@ -287,6 +291,57 @@ int runAll()
                      k, (double)peek[k + 1], (double)oracle.model[k]);
 
         std::printf("large capacity (1<<18), wrap-clustered: PASS\n");
+    }
+
+    // ── 6. windowPtr parity (C6) ──────────────────────────────────────────
+    g_section = "windowPtr parity";
+    {
+        Pow2RingBuffer buf;
+        buf.prepare(kTestCap);
+        const int cap = buf.getCapacity();
+        oracle.init(cap);
+
+        // Ramp-fill so every index carries a distinct value.
+        std::vector<float> ramp(static_cast<std::size_t>(cap));
+        for (int i = 0; i < cap; ++i) ramp[i] = static_cast<float>(i + 1);
+        buf.writeBlock(ramp.data(), 0, cap);
+        buf.refreshMirror(0, cap);
+        oracle.write(0, ramp.data(), cap);
+
+        std::vector<float> viaRead, viaPtr;
+        for (int start = 0; start < cap; ++start)
+        {
+            for (int len = 1; len <= kMaxWindow; ++len)
+            {
+                viaRead.resize(static_cast<std::size_t>(len));
+                viaPtr.resize(static_cast<std::size_t>(len));
+                buf.readWindow(viaRead.data(), start, len);
+                const float* p = buf.windowPtr(start, len);
+
+                // Naive modulo oracle: does the window wrap past the mirror?
+                const bool wraps = (start + len) > (cap + kTail);
+
+                if (p == nullptr)
+                {
+                    if (!wraps)
+                        FAIL("start=%d len=%d: windowPtr null but oracle says contiguous", start, len);
+                }
+                else
+                {
+                    if (wraps)
+                        FAIL("start=%d len=%d: windowPtr non-null but oracle says wrap", start, len);
+                    for (int j = 0; j < len; ++j)
+                        viaPtr[static_cast<std::size_t>(j)] = p[j];
+                    for (int j = 0; j < len; ++j)
+                        if (viaPtr[static_cast<std::size_t>(j)] != viaRead[static_cast<std::size_t>(j)])
+                            FAIL("start=%d len=%d j=%d: ptr=%g read=%g",
+                                 start, len, j,
+                                 (double)viaPtr[static_cast<std::size_t>(j)],
+                                 (double)viaRead[static_cast<std::size_t>(j)]);
+                }
+            }
+        }
+        std::printf("windowPtr parity (contiguous == readWindow, null == wrap oracle): PASS\n");
     }
 
     return 0;
