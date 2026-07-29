@@ -66,6 +66,8 @@ namespace MarsDSP {
             wetPostSvfR_   .resize(static_cast<std::size_t>(wetBufCapacity_));
             bypassDryInL_  .resize(static_cast<std::size_t>(wetBufCapacity_));
             bypassDryInR_  .resize(static_cast<std::size_t>(wetBufCapacity_));
+            blendL_        .resize(static_cast<std::size_t>(wetBufCapacity_));
+            blendR_        .resize(static_cast<std::size_t>(wetBufCapacity_));
 
             bypassSmoother_.reset(sampleRate, 0.01);
             bypassDryL_.reset();
@@ -308,30 +310,82 @@ namespace MarsDSP {
                     }
                 }
 
-                // ── 9. Dither + quant stage (stateless except RNG) ────────
+                // ── 9a. Bypass blend (scalar, stateful: dry delay + fade) ──
                 for (int s = 0; s < chunk; ++s)
                 {
                     const auto u = static_cast<std::size_t>(s);
-                    const float gainLin = gainRamp_[u];
-                    const float lsb = lsbRamp_[u];
                     const float bypassAmt = bypassSmoother_.getNextValue();
-
-                    for (int ch = 0; ch < numChannels; ++ch)
                     {
-                        auto *data = io[ch];
-                        const float rawIn = (ch == 0)
-                            ? bypassDryInL_[u]
-                            : (hasR ? bypassDryInR_[u] : 0.0f);
-                        auto &dryDelay = ch == 0 ? bypassDryL_ : bypassDryR_;
-                        const float dryDelayed = dryDelay.process(rawIn);
-                        // Blend: (1-bypass) * processed + bypass * dryDelayed
-                        float blended = data[offset + s] * (1.0f - bypassAmt)
-                                      + dryDelayed * bypassAmt;
-                        // Dither + quant on the blended result
-                        auto &state = ch == 0 ? xorshiftL_ : xorshiftR_;
-                        const float scaled = blended * gainLin;
-                        const float dither = (nextUniform(state) - nextUniform(state)) * lsb;
-                        data[offset + s] = std::round((scaled + dither) / lsb) * lsb;
+                        const float rawIn = bypassDryInL_[u];
+                        const float dryDelayed = bypassDryL_.process(rawIn);
+                        blendL_[u] = data0[offset + s] * (1.0f - bypassAmt)
+                                   + dryDelayed * bypassAmt;
+                    }
+                    if (hasR)
+                    {
+                        const float rawIn = bypassDryInR_[u];
+                        const float dryDelayed = bypassDryR_.process(rawIn);
+                        blendR_[u] = data1[offset + s] * (1.0f - bypassAmt)
+                                   + dryDelayed * bypassAmt;
+                    }
+                }
+
+                // ── 9b. Gain + TPDF dither + quant (V2 SIMD) ──────────────
+                // lsb is block-constant. Rounding: emulate
+                // round-half-away-from-zero via trunc(x + copysign(0.5, x)).
+                const M128 vLsb = MM(set1_ps)(blockLsb);
+                const M128 vInvLsb = MM(set1_ps)(1.0f / blockLsb);
+                const M128 vHalf = MM(set1_ps)(0.5f);
+                const M128 vSignMask = MM(set1_ps)(-0.0f);
+                const int jFull = chunk & ~3;
+                for (int s = 0; s + 4 <= chunk; s += 4)
+                {
+                    const auto u = static_cast<std::size_t>(s);
+                    // L
+                    {
+                        const M128 vBlend = MM(loadu_ps)(blendL_.data() + s);
+                        const M128 vGain = MM(loadu_ps)(gainRamp_.data() + s);
+                        const M128 vScaled = MM(mul_ps)(vBlend, vGain);
+                        const M128 vD1 = nextUniformSimd_(xorshiftSimdL_);
+                        const M128 vD2 = nextUniformSimd_(xorshiftSimdL_);
+                        const M128 vDither = MM(mul_ps)(MM(sub_ps)(vD1, vD2), vLsb);
+                        const M128 vQ = MM(mul_ps)(MM(add_ps)(vScaled, vDither), vInvLsb);
+                        // round-half-away-from-zero: trunc(q + copysign(0.5, q))
+                        const M128 vSign = MM(and_ps)(vQ, vSignMask);
+                        const M128 vShifted = MM(add_ps)(vQ, MM(or_ps)(vHalf, vSign));
+                        const M128 vRounded = MM(round_ps)(vShifted, 0x0B); // TO_ZERO | NO_EXC
+                        MM(storeu_ps)(data0 + offset + s, MM(mul_ps)(vRounded, vLsb));
+                    }
+                    if (hasR)
+                    {
+                        const M128 vBlend = MM(loadu_ps)(blendR_.data() + s);
+                        const M128 vGain = MM(loadu_ps)(gainRamp_.data() + s);
+                        const M128 vScaled = MM(mul_ps)(vBlend, vGain);
+                        const M128 vD1 = nextUniformSimd_(xorshiftSimdR_);
+                        const M128 vD2 = nextUniformSimd_(xorshiftSimdR_);
+                        const M128 vDither = MM(mul_ps)(MM(sub_ps)(vD1, vD2), vLsb);
+                        const M128 vQ = MM(mul_ps)(MM(add_ps)(vScaled, vDither), vInvLsb);
+                        const M128 vSign = MM(and_ps)(vQ, vSignMask);
+                        const M128 vShifted = MM(add_ps)(vQ, MM(or_ps)(vHalf, vSign));
+                        const M128 vRounded = MM(round_ps)(vShifted, 0x0B);
+                        MM(storeu_ps)(data1 + offset + s, MM(mul_ps)(vRounded, vLsb));
+                    }
+                }
+                // Scalar tail
+                for (int s = jFull; s < chunk; ++s)
+                {
+                    const auto u = static_cast<std::size_t>(s);
+                    const float gainLin = gainRamp_[u];
+                    {
+                        const float scaled = blendL_[u] * gainLin;
+                        const float dither = (nextUniform(xorshiftL_) - nextUniform(xorshiftL_)) * blockLsb;
+                        data0[offset + s] = std::round((scaled + dither) / blockLsb) * blockLsb;
+                    }
+                    if (hasR)
+                    {
+                        const float scaled = blendR_[u] * gainLin;
+                        const float dither = (nextUniform(xorshiftR_) - nextUniform(xorshiftR_)) * blockLsb;
+                        data1[offset + s] = std::round((scaled + dither) / blockLsb) * blockLsb;
                     }
                 }
 
@@ -350,6 +404,20 @@ namespace MarsDSP {
         {
             xorshiftL_ = l;
             xorshiftR_ = r;
+            // V2: seed 4-lane SIMD xorshift. Each lane gets a different
+            // seed derived from the base seed. Zero-state guard: if a
+            // lane is zero, set it to 1.
+            std::uint32_t seedsL[4] = { l, l * 2654435761u + 1u, l * 40503u + 2u, l * 2246822519u + 3u };
+            std::uint32_t seedsR[4] = { r, r * 2654435761u + 1u, r * 40503u + 2u, r * 2246822519u + 3u };
+            for (int i = 0; i < 4; ++i)
+            {
+                if (seedsL[i] == 0u) seedsL[i] = 1u;
+                if (seedsR[i] == 0u) seedsR[i] = 1u;
+            }
+            alignas(16) std::uint32_t vL[4] = { seedsL[0], seedsL[1], seedsL[2], seedsL[3] };
+            alignas(16) std::uint32_t vR[4] = { seedsR[0], seedsR[1], seedsR[2], seedsR[3] };
+            xorshiftSimdL_ = MM(load_si128)(reinterpret_cast<const M128I*>(vL));
+            xorshiftSimdR_ = MM(load_si128)(reinterpret_cast<const M128I*>(vR));
         }
 
         void setBypass(bool bypassed) noexcept
@@ -401,6 +469,22 @@ namespace MarsDSP {
             return static_cast<float>(state >> 8) * (1.0f / 16777216.0f);
         }
 
+        // V2: 4-lane SIMD xorshift32. Each lane is independent.
+        M128I xorshiftSimdL_{};
+        M128I xorshiftSimdR_{};
+
+        static M128 nextUniformSimd_(M128I& state) noexcept
+        {
+            // xorshift32 on all 4 lanes: x ^= x<<13; x ^= x>>17; x ^= x<<5
+            state = MM(xor_si128)(state, MM(slli_epi32)(state, 13));
+            state = MM(xor_si128)(state, MM(srli_epi32)(state, 17));
+            state = MM(xor_si128)(state, MM(slli_epi32)(state, 5));
+            // top 24 bits -> float in [0, 1)
+            const M128I shifted = MM(srli_epi32)(state, 8);
+            const M128 asFloat = MM(cvtepi32_ps)(shifted);
+            return MM(mul_ps)(asFloat, MM(set1_ps)(1.0f / 16777216.0f));
+        }
+
         Smoothers::LinearSmoother<float> gainSmoother_;
         Smoothers::LinearSmoother<float> hpfSmoother_;
         Smoothers::LinearSmoother<float> lpfSmoother_;
@@ -434,6 +518,8 @@ namespace MarsDSP {
         std::vector<float> wetPostSvfR_;
         std::vector<float> bypassDryInL_;
         std::vector<float> bypassDryInR_;
+        std::vector<float> blendL_;
+        std::vector<float> blendR_;
 
         double sampleRate_{0.0};
         int numChannels_{0};

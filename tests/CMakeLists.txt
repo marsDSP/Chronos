@@ -40,6 +40,8 @@ if(BUILD_TEST_HARNESSES)
     target_link_libraries(bypass_null_check PRIVATE SharedCode)
     add_executable(crossfade_parity harnesses/simd/crossfade_parity.cpp)
     target_link_libraries(crossfade_parity PRIVATE SharedCode)
+    add_executable(dither_check harnesses/dsp/dither_check.cpp)
+    target_link_libraries(dither_check PRIVATE SharedCode)
     if(MSVC)
         target_compile_options(crossfade_parity PRIVATE /O2)
     else()
@@ -145,7 +147,7 @@ if(BUILD_TEST_HARNESSES)
     endif()
 
     # ── CTest registration ──────────────────────────────────────────────
-    # 17 correctness harnesses: exit 0 = pass. The 4 benchmarks (tan_bench,
+    # 18 correctness harnesses: exit 0 = pass. The 4 benchmarks (tan_bench,
     # adaa_bench, delay_line_bench, chain_bench) are labeled "bench" so
     # `ctest -LE bench` excludes them. they report numbers rather than pass/fail
     # (delay_line_bench does carry a timing-dependent SIMD≤1.05×scalar gate
@@ -161,6 +163,7 @@ if(BUILD_TEST_HARNESSES)
     add_test(NAME chain_parity           COMMAND chain_parity)
     add_test(NAME bypass_null_check      COMMAND bypass_null_check)
     add_test(NAME crossfade_parity       COMMAND crossfade_parity)
+    add_test(NAME dither_check            COMMAND dither_check)
     add_test(NAME simd_delay_check       COMMAND simd_delay_check)
     add_test(NAME dilog_check            COMMAND dilog_check)
     add_test(NAME nonlinearity_check     COMMAND nonlinearity_check)

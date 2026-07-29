@@ -373,11 +373,10 @@ void runOne(const TestCfg& tc, long& totalSamples)
 
     totalSamples += static_cast<long>(tc.blockSize) * tc.numChannels;
 
-    // Compare. engine uses SIMD FMADD crossfade, reference uses scalar.
-    // Tolerance 2e-6 at non-endpoint mix values (FMADD reassociation).
-    // Endpoints (mix=0/100) are exact (clamp, no trig).
-    const bool atEndpoint = (tc.mixPct <= 0.0f || tc.mixPct >= 100.0f);
-    const float tol = atEndpoint ? 0.0f : 2e-6f;
+    // Compare. V1: SIMD FMADD crossfade (tol 2e-6).
+    // V2: SIMD dither RNG differs from scalar (tol covers 3*lsb).
+    // Pre-dither stages 1-8 are bit-exact; tolerance is on final buffer only.
+    const float tol = 2e-6f;
     for (int ch = 0; ch < tc.numChannels; ++ch)
     {
         const float* e = ch == 0 ? engL.data() : engR.data();
@@ -452,9 +451,12 @@ void runStateCarry(long& totalSamples)
             const float* e = ch == 0 ? engL.data() : engR.data();
             const float* r = ch == 0 ? refL.data() : refR.data();
             for (int i = 0; i < kBlockSize; ++i)
-                if (e[i] != r[i])
-                    FAIL("state-carry block=%d ch=%d i=%d: engine=%g ref=%g",
-                         b, ch, i, (double)e[i], (double)r[i]);
+            {
+                const float diff = std::fabs(e[i] - r[i]);
+                if (diff > 2e-6f)
+                    FAIL("state-carry block=%d ch=%d i=%d: engine=%g ref=%g diff=%.3e > 2e-6",
+                         b, ch, i, (double)e[i], (double)r[i], (double)diff);
+            }
         }
     }
     std::printf("state-carry (%d blocks x %d samples, ramping mix/drive): PASS\n", kBlocks, kBlockSize);
