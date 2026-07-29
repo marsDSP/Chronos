@@ -148,9 +148,9 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear(i, 0, buffer.getNumSamples());
 
-    if (parameters.getBypass()) return;
-
+    // The engine handles bypass internally with a latency-aligned fade.
     parameters.update();
+    engine.setBypass(parameters.getBypass());
 
     const int numSamples = buffer.getNumSamples();
     if (numSamples <= 0) return;

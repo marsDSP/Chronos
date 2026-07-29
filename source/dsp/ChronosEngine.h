@@ -62,6 +62,14 @@ namespace MarsDSP {
             alignedDryR_   .resize(static_cast<std::size_t>(wetBufCapacity_));
             wetPostSvfL_   .resize(static_cast<std::size_t>(wetBufCapacity_));
             wetPostSvfR_   .resize(static_cast<std::size_t>(wetBufCapacity_));
+            bypassDryInL_  .resize(static_cast<std::size_t>(wetBufCapacity_));
+            bypassDryInR_  .resize(static_cast<std::size_t>(wetBufCapacity_));
+
+            bypassSmoother_.reset(sampleRate, 0.01);
+            bypassDryL_.reset();
+            bypassDryR_.reset();
+            bypassDryL_.setDelay(latencySamples());
+            bypassDryR_.setDelay(latencySamples());
 
             constexpr double kRampSeconds = 0.02;
             gainSmoother_.reset(sampleRate, kRampSeconds);
@@ -82,6 +90,11 @@ namespace MarsDSP {
             adaa1L_.reset(); adaa1R_.reset();
             adaa2L_.reset(); adaa2R_.reset();
             alignL_.reset(); alignR_.reset();
+            bypassDryL_.reset(); bypassDryR_.reset();
+            bypassDryL_.setDelay(latencySamples());
+            bypassDryR_.setDelay(latencySamples());
+            bypassSmoother_.setCurrentAndTargetValue(0.0f);
+            bypassTarget_ = 0.0f;
 
             smoothedGain_ = 0.0f;
             smoothedBits_ = 0;
@@ -167,6 +180,9 @@ namespace MarsDSP {
                 // ── 5. Align dry stage (stateful: ShortDelay ring) ────────
                 for (int s = 0; s < chunk; ++s)
                 {
+                    bypassDryInL_[static_cast<std::size_t>(s)] = data0[offset + s];
+                    if (hasR)
+                        bypassDryInR_[static_cast<std::size_t>(s)] = data1[offset + s];
                     alignedDryL_[static_cast<std::size_t>(s)] =
                         alignL_.processDry(data0[offset + s]);
                     if (hasR)
@@ -235,11 +251,22 @@ namespace MarsDSP {
                     const auto u = static_cast<std::size_t>(s);
                     const float gainLin = gainRamp_[u];
                     const float lsb = lsbRamp_[u];
+                    const float bypassAmt = bypassSmoother_.getNextValue();
+
                     for (int ch = 0; ch < numChannels; ++ch)
                     {
                         auto *data = io[ch];
+                        const float rawIn = (ch == 0)
+                            ? bypassDryInL_[u]
+                            : (hasR ? bypassDryInR_[u] : 0.0f);
+                        auto &dryDelay = ch == 0 ? bypassDryL_ : bypassDryR_;
+                        const float dryDelayed = dryDelay.process(rawIn);
+                        // Blend: (1-bypass) * processed + bypass * dryDelayed
+                        float blended = data[offset + s] * (1.0f - bypassAmt)
+                                      + dryDelayed * bypassAmt;
+                        // Dither + quant on the blended result
                         auto &state = ch == 0 ? xorshiftL_ : xorshiftR_;
-                        const float scaled = data[offset + s] * gainLin;
+                        const float scaled = blended * gainLin;
                         const float dither = (nextUniform(state) - nextUniform(state)) * lsb;
                         data[offset + s] = std::round((scaled + dither) / lsb) * lsb;
                     }
@@ -260,6 +287,16 @@ namespace MarsDSP {
         {
             xorshiftL_ = l;
             xorshiftR_ = r;
+        }
+
+        void setBypass(bool bypassed) noexcept
+        {
+            const float newTarget = bypassed ? 1.0f : 0.0f;
+            if (newTarget != bypassTarget_)
+            {
+                bypassTarget_ = newTarget;
+                bypassSmoother_.setTargetValue(newTarget);
+            }
         }
 
     private:
@@ -316,6 +353,11 @@ namespace MarsDSP {
         float smoothedMix_{};
         float smoothedDrive_{};
 
+        Smoothers::LinearSmoother<float> bypassSmoother_;
+        float bypassTarget_{0.0f};
+        Align::ShortDelay<Align::SaturatorAlign::kBudget> bypassDryL_;
+        Align::ShortDelay<Align::SaturatorAlign::kBudget> bypassDryR_;
+
         // preallocated scratch (sized to wetBufCapacity_ in prepare)
         std::vector<float> driveRamp_;
         std::vector<float> thetaRamp_;
@@ -327,6 +369,8 @@ namespace MarsDSP {
         std::vector<float> alignedDryR_;
         std::vector<float> wetPostSvfL_;
         std::vector<float> wetPostSvfR_;
+        std::vector<float> bypassDryInL_;
+        std::vector<float> bypassDryInR_;
 
         double sampleRate_{0.0};
         int numChannels_{0};
