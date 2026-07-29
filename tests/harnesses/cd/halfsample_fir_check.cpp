@@ -269,18 +269,26 @@ int runAll()
     g_section = "memmove parity";
     {
         // Local twin that keeps the OLD memmove-shift logic.
+        // It also returns the sum of term magnitudes.
+        // Use mag to set the error gate.
         struct HalfSampleFirOld {
             std::array<float, kN> z_{};
             void reset() noexcept { z_.fill(0.0f); }
-            float process(float x) noexcept {
+            float process(float x, float& mag) noexcept {
                 std::memmove(z_.data() + 1, z_.data(),
                              static_cast<std::size_t>(kN - 1) * sizeof(float));
                 z_.front() = x;
                 float acc = 0.0f;
+                mag = 0.0f;
                 for (int j = 0; j < kN / 2; ++j)
-                    acc += kHalfSampleCoeffs[static_cast<std::size_t>(j)]
-                         * (z_[static_cast<std::size_t>(j)]
-                            + z_[static_cast<std::size_t>(kN - 1 - j)]);
+                {
+                    const float term =
+                        kHalfSampleCoeffs[static_cast<std::size_t>(j)]
+                        * (z_[static_cast<std::size_t>(j)]
+                           + z_[static_cast<std::size_t>(kN - 1 - j)]);
+                    acc += term;
+                    mag += std::fabs(term);
+                }
                 return acc;
             }
         };
@@ -293,21 +301,28 @@ int runAll()
         constexpr int kM = 2000;
         double maxErr = 0.0;
         int worstN = 0;
+        // 2^-24 is one ULP of a float32 value with magnitude 1.
+        constexpr float k2neg24 = 5.960464e-8f;
         for (int n = 0; n < kM; ++n)
         {
             const float x = 0.5f * std::sin(0.3f * float(n))
                           + 0.3f * std::sin(1.1f * float(n))
                           + 0.01f * float(n);
+            float mag = 0.0f;
             const float yn = neu.process(x);
-            const float yo = old.process(x);
+            const float yo = old.process(x, mag);
             const float e = std::fabs(yn - yo);
             if (e > maxErr) { maxErr = e; worstN = n; }
-            // SIMD FMADD reassociates the MAC order. 8 FMADDs,
-            // each up to 1 ULP difference vs scalar. Gate at 16 ULP.
-            const float ulp = std::max(std::fabs(yn), std::fabs(yo)) * 6e-8f + 1e-10f;
-            if (e > ulp * 16.0f)
-                FAIL("memmove parity n=%d: new=%g old=%g err=%.3e > 4ULP=%.3e",
-                     n, (double)yn, (double)yo, (double)e, (double)(ulp * 4.0f));
+            // The SIMD kernel uses FMADD. FMADD reassociates the MAC order.
+            // Each FMADD can differ from a scalar fma by up to 1 ULP.
+            // Scale the gate by mag, not by the output.
+            // The output can be small due to cancellation.
+            // mag is the sum of term magnitudes. mag measures the true scale.
+            // Gate: err <= 16 * 2^-24 * mag.
+            if (e > 16.0f * k2neg24 * mag)
+                FAIL("memmove parity n=%d: new=%g old=%g err=%.3e > 16ULP=%.3e",
+                     n, (double)yn, (double)yo, (double)e,
+                     (double)(16.0f * k2neg24 * mag));
         }
         std::printf("memmove-vs-circular parity (%d samples, V3 FMADD, max err %.3e at n=%d): PASS\n",
                     kM, maxErr, worstN);
