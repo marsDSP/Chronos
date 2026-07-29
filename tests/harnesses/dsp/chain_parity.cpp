@@ -373,19 +373,24 @@ void runOne(const TestCfg& tc, long& totalSamples)
 
     totalSamples += static_cast<long>(tc.blockSize) * tc.numChannels;
 
-    // Compare bit-exactly. Engine and reference both clamp endpoints
-    // (D1), so bit-exact everywhere.
+    // Compare. engine uses SIMD FMADD crossfade, reference uses scalar.
+    // Tolerance 2e-6 at non-endpoint mix values (FMADD reassociation).
+    // Endpoints (mix=0/100) are exact (clamp, no trig).
+    const bool atEndpoint = (tc.mixPct <= 0.0f || tc.mixPct >= 100.0f);
+    const float tol = atEndpoint ? 0.0f : 2e-6f;
     for (int ch = 0; ch < tc.numChannels; ++ch)
     {
         const float* e = ch == 0 ? engL.data() : engR.data();
         const float* r = ch == 0 ? refL.data() : refR.data();
         for (int i = 0; i < tc.blockSize; ++i)
         {
-            if (e[i] != r[i])
+            const float diff = std::fabs(e[i] - r[i]);
+            if (diff > tol)
                 FAIL("blockSize=%d order=%d ch=%d mix=%.0f drive=%.0f ramp=%d i=%d: "
-                     "engine=%g ref=%g",
+                     "engine=%g ref=%g diff=%.3e > %.0e",
                      tc.blockSize, tc.adaaOrder, ch, tc.mixPct, tc.driveDb,
-                     static_cast<int>(tc.ramping), i, (double)e[i], (double)r[i]);
+                     static_cast<int>(tc.ramping), i, (double)e[i], (double)r[i],
+                     (double)diff, (double)tol);
         }
     }
 }

@@ -250,29 +250,62 @@ namespace MarsDSP {
                 }
 
                 // ── 8. Crossfade stage (stateless) ────────────────────────
-                for (int s = 0; s < chunk; ++s)
+                // 4-wide SIMD. Endpoint clamp from D1 applies to both
+                // paths. If mix is at an endpoint, skip trig entirely.
+                const float mixVal = mixSmoother_.getCurrentValue();
+                const bool fullDry = (mixVal <= 0.0f);
+                const bool fullWet = (mixVal >= 100.0f);
+
+                if (fullDry)
                 {
-                    const auto u = static_cast<std::size_t>(s);
-                    const float mixVal = mixSmoother_.getCurrentValue();
-                    float dryGain;
-                    float wetGain;
-                    if (mixVal <= 0.0f)
+                    for (int s = 0; s < chunk; ++s)
                     {
-                        dryGain = 1.0f;
-                        wetGain = 0.0f;
+                        const auto u = static_cast<std::size_t>(s);
+                        data0[offset + s] = alignedDryL_[u];
+                        if (hasR) data1[offset + s] = alignedDryR_[u];
                     }
-                    else if (mixVal >= 100.0f)
+                }
+                else if (fullWet)
+                {
+                    for (int s = 0; s < chunk; ++s)
                     {
-                        dryGain = 0.0f;
-                        wetGain = 1.0f;
+                        const auto u = static_cast<std::size_t>(s);
+                        data0[offset + s] = wetPostSvfL_[u];
+                        if (hasR) data1[offset + s] = wetPostSvfR_[u];
                     }
-                    else
+                }
+                else
+                {
+                    // SIMD path
+                    const int jFull = chunk & ~3;
+                    for (int s = 0; s + 4 <= chunk; s += 4)
                     {
-                        dryGain = mmCos(thetaRamp_[u]);
-                        wetGain = mmSin(thetaRamp_[u]);
+                        const auto u = static_cast<std::size_t>(s);
+                        const M128 vTheta = MM(loadu_ps)(thetaRamp_.data() + s);
+                        const M128 vCos = mmCos(vTheta);
+                        const M128 vSin = mmSin(vTheta);
+                        // L: dry*cos + wet*sin
+                        const M128 vDryL = MM(loadu_ps)(alignedDryL_.data() + s);
+                        const M128 vWetL = MM(loadu_ps)(wetPostSvfL_.data() + s);
+                        const M128 vOutL = FMADD(vDryL, vCos, MM(mul_ps)(vWetL, vSin));
+                        MM(storeu_ps)(data0 + offset + s, vOutL);
+                        if (hasR)
+                        {
+                            const M128 vDryR = MM(loadu_ps)(alignedDryR_.data() + s);
+                            const M128 vWetR = MM(loadu_ps)(wetPostSvfR_.data() + s);
+                            const M128 vOutR = FMADD(vDryR, vCos, MM(mul_ps)(vWetR, vSin));
+                            MM(storeu_ps)(data1 + offset + s, vOutR);
+                        }
                     }
-                    data0[offset + s] = alignedDryL_[u] * dryGain + wetPostSvfL_[u] * wetGain;
-                    if (hasR) data1[offset + s] = alignedDryR_[u] * dryGain + wetPostSvfR_[u] * wetGain;
+                    // Scalar tail (same scalar overload, not a second approx)
+                    for (int s = jFull; s < chunk; ++s)
+                    {
+                        const auto u = static_cast<std::size_t>(s);
+                        const float dryGain = mmCos(thetaRamp_[u]);
+                        const float wetGain = mmSin(thetaRamp_[u]);
+                        data0[offset + s] = alignedDryL_[u] * dryGain + wetPostSvfL_[u] * wetGain;
+                        if (hasR) data1[offset + s] = alignedDryR_[u] * dryGain + wetPostSvfR_[u] * wetGain;
+                    }
                 }
 
                 // ── 9. Dither + quant stage (stateless except RNG) ────────

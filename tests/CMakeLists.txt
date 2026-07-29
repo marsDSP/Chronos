@@ -38,6 +38,20 @@ if(BUILD_TEST_HARNESSES)
     target_link_libraries(chain_parity PRIVATE SharedCode)
     add_executable(bypass_null_check harnesses/dsp/bypass_null_check.cpp)
     target_link_libraries(bypass_null_check PRIVATE SharedCode)
+    add_executable(crossfade_parity harnesses/simd/crossfade_parity.cpp)
+    target_link_libraries(crossfade_parity PRIVATE SharedCode)
+    if(MSVC)
+        target_compile_options(crossfade_parity PRIVATE /O2)
+    else()
+        target_compile_options(crossfade_parity PRIVATE -O2)
+    endif()
+    if(APPLE)
+        target_compile_options(crossfade_parity PRIVATE "-Xarch_x86_64" "-mfma")
+    elseif(MSVC)
+        target_compile_options(crossfade_parity PRIVATE "/arch:AVX2")
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64|AMD64)")
+        target_compile_options(crossfade_parity PRIVATE "-mfma")
+    endif()
     # Unlike the other correctness harnesses, this one deliberately feeds
     # NaN/inf through the DSP headers' precondition asserts (e.g. dilogNeg's
     # t in [0,1]) to measure IEEE propagation and recovery. NDEBUG disarms
@@ -131,7 +145,7 @@ if(BUILD_TEST_HARNESSES)
     endif()
 
     # ── CTest registration ──────────────────────────────────────────────
-    # 16 correctness harnesses: exit 0 = pass. The 4 benchmarks (tan_bench,
+    # 17 correctness harnesses: exit 0 = pass. The 4 benchmarks (tan_bench,
     # adaa_bench, delay_line_bench, chain_bench) are labeled "bench" so
     # `ctest -LE bench` excludes them. they report numbers rather than pass/fail
     # (delay_line_bench does carry a timing-dependent SIMD≤1.05×scalar gate
@@ -146,6 +160,7 @@ if(BUILD_TEST_HARNESSES)
     add_test(NAME engine_skeleton_check  COMMAND engine_skeleton_check)
     add_test(NAME chain_parity           COMMAND chain_parity)
     add_test(NAME bypass_null_check      COMMAND bypass_null_check)
+    add_test(NAME crossfade_parity       COMMAND crossfade_parity)
     add_test(NAME simd_delay_check       COMMAND simd_delay_check)
     add_test(NAME dilog_check            COMMAND dilog_check)
     add_test(NAME nonlinearity_check     COMMAND nonlinearity_check)
