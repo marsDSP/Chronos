@@ -14,10 +14,6 @@ namespace MarsDSP::DSP::Primitives {
         Hard,
         Asymmetric,
         Sine,
-        Digital,
-        FwRectify,
-        FuzzSoft,
-        Asinh,
         NUM_TYPES
     };
 
