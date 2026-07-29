@@ -7,6 +7,7 @@
 #include "ShortDelay.h"
 
 #include <cassert>
+#include <cmath>
 
 namespace MarsDSP::Align {
     class SaturatorAlign {
@@ -40,13 +41,16 @@ namespace MarsDSP::Align {
             }
         }
 
+        // NaN/inf hygiene
+        static float scrub(float x) noexcept { return std::isfinite(x) ? x : 0.0f; }
+
         // Dry path: always the integer delay kBudget (invariant I1 — at
         // mix = 0% the plugin is bit-transparent apart from this delay).
-        float processDry(float x) noexcept { return dry_.process(x); }
+        float processDry(float x) noexcept { return dry_.process(scrub(x)); }
 
         // Wet path: mode-dependent. The FIR runs in mode 1 only.
         float processWet(float x) noexcept {
-            const float w = wetInt_.process(x);
+            const float w = wetInt_.process(scrub(x));
             if (mode_ == 1)
                 return wetFir_.process(w);
             return w;

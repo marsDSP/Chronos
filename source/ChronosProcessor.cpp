@@ -138,7 +138,9 @@ float ChronosProcessor::nextUniform(uint32_t &state) noexcept
     state ^= state >> 17;
     state ^= state << 5;
 
-    return static_cast<float>(state >> 8) * (1.0f / 8388608.0f);
+    // state >> 8 is 24-bit; scale by 2^-24 for a uniform on [0, 1), so the
+    // TPDF dither (u1 - u2)·lsb spans ±1 lsb, the textbook width.
+    return static_cast<float>(state >> 8) * (1.0f / 16777216.0f);
 }
 
 void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]] MidiBuffer &midiMessages)

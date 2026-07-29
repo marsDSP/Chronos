@@ -144,7 +144,7 @@ inline float nextUniform(std::uint32_t& s) noexcept
     s ^= s << 13;
     s ^= s >> 17;
     s ^= s << 5;
-    return static_cast<float>(s >> 8) * (1.0f / 8388608.0f);
+    return static_cast<float>(s >> 8) * (1.0f / 16777216.0f);
 }
 
 // ── Configuration and buffers ─────────────────────────────────────────────

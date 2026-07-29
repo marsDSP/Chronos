@@ -49,12 +49,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
 
-# ── The 11 correctness harnesses (gated) and 4 benchmarks (informational) ─
+# ── The 12 correctness harnesses (gated) and 4 benchmarks (informational) ─
 CORRECTNESS_HARNESSES=(
     ring_buffer_check halfsample_fir_check short_delay_check
     align_check latency_null_check simd_delay_check
     dilog_check nonlinearity_check adaa2_check
-    alias_check simd_delay_parity
+    alias_check simd_delay_parity chain_fuzz_check
 )
 BENCH_HARNESSES=(tan_bench adaa_bench delay_line_bench chain_bench)
 ALL_HARNESSES=("${CORRECTNESS_HARNESSES[@]}" "${BENCH_HARNESSES[@]}")

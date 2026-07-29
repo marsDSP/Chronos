@@ -30,11 +30,16 @@ constexpr int    kWarmup = 2048;       // > resampler group delay + ADAA memory
 // Measurement floor. A = T - H is a difference of nearly equal quantities, so
 // the resolvable alias energy bottoms out at the relative error of H, which is
 // dominated by Goertzel's O(N*u) recurrence error (N*u = 3.6e-12 ~ -114 dB).
-// The identity calibration below measures the realised floor at about -134 dB;
-// -130 is the reported bar. Cells at or below it are printed as "< -130" and
+// The realised floor is PLATFORM-DEPENDENT: it sits at the cancellation noise
+// of the per-bin Goertzel recurrences, which drifts with codegen (FMA
+// contraction) and libm. Measured ~-134 dB on clang/arm64, ~-120 dB on
+// MSVC/x64. The declared bar is therefore a sanity check on the measurement
+// chain, not a tight constant: -110 dB sits above the -114 dB Goertzel bound
+// and ~50 dB below every meaningful cell, so the FAIL only fires if the
+// analysis itself breaks. Cells at or below it are printed as "< -110" and
 // clamped to it in arithmetic, so a difference against an immeasurably small
 // value can never manufacture a large apparent improvement.
-constexpr double kFloorDbc = -130.0;
+constexpr double kFloorDbc = -110.0;
 
 inline bool atFloor(double dbc) noexcept { return dbc <= kFloorDbc; }
 inline double clampFloor(double dbc) noexcept { return dbc < kFloorDbc ? kFloorDbc : dbc; }

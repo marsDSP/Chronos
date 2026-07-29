@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cmath>
+#include <limits>
 #include <numbers>
 #include <algorithm>
 #include "simd/Config.h"
@@ -159,7 +160,20 @@ namespace MarsDSP::Filters {
 
         M128 processBlockStep(const M128 input) noexcept
         {
-            const M128 out = step(*this, input);
+            // NaN/inf hygiene: one non-finite input would otherwise latch
+            // the IIR state forever (v3 = in − ic2eq stays NaN from then
+            // on). Scrub bad input lanes to +0.0f and reset latched state.
+            // Never taken for finite signals — bit-exact for any real input.
+            const M128 badIn = nonFiniteMask(input);
+            const M128 badSt = MM(or_ps)(nonFiniteMask(ic1eq), nonFiniteMask(ic2eq));
+            M128 in = input;
+            if (MM(movemask_ps)(MM(or_ps)(badIn, badSt)) != 0)
+            {
+                in = MM(andnot_ps)(badIn, input); // clear bad lanes to +0.0f
+                ic1eq = MM(setzero_ps)();
+                ic2eq = MM(setzero_ps)();
+            }
+            const M128 out = step(*this, in);
             a1 = MM(add_ps)(a1, da1);
             a2 = MM(add_ps)(a2, da2);
             a3 = MM(add_ps)(a3, da3);
@@ -180,6 +194,15 @@ namespace MarsDSP::Filters {
         }
 
     private:
+        // Lanes holding NaN (unordered) or ±inf, as an all-ones mask.
+        static M128 nonFiniteMask(const M128 x) noexcept
+        {
+            const M128 nanMask = MM(cmpunord_ps)(x, x);
+            const M128 infMask = MM(cmpeq_ps)(MM(andnot_ps)(MM(set1_ps)(-0.0f), x),
+                                              MM(set1_ps)(std::numeric_limits<float>::infinity()));
+            return MM(or_ps)(nanMask, infMask);
+        }
+
         void setCoeffPostGK(const SVFType type, const M128 gt, double Q, const double gainDB) noexcept
         {
             Q = std::max(Q, 0.025);
