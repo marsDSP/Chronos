@@ -6,27 +6,28 @@
 #include <JuceHeader.h>
 #include "dsp/DelayInterpolator.h"
 
-const ParameterID gainParamID { "gain", 1 };
-const ParameterID bitsParamID { "bits", 1 };
-const ParameterID delayTimeParamID { "delayTime", 1 };
-const ParameterID bypassParamID { "bypass", 1 };
-const ParameterID hpfFreqParamID { "hpfFreq", 1 };
-const ParameterID lpfFreqParamID { "lpfFreq", 1 };
-const ParameterID mixParamID { "mix", 1 };
-const ParameterID interpolationParamID { "interpolation", 1 };
-const ParameterID driveParamID { "drive", 1 };
-const ParameterID adaaOrderParamID { "adaaOrder", 1 };
+const ParameterID gainParamID{"gain", 1};
+const ParameterID bitsParamID{"bits", 1};
+const ParameterID delayTimeParamID{"delayTime", 1};
+const ParameterID bypassParamID{"bypass", 1};
+const ParameterID hpfFreqParamID{"hpfFreq", 1};
+const ParameterID lpfFreqParamID{"lpfFreq", 1};
+const ParameterID mixParamID{"mix", 1};
+const ParameterID interpolationParamID{"interpolation", 1};
+const ParameterID driveParamID{"drive", 1};
+const ParameterID adaaOrderParamID{"adaaOrder", 1};
 
 template<typename T>
-static void castParameter(const AudioProcessorValueTreeState& apvts, const ParameterID& id, T& destination)
+static void castParameter(const AudioProcessorValueTreeState &apvts, const ParameterID &id, T &destination)
 {
     destination = dynamic_cast<T>(apvts.getParameter(id.getParamID()));
     jassert(destination);
 }
 
-class ChronosParameters {
+class ChronosParameters
+{
 public:
-    explicit ChronosParameters(const AudioProcessorValueTreeState& apvts)
+    explicit ChronosParameters(const AudioProcessorValueTreeState &apvts)
     {
         castParameter(apvts, gainParamID, gainParam);
         castParameter(apvts, bitsParamID, bitsParam);
@@ -43,18 +44,22 @@ public:
     static AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     {
         AudioProcessorValueTreeState::ParameterLayout layout;
-        layout.add(std::make_unique<AudioParameterFloat>(gainParamID, "Output Gain", NormalisableRange{-12.0f, 12.0f}, 0.0f));
+        layout.add(std::make_unique<AudioParameterFloat>(gainParamID, "Output Gain", NormalisableRange{-12.0f, 12.0f},
+                                                         0.0f));
         layout.add(std::make_unique<AudioParameterInt>(bitsParamID, "Bit Depth", 1, 32, 24));
-        layout.add(std::make_unique<AudioParameterFloat>(delayTimeParamID, "Delay Time", NormalisableRange{ minDelayTime, maxDelayTime }, 500.0f));
+        layout.add(std::make_unique<AudioParameterFloat>(delayTimeParamID, "Delay Time",
+                                                         NormalisableRange{minDelayTime, maxDelayTime}, 500.0f));
         layout.add(std::make_unique<AudioParameterBool>(bypassParamID, "Bypass", false));
-        layout.add(std::make_unique<AudioParameterFloat>(hpfFreqParamID, "HPF Cutoff", NormalisableRange{ 20.0f, 2000.0f }, 20.0f));
-        layout.add(std::make_unique<AudioParameterFloat>(lpfFreqParamID, "LPF Cutoff", NormalisableRange{ 200.0f, 20000.0f }, 20000.0f));
-        layout.add(std::make_unique<AudioParameterFloat>(mixParamID, "Mix", NormalisableRange{ 0.0f, 100.0f }, 100.0f));
+        layout.add(std::make_unique<AudioParameterFloat>(hpfFreqParamID, "HPF Cutoff",
+                                                         NormalisableRange{20.0f, 2000.0f}, 20.0f));
+        layout.add(std::make_unique<AudioParameterFloat>(lpfFreqParamID, "LPF Cutoff",
+                                                         NormalisableRange{200.0f, 20000.0f}, 20000.0f));
+        layout.add(std::make_unique<AudioParameterFloat>(mixParamID, "Mix", NormalisableRange{0.0f, 100.0f}, 100.0f));
         layout.add(std::make_unique<AudioParameterChoice>(interpolationParamID, "Interpolation",
-            StringArray { "Linear", "Lagrange 3rd", "Lagrange 5th" }, 2));
-        layout.add(std::make_unique<AudioParameterFloat>(driveParamID, "Drive", NormalisableRange{ 0.0f, 40.0f }, 0.0f));
+                                                          StringArray{"Linear", "Lagrange 3rd", "Lagrange 5th"}, 2));
+        layout.add(std::make_unique<AudioParameterFloat>(driveParamID, "Drive", NormalisableRange{0.0f, 40.0f}, 0.0f));
         layout.add(std::make_unique<AudioParameterChoice>(adaaOrderParamID, "ADAA Order",
-            StringArray { "Off", "1st", "2nd" }, 2));
+                                                          StringArray{"Off", "1st", "2nd"}, 2));
         return layout;
     }
 
@@ -131,22 +136,39 @@ public:
     [[nodiscard]] float getDrive() const noexcept { return drive; }
     [[nodiscard]] double getSampleRate() const noexcept { return sampleRate; }
     [[nodiscard]] bool getBypass() const noexcept { return bypassParam != nullptr && bypassParam->get(); }
-    [[nodiscard]] AudioProcessorParameter* getBypassParameter() const noexcept { return bypassParam; }
+    [[nodiscard]] AudioProcessorParameter *getBypassParameter() const noexcept { return bypassParam; }
+
     [[nodiscard]] MarsDSP::Delays::Interpolation getInterpolation() const noexcept
     {
         if (interpolationParam == nullptr) return MarsDSP::Delays::Interpolation::Lagrange5th;
         switch (interpolationParam->getIndex())
         {
-            case 0:  return MarsDSP::Delays::Interpolation::Linear;
-            case 1:  return MarsDSP::Delays::Interpolation::Lagrange3rd;
+            case 0: return MarsDSP::Delays::Interpolation::Linear;
+            case 1: return MarsDSP::Delays::Interpolation::Lagrange3rd;
             default: return MarsDSP::Delays::Interpolation::Lagrange5th;
         }
     }
+
     [[nodiscard]] int getADAAOrder() const noexcept
     {
         if (adaaOrderParam == nullptr) return 2;
         return adaaOrderParam->getIndex();
     }
+
+    [[nodiscard]] float getRawGainLin() const noexcept
+    {
+        return gainParam ? Decibels::decibelsToGain(gainParam->get()) : 1.0f;
+    }
+
+    [[nodiscard]] float getRawDriveLin() const noexcept
+    {
+        return driveParam ? Decibels::decibelsToGain(driveParam->get()) : 1.0f;
+    }
+
+    [[nodiscard]] float getRawMix() const noexcept { return mixParam ? mixParam->get() : 100.0f; }
+    [[nodiscard]] int getRawBits() const noexcept { return bitsParam ? bitsParam->get() : 24; }
+    [[nodiscard]] float getRawHpfHz() const noexcept { return hpfParam ? hpfParam->get() : 20.0f; }
+    [[nodiscard]] float getRawLpfHz() const noexcept { return lpfParam ? lpfParam->get() : 20000.0f; }
 
     static constexpr float minDelayTime = 5.0f;
     static constexpr float maxDelayTime = 5000.0f;
@@ -157,24 +179,24 @@ private:
         return static_cast<float>(ms * 0.001 * sampleRate);
     }
 
-    float gain {};
-    int bits {};
-    float delaySamples {};
-    float hpfFreq {};
-    float lpfFreq {};
-    float mix {};
-    float drive {};
+    float gain{};
+    int bits{};
+    float delaySamples{};
+    float hpfFreq{};
+    float lpfFreq{};
+    float mix{};
+    float drive{};
 
-    AudioParameterFloat* gainParam {};
-    AudioParameterInt* bitsParam {};
-    AudioParameterFloat* delayParam {};
-    AudioParameterFloat* hpfParam {};
-    AudioParameterFloat* lpfParam {};
-    AudioParameterFloat* mixParam {};
-    AudioParameterChoice* interpolationParam {};
-    AudioParameterBool* bypassParam {};
-    AudioParameterFloat* driveParam {};
-    AudioParameterChoice* adaaOrderParam {};
+    AudioParameterFloat *gainParam{};
+    AudioParameterInt *bitsParam{};
+    AudioParameterFloat *delayParam{};
+    AudioParameterFloat *hpfParam{};
+    AudioParameterFloat *lpfParam{};
+    AudioParameterFloat *mixParam{};
+    AudioParameterChoice *interpolationParam{};
+    AudioParameterBool *bypassParam{};
+    AudioParameterFloat *driveParam{};
+    AudioParameterChoice *adaaOrderParam{};
 
     LinearSmoothedValue<float> gainSmoother;
     LinearSmoothedValue<float> bitsSmoother;
@@ -183,6 +205,6 @@ private:
     LinearSmoothedValue<float> mixSmoother;
     LinearSmoothedValue<float> driveSmoother;
 
-    double sampleRate {};
+    double sampleRate{};
 };
 #endif
