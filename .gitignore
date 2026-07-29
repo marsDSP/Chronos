@@ -1,10 +1,12 @@
 # Build output directories
 build/
+build-*/
 build-filter-test/
 build-fft/
 build-fft-test/
 build-fft-tests/
 build-tests/
+build-bench/
 
 # Generated SVF chart-data CSVs (PNG charts in tests/charts are kept)
 charts_data/
@@ -128,6 +130,5 @@ http-client.private.env.json
 # Doxygen generated documentation
 #docs/
 media/
-build-bench/
 .idea/
 

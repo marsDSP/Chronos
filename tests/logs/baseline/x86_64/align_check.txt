@@ -1,0 +1,13 @@
+=== Chronos SaturatorAlign correctness harness ===
+kBudget = 8  fs = 48000 Hz
+
+dry integer delay (kBudget=8, all modes): PASS
+wet total group delay == kBudget (all modes): PASS
+modes 0/2 are bit-exact pure delays: PASS
+mode 1 linear phase: max|tau-D| = 5.329e-15, max|Im(R)| = 1.887e-15 (< 1e-6): PASS
+dry/wet null (mode 0, bit-exact): PASS
+cross-mode phase coherence at 1/5/10/15 kHz: PASS
+reset reproducibility (all modes): PASS
+mode switching (no NaN, maxAbs=1.57): PASS
+
+=== ALL PROPERTIES HELD ===

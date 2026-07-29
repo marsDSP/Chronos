@@ -1,0 +1,18 @@
+=== Chronos HalfSampleFir correctness harness ===
+kHalfSampleTaps = 16  D = 7.5  fs = 48000 Hz
+
+coefficient symmetry (bit-exact): PASS
+DC gain: sum(h) = 0.99999994598329067  (|sum-1| = 5.402e-08): PASS
+impulse centroid: 7.500000000 (expected 7.5): PASS
+group delay flat: max|tau-D| = 3.553e-15, max|Im(R)| = 1.887e-15 (< 1e-9): PASS
+      1.0 kHz : +0.012626 dB
+      5.0 kHz : +0.006193 dB
+     10.0 kHz : +0.022684 dB
+     15.0 kHz : +0.045660 dB
+     20.0 kHz : -0.030514 dB
+passband magnitude (gate: > -0.1 dB at 15 kHz, got +0.045660): PASS
+Nyquist null: |H(pi)| = 0.000e+00 (< 1e-6): PASS
+Lagrange cross-check: dormant (kHalfSampleTaps = 16, active at 6)
+reset reproducibility (bit-exact): PASS
+
+=== ALL PROPERTIES HELD ===

@@ -1,0 +1,57 @@
+Building CXX object tests/CMakeFiles/ring_buffer_check.dir/harnesses/cd/ring_buffer_check.cpp.o
+Linking CXX executable ring_buffer_check
+Built target ring_buffer_check
+[100%] Building CXX object tests/CMakeFiles/halfsample_fir_check.dir/harnesses/cd/halfsample_fir_check.cpp.o
+[100%] Linking CXX executable halfsample_fir_check
+[100%] Built target halfsample_fir_check
+[100%] Building CXX object tests/CMakeFiles/short_delay_check.dir/harnesses/cd/short_delay_check.cpp.o
+[100%] Linking CXX executable short_delay_check
+[100%] Built target short_delay_check
+[  0%] Building CXX object tests/CMakeFiles/align_check.dir/harnesses/cd/align_check.cpp.o
+[100%] Linking CXX executable align_check
+[100%] Built target align_check
+[  0%] Building CXX object tests/CMakeFiles/latency_null_check.dir/harnesses/dsp/latency_null_check.cpp.o
+[100%] Linking CXX executable latency_null_check
+[100%] Built target latency_null_check
+[100%] Building CXX object tests/CMakeFiles/simd_delay_check.dir/harnesses/cd/simd_delay_check.cpp.o
+[100%] Linking CXX executable simd_delay_check
+[100%] Built target simd_delay_check
+[100%] Building CXX object tests/CMakeFiles/dilog_check.dir/harnesses/cd/dilog_check.cpp.o
+[100%] Linking CXX executable dilog_check
+[100%] Built target dilog_check
+[  0%] Building CXX object tests/CMakeFiles/nonlinearity_check.dir/harnesses/cd/nonlinearity_check.cpp.o
+[100%] Linking CXX executable nonlinearity_check
+[100%] Built target nonlinearity_check
+Building CXX object tests/CMakeFiles/adaa2_check.dir/harnesses/cd/adaa2_check.cpp.o
+Linking CXX executable adaa2_check
+Built target adaa2_check
+[100%] Building CXX object tests/CMakeFiles/alias_check.dir/harnesses/dsp/alias_check.cpp.o
+clang++: warning: argument unused during compilation: '-Xarch_x86_64 -mfma' [-Wunused-command-line-argument]
+[100%] Linking CXX executable alias_check
+[100%] Built target alias_check
+[  0%] Building CXX object tests/CMakeFiles/simd_delay_parity.dir/harnesses/simd/simd_delay_parity.cpp.o
+clang++: warning: argument unused during compilation: '-Xarch_x86_64 -mfma' [-Wunused-command-line-argument]
+[100%] Linking CXX executable simd_delay_parity
+[100%] Built target simd_delay_parity
+[  0%] Building CXX object tests/CMakeFiles/tan_bench.dir/harnesses/perf/tan_bench.cpp.o
+clang++: warning: argument unused during compilation: '-Xarch_x86_64 -mfma' [-Wunused-command-line-argument]
+[100%] Linking CXX executable tan_bench
+[100%] Built target tan_bench
+[100%] Building CXX object tests/CMakeFiles/adaa_bench.dir/harnesses/perf/adaa_bench.cpp.o
+clang++: warning: argument unused during compilation: '-Xarch_x86_64 -mfma' [-Wunused-command-line-argument]
+[100%] Linking CXX executable adaa_bench
+[100%] Built target adaa_bench
+[  0%] Building CXX object tests/CMakeFiles/delay_line_bench.dir/__/libs/JUCE/modules/juce_audio_formats/juce_audio_formats.mm.o
+[  0%] Building CXX object tests/CMakeFiles/delay_line_bench.dir/harnesses/perf/delay_line_bench.cpp.o
+[100%] Building CXX object tests/CMakeFiles/delay_line_bench.dir/__/libs/JUCE/modules/juce_audio_basics/juce_audio_basics.mm.o
+[100%] Building CXX object tests/CMakeFiles/delay_line_bench.dir/__/libs/JUCE/modules/juce_core/juce_core.mm.o
+[100%] Building CXX object tests/CMakeFiles/delay_line_bench.dir/__/libs/JUCE/modules/juce_dsp/juce_dsp.mm.o
+[100%] Building CXX object tests/CMakeFiles/delay_line_bench.dir/__/libs/JUCE/modules/juce_core/juce_core_CompilationTime.cpp.o
+clang++: warning: argument unused during compilation: '-Xarch_x86_64 -mfma' [-Wunused-command-line-argument]
+clang++: warning: argument unused during compilation: '-Xarch_x86_64 -mfma' [-Wunused-command-line-argument]
+clang++: clang++: warning: argument unused during compilation: '-Xarch_x86_64 -mfma' [-Wunused-command-line-argument]
+warning: argument unused during compilation: '-Xarch_x86_64 -mfma' [-Wunused-command-line-argument]
+clang++: warning: argument unused during compilation: '-Xarch_x86_64 -mfma' [-Wunused-command-line-argument]
+clang++: warning: argument unused during compilation: '-Xarch_x86_64 -mfma' [-Wunused-command-line-argument]
+[100%] Linking CXX executable delay_line_bench
+[100%] Built target delay_line_bench

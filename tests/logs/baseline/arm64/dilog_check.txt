@@ -1,0 +1,22 @@
+=== Chronos dilogarithm (Li2(-t)) correctness harness ===
+pi^2/12 = 0.8224670334241132
+
+dilogNeg(0) == 0: PASS
+dilogNeg(1) = -0.8224670334241133  exp = -0.8224670334241132  |err| = 1.110e-16
+Li2(-1) == -pi^2/12 (1e-15): PASS
+seam [0.4,0.5] direct-vs-Landen max |diff| = 1.665e-16 at t=0.4769
+seam [0.4,0.6] dispatch-vs-Landen max |diff| = 1.665e-16
+Landen seam (1e-15): PASS
+Li2(-0.5): got=-0.4484142069236462 exp=-0.4484142069236462 |err|=0.000e+00
+Li2(-0.1): got=-0.0976052352293216 exp=-0.0976052352293216 |err|=1.388e-17
+known values (1e-14): PASS
+oracle t=0.10: dilogNeg=-0.0976052352293216 simpson=-0.0976052352293198 |err|=1.818e-15
+oracle t=0.20: dilogNeg=-0.1908001377775356 simpson=-0.1908001377775412 |err|=5.551e-15
+oracle t=0.50: dilogNeg=-0.4484142069236462 simpson=-0.4484142069236425 |err|=3.719e-15
+oracle t=0.90: dilogNeg=-0.7521631792172617 simpson=-0.7521631792171781 |err|=8.360e-14
+independent oracle @ {0.1,0.2,0.5,0.9} (1e-11): max |err| = 8.360e-14 PASS
+oracle sweep (0,1] 1000 pts max |err| = 2.232e-14 at t=0.9060
+independent oracle sweep (1e-9): PASS
+monotonicity, strictly decreasing on (0,1] (100000 pts): PASS
+
+=== ALL PROPERTIES HELD ===

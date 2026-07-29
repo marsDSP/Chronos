@@ -1,0 +1,17 @@
+=== Chronos SimdDelayLine correctness harness ===
+sr=48000  block=256  smallBlock=64  modes={Linear,Lagrange3rd,Lagrange5th}
+
+integer impulse (3 modes, D=50): PASS
+  Linear         max rel err = 9.192e-08 (tol 1e-04)
+  Lagrange3rd    max rel err = 1.307e-07 (tol 1e-03)
+  Lagrange5th    max rel err = 1.577e-07 (tol 1e-02)
+polynomial reproduction (3 modes, pos=20.5): PASS
+stereo independence (D=40): PASS
+multi-block delay (blk=64, D=100): PASS
+  D2=60 settle max abs err = 1.907e-06
+delay-move settling (D1=30 -> D2=60): PASS
+ring-wrap endurance (4000 blocks, ~250 wraps): PASS (max err 0.000e+00 at b=0 t=0)
+zero-in zero-out: PASS
+mono path (inR/wetR null, D=50): PASS
+
+=== ALL PROPERTIES HELD ===

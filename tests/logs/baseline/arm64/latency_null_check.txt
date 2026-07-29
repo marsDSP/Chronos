@@ -1,0 +1,13 @@
+=== Chronos end-to-end latency/alignment harness ===
+kBudget = 8  fs = 48000 Hz
+
+full-dry null (mix=0%, bit-exact, all 3 modes identical): PASS
+full-wet Off delay (delaySamples+kBudget = 108, max err 1.192e-07 < 1e-5): PASS
+    mode=0 sweep [18.8, 20000.0] Hz: max dev -0.0000 dB at 20000.0 Hz (vs in-phase prediction)
+50% mix Off sweep 20 Hz-20 kHz (gate +-0.05 dB vs aligned prediction, got +0.0000): PASS
+    mode=1 sweep [18.8, 15000.0] Hz: max dev -0.0000 dB at 11675.0 Hz (vs in-phase prediction)
+50% mix ADAA1 sweep to 15 kHz (gate +-0.2 dB vs aligned prediction, got +0.0000): PASS
+    mode=2 sweep [18.8, 15000.0] Hz: max dev +0.0000 dB at 15000.0 Hz (vs in-phase prediction)
+50% mix ADAA2 sweep to 15 kHz (gate +-0.1 dB vs aligned prediction, got +0.0000): PASS
+
+=== ALL PROPERTIES HELD ===

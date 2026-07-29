@@ -37,6 +37,7 @@
 #include <array>
 #include <cmath>
 #include <complex>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>

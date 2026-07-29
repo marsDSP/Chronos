@@ -1,0 +1,23 @@
+=== Chronos nonlinearity (ADAA policy) correctness harness ===
+ln2 = 0.6931471805599453  pi^2/24 = 0.4112335167120566
+
+[TanhNL]
+derivatives over [-20, 20] (h=1e-05):
+  F1'=f  max |err| = 1.266e-10 at x=-15.5510 (tol 1e-06)
+  F2'=F1 max |err| = 2.079e-09 at x=19.6360 (tol 1e-06)
+  parity F1 even / F2 odd, bit-exact over 100000 pts: PASS
+  F1(0)=0  F2(0)=-0 (expected F1(0)=0, F2(0)=0)
+  F1,F2 at +-700/+1000 all finite: PASS
+  F1 tail @ |x|=8: |F1(8)-(8-ln2)| = 1.1254e-07  (log1p(e^-16) = 1.1254e-07, |diff| = 3.52e-16)
+  G tail @ |x|=8: |G(8)-pi^2/24| = 5.6268e-08 (bound 6e-8)
+  tail checks: PASS
+
+[AlgebraicNL]
+derivatives over [-20, 20] (h=1e-05):
+  F1'=f  max |err| = 2.829e-10 at x=-16.9890 (tol 1e-06)
+  F2'=F1 max |err| = 3.433e-09 at x=-19.8940 (tol 1e-06)
+  parity F1 even / F2 odd, bit-exact over 100000 pts: PASS
+  F1(0)=1  F2(0)=0 (expected F1(0)=1, F2(0)=0)
+  F1,F2 at +-700/+1000 all finite: PASS
+
+=== ALL PROPERTIES HELD ===

@@ -1,0 +1,21 @@
+=== Chronos ADAA throughput + branch histogram ===
+fs=48000 Hz  sweep 20 Hz -> 20 kHz  drive=12 dB (x3.98)
+ops=5000000  reps=5  (min of 5, sink accumulators keep loops live)
+
+[timing] ns/sample (min of 5 reps, 48 kHz sweep at 12 dB):
+       std::tanh (no ADAA)    :    8.87 ns/sample
+       ADAA1<TanhNL>          :   16.95 ns/sample  (1.9x vs tanh)
+       ADAA2<TanhNL>          :  160.90 ns/sample  (18.1x vs tanh)
+       ADAA2<AlgebraicNL>     :   20.37 ns/sample  (2.3x vs tanh)
+       ADAA2 / ADAA1          : 9.49x
+
+[branch histogram] exponential sweep 20 Hz -> 20 kHz, 1000000 samples:
+       drive  (a) centroid  (b) confluent  (c) inner-mid  (d) generic
+          0 dB       0.2334%       0.0001%       0.1144%      99.6521%
+          6 dB       0.0954%       0.0001%       0.0808%      99.8237%
+         12 dB       0.0350%       0.0001%       0.0540%      99.9109%
+         24 dB       0.0020%       0.0002%       0.0221%      99.9757%
+         40 dB       0.0000%       0.0000%       0.0032%      99.9968%
+
+(sink=52538.295813)
+=== informational only — no pass/fail gate ===

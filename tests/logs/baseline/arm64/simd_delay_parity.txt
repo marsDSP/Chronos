@@ -1,0 +1,28 @@
+=== Chronos SimdDelayLine SIMD-vs-scalar parity harness ===
+sr=48000  tol=1e-05  (process = SIMD, processScalar = reference)
+
+  blk=1   Linear impulse: max abs diff = 0.000e+00
+  blk=1   Lag3 impulse: max abs diff = 0.000e+00
+  blk=1   Lag5 impulse: max abs diff = 0.000e+00
+  blk=7   Linear impulse: max abs diff = 0.000e+00
+  blk=7   Lag3 impulse: max abs diff = 0.000e+00
+  blk=7   Lag5 impulse: max abs diff = 0.000e+00
+  blk=256 Linear impulse: max abs diff = 0.000e+00
+  blk=256 Lag3 impulse: max abs diff = 0.000e+00
+  blk=256 Lag5 impulse: max abs diff = 0.000e+00
+block-size sweep × 3 modes (impulse, D=30): PASS
+  D=30.25 ramp: max abs diff = 9.537e-07
+  D=30.50 ramp: max abs diff = 9.537e-07
+  D=30.75 ramp: max abs diff = 9.537e-07
+  D=99.10 ramp: max abs diff = 4.768e-07
+fractional delays (Lag5, ramp): PASS
+  stereo D=40.5: max abs diff = 9.537e-07
+stereo independence (D=40.5): PASS
+  mono D=50.5: max abs diff = 9.537e-07
+mono path (inR/wetR null): PASS
+  ring-wrap (cap=512, 4000 blocks, ~500 wraps): max abs diff = 0.000e+00
+ring-wrap endurance: PASS
+  delay-move (D1=30 -> D2=60, 260 blocks): max abs diff = 9.537e-07
+delay-move crossfade region: PASS
+
+=== PARITY HELD (within tol) ===

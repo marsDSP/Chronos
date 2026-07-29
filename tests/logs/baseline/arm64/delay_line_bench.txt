@@ -1,0 +1,18 @@
+=== Chronos delay-line throughput benchmark ===
+sr=48000  block=256  total=1048576 samples  delay=347.5 smp  reps=5
+(min of 5 reps; sink accumulators keep loops live)
+
+[delay] ns/sample, stereo (min of 5 reps):
+       SimdDelayLine  SIMD   (Lag5) :   4.056 ns/sample
+       SimdDelayLine  scalar (Lag5) :   5.852 ns/sample  (1.44x vs scalar)
+       juce::dsp::DelayLine per-smp :   9.124 ns/sample  (2.25x vs juce)
+       -> PASS (SIMD <= 1.05x scalar)
+
+[per-mode] SIMD ns/sample (min of 5 reps):
+       Linear       :   2.802 ns/sample
+       Lag3         :   2.905 ns/sample
+       Lag5         :   3.963 ns/sample
+       (max/min = 1.41x — Linear's zero-padded 6-MAC path vs Lag5)
+
+(sink=304.386288)
+=== NO REGRESSION ===

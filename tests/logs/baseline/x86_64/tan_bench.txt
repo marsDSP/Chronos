@@ -1,0 +1,20 @@
+=== Chronos tan pre-warping harness ===
+fs=48000 Hz  fMin=10  fMax=23520.0 (0.49*fs)  xMax=1.539380 rad (< 1.55)
+ops=20000000  reps=5  (sink accumulators keep loops live)
+
+[accuracy] mmTanScalar vs std::tan over 200001 pts in [-1.5394, +1.5394]
+           max abs err = 1.136e-04
+           max rel err = 3.746e-06  (limit 1e-04)  at x=+1.537841
+           -> PASS
+
+[tan perf] ns/tan (min of 5 reps):
+       std::tan        :   7.047 ns/tan
+       mmTanScalar     :   3.006 ns/tan  (2.34x vs std::tan)
+       mmTan(M128) 4la :   0.599 ns/tan  (11.76x vs std::tan)
+       -> PASS (mmTanScalar <= 1.05x std::tan)
+
+[svf perf] ns/sample, stereo HPF+LPF wet path (min of 5 reps):
+       SimdSVF (block-ramp, M128 float32) :   9.174 ns/sample  (info: ~6.3 on arm64)
+
+(sink=-6.662531)
+=== NO REGRESSION ===

@@ -1,0 +1,13 @@
+=== Chronos ShortDelay correctness harness ===
+
+-- MaxDelay = 8 (kBudget) --
+impulse [0..8] (MaxDelay=8): PASS
+ramp [0..8] over 1000 samples (MaxDelay=8): PASS
+reset reproducibility (MaxDelay=8): PASS
+
+-- MaxDelay = 1 (edge) --
+impulse [0..1] (MaxDelay=1): PASS
+ramp [0..1] over 1000 samples (MaxDelay=1): PASS
+reset reproducibility (MaxDelay=1): PASS
+
+=== ALL PROPERTIES HELD ===

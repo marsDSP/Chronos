@@ -1,0 +1,51 @@
+=== Chronos ADAA2 correctness harness ===
+kEpsInner = 1e-04  kEpsOuter = 1e-06  slack = 40x model
+
+[oracle self-check]
+  GL-16 weights sum to 2 (err 0.00e+00); oracle reproduces the centroid for f(x)=x (max rel err 2.22e-16)
+
+[1. static curve]
+  ADAA2<TanhNL>          max |y - f(x)| = 0.000e+00 at x=+0.000 (tol 1e-13)
+  ADAA1<TanhNL>          max |y - f(x)| = 0.000e+00 at x=+0.000 (tol 1e-13)
+  ADAA2<AlgebraicNL>     max |y - f(x)| = 2.220e-16 at x=-22.900 (tol 1e-13)
+  ADAA1<AlgebraicNL>     max |y - f(x)| = 0.000e+00 at x=+0.000 (tol 1e-13)
+
+[ADAA2<TanhNL>]
+ 2. branch (b), confluent outer nodes (x0 = x2 = a, x1 = b):
+  confluent              max |err| = 1.744e-06 at a=-20.0 delta=+1.347e-04
+                         max err/bound = 0.43  (err 1.264e-07, bound 2.953e-07) at a=-14.0000 b=-14.0005
+                         756 pts took branch (b), 294 fell through to (a)
+ 3. branch-seam continuity (1000 steps across each eps):
+  inner seam @ x=0.7     max err/bound =  0.63 | worst excess step = 5.285e-10 at delta=1.0010e-04
+  inner seam @ x=12      max err/bound =  0.25 | worst excess step = 2.292e-10 at delta=1.1760e-04
+  outer seam @ x=0.7     max err/bound =  1.00 | worst excess step = 1.676e-07 at delta=1.0000e-06
+  outer seam @ x=12      max err/bound =  1.00 | worst excess step = 4.803e-07 at delta=1.0010e-06
+ 4. error surface, x_k = A sin(w(n-k)):
+  surface                max |err| = 3.095e-04 at A=1.434 w=3.14159 (24000.0 Hz @ 48k)  [gate 1e-03]
+                         max err/bound =  0.99 (err 1.970e-05, bound 1.990e-05) at A=20.556 w=3.14159 n=4
+ 5-7. degenerate / reset / parity:
+  degenerate             10648 degenerate triples finite and |y| <= 1: PASS
+  reset                  reset() bit-exact over 100 samples: PASS
+  parity                 odd symmetry bit-exact over 5000 samples: PASS
+
+[ADAA2<AlgebraicNL>]
+ 2. branch (b), confluent outer nodes (x0 = x2 = a, x1 = b):
+  confluent              max |err| = 3.809e-06 at a=-16.0 delta=+1.347e-04
+                         max err/bound = 0.68  (err 1.634e-11, bound 2.385e-11) at a=-16.0000 b=-16.0737
+                         756 pts took branch (b), 294 fell through to (a)
+ 3. branch-seam continuity (1000 steps across each eps):
+  inner seam @ x=0.7     max err/bound =  0.55 | worst excess step = 4.593e-10 at delta=1.0010e-04
+  inner seam @ x=12      max err/bound =  0.61 | worst excess step = 3.756e-10 at delta=1.0960e-04
+  outer seam @ x=0.7     max err/bound =  1.00 | worst excess step = 1.624e-07 at delta=1.0000e-06
+  outer seam @ x=12      max err/bound =  1.00 | worst excess step = 5.234e-07 at delta=1.0010e-06
+ 4. error surface, x_k = A sin(w(n-k)):
+  surface                max |err| = 3.095e-04 at A=1.434 w=3.14159 (24000.0 Hz @ 48k)  [gate 1e-03]
+                         max err/bound =  0.99 (err 1.972e-05, bound 1.990e-05) at A=20.556 w=3.14159 n=4
+ 5-7. degenerate / reset / parity:
+  degenerate             10648 degenerate triples finite and |y| <= 1: PASS
+  reset                  reset() bit-exact over 100 samples: PASS
+  parity                 odd symmetry bit-exact over 5000 samples: PASS
+
+error-surface maxima: TanhNL 3.095e-04, AlgebraicNL 3.095e-04
+
+=== ALL PROPERTIES HELD ===
