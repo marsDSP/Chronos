@@ -51,6 +51,18 @@ namespace MarsDSP {
             wetBufL_.resize(static_cast<std::size_t>(wetBufCapacity_));
             wetBufR_.resize(static_cast<std::size_t>(wetBufCapacity_));
 
+            // preallocate all scratch, 16-byte aligned, sized to wetBufCapacity_.
+            driveRamp_     .resize(static_cast<std::size_t>(wetBufCapacity_));
+            thetaRamp_     .resize(static_cast<std::size_t>(wetBufCapacity_));
+            gainRamp_      .resize(static_cast<std::size_t>(wetBufCapacity_));
+            lsbRamp_       .resize(static_cast<std::size_t>(wetBufCapacity_));
+            satL_          .resize(static_cast<std::size_t>(wetBufCapacity_));
+            satR_          .resize(static_cast<std::size_t>(wetBufCapacity_));
+            alignedDryL_   .resize(static_cast<std::size_t>(wetBufCapacity_));
+            alignedDryR_   .resize(static_cast<std::size_t>(wetBufCapacity_));
+            wetPostSvfL_   .resize(static_cast<std::size_t>(wetBufCapacity_));
+            wetPostSvfR_   .resize(static_cast<std::size_t>(wetBufCapacity_));
+
             constexpr double kRampSeconds = 0.02;
             gainSmoother_.reset(sampleRate, kRampSeconds);
             bitsSmoother_.reset(sampleRate, kRampSeconds);
@@ -67,13 +79,9 @@ namespace MarsDSP {
             delayLine_.reset();
             hpf_.reset();
             lpf_.reset();
-            adaa1L_.reset();
-            adaa1R_.reset();
-            adaa2L_.reset();
-            adaa2R_.reset();
-            alignL_.reset();
-            alignR_.reset();
-
+            adaa1L_.reset(); adaa1R_.reset();
+            adaa2L_.reset(); adaa2R_.reset();
+            alignL_.reset(); alignR_.reset();
 
             smoothedGain_ = 0.0f;
             smoothedBits_ = 0;
@@ -121,51 +129,58 @@ namespace MarsDSP {
             if (numSamples <= 0) return;
 
             const double fsSafe = sampleRate_ > 0.0 ? sampleRate_ : 48000.0;
-
             float *data0 = io[0];
             float *data1 = numChannels > 1 ? io[1] : nullptr;
+            const bool hasR = data1 != nullptr;
 
             for (int offset = 0; offset < numSamples;)
             {
                 const int chunk = std::min(wetBufCapacity_, numSamples - offset);
 
+                // ── 1. Delay line (block-rate) ────────────────────────────
                 delayLine_.process(data0 + offset,
-                                   data1 != nullptr ? data1 + offset : nullptr,
+                                   hasR ? data1 + offset : nullptr,
                                    wetBufL_.data(),
-                                   data1 != nullptr ? wetBufR_.data() : nullptr,
+                                   hasR ? wetBufR_.data() : nullptr,
                                    chunk, delaySamples_, delaySamples_);
 
+                // ── 2. SVF coefficients (before ramp — §1.4(c) preserved) ─
                 hpf_.setCoeffForBlock(SVF::SVFType::HighPass, fsSafe, smoothedHpf_, svfQ_, 0.0, chunk);
                 lpf_.setCoeffForBlock(SVF::SVFType::LowPass, fsSafe, smoothedLpf_, svfQ_, 0.0, chunk);
 
+                // ── 3. Align mode (once per chunk) ────────────────────────
                 alignL_.setMode(adaaOrder_);
                 alignR_.setMode(adaaOrder_);
 
+                // ── 4. Ramp pass: smoothen_() exactly chunk times ─────────
                 for (int s = 0; s < chunk; ++s)
                 {
                     smoothen_();
+                    driveRamp_[static_cast<std::size_t>(s)] = smoothedDrive_;
+                    thetaRamp_[static_cast<std::size_t>(s)] =
+                        (smoothedMix_ * 0.01f) * (std::numbers::pi_v<float> * 0.5f);
+                    gainRamp_[static_cast<std::size_t>(s)] = smoothedGain_;
+                    lsbRamp_[static_cast<std::size_t>(s)] =
+                        std::ldexp(1.0f, 1 - smoothedBits_);
+                }
 
-                    const float driveLin = smoothedDrive_;
-                    const float mixNorm = smoothedMix_ * 0.01f;
-                    const float theta = mixNorm * (std::numbers::pi_v<float> * 0.5f);
+                // ── 5. Align dry stage (stateful: ShortDelay ring) ────────
+                for (int s = 0; s < chunk; ++s)
+                {
+                    alignedDryL_[static_cast<std::size_t>(s)] =
+                        alignL_.processDry(data0[offset + s]);
+                    if (hasR)
+                        alignedDryR_[static_cast<std::size_t>(s)] =
+                            alignR_.processDry(data1[offset + s]);
+                }
 
-                    const float dryGain = mmCos(theta);
-                    const float wetGain = mmSin(theta);
-
-                    const float dry0 = data0[offset + s];
-                    const float dry0a = alignL_.processDry(dry0);
-
-                    float wet0 = wetBufL_[static_cast<std::size_t>(s)];
-
-                    float dry1 = 0.0f;
-                    float dry1a = 0.0f;
-                    float wet1 = 0.0f;
-                    if (data1 != nullptr)
-                    {
-                        dry1 = data1[offset + s];
-                        dry1a = alignR_.processDry(dry1);
-                        wet1 = wetBufR_[static_cast<std::size_t>(s)];
-                    }
+                // ── 6. ADAA + align wet stage (stateful) ──────────────────
+                for (int s = 0; s < chunk; ++s)
+                {
+                    const auto u = static_cast<std::size_t>(s);
+                    const float drv = driveRamp_[u];
+                    const float wet0 = wetBufL_[u];
+                    const float wet1 = hasR ? wetBufR_[u] : 0.0f;
 
                     float sat0;
                     float sat1 = 0.0f;
@@ -173,33 +188,53 @@ namespace MarsDSP {
                     {
                         case 0:
                             sat0 = wet0;
-                            if (data1 != nullptr) sat1 = wet1;
+                            if (hasR) sat1 = wet1;
                             break;
                         case 1:
-                            sat0 = static_cast<float>(adaa1L_.process(driveLin * wet0));
-                            if (data1 != nullptr) sat1 = static_cast<float>(adaa1R_.process(driveLin * wet1));
+                            sat0 = static_cast<float>(adaa1L_.process(driveRamp_[u] * wet0));
+                            if (hasR) sat1 = static_cast<float>(adaa1R_.process(driveRamp_[u] * wet1));
                             break;
                         default:
-                            sat0 = static_cast<float>(adaa2L_.process(driveLin * wet0));
-                            if (data1 != nullptr) sat1 = static_cast<float>(adaa2R_.process(driveLin * wet1));
+                            sat0 = static_cast<float>(adaa2L_.process(driveRamp_[u] * wet0));
+                            if (hasR) sat1 = static_cast<float>(adaa2R_.process(driveRamp_[u] * wet1));
                             break;
                     }
+                    (void)drv;
 
-                    sat0 = alignL_.processWet(sat0);
-                    if (data1 != nullptr) sat1 = alignR_.processWet(sat1);
+                    satL_[u] = alignL_.processWet(sat0);
+                    if (hasR) satR_[u] = alignR_.processWet(sat1);
+                }
 
-                    const M128 wetV = MM(set_ps)(0.0f, 0.0f, sat1, sat0);
+                // ── 7. SVF stage (stateful: IIR + coefficient ramp) ───────
+                for (int s = 0; s < chunk; ++s)
+                {
+                    const auto u = static_cast<std::size_t>(s);
+                    const M128 wetV = MM(set_ps)(0.0f, 0.0f,
+                                                  hasR ? satR_[u] : 0.0f, satL_[u]);
                     const M128 hpV = hpf_.processBlockStep(wetV);
                     const M128 lpV = lpf_.processBlockStep(hpV);
                     alignas(16) std::array<float, 4> out;
                     MM(store_ps)(out.data(), lpV);
+                    wetPostSvfL_[u] = out[0];
+                    if (hasR) wetPostSvfR_[u] = out[1];
+                }
 
-                    data0[offset + s] = dry0a * dryGain + out[0] * wetGain;
-                    if (data1 != nullptr) data1[offset + s] = dry1a * dryGain + out[1] * wetGain;
+                // ── 8. Crossfade stage (stateless) ────────────────────────
+                for (int s = 0; s < chunk; ++s)
+                {
+                    const auto u = static_cast<std::size_t>(s);
+                    const float dryGain = mmCos(thetaRamp_[u]);
+                    const float wetGain = mmSin(thetaRamp_[u]);
+                    data0[offset + s] = alignedDryL_[u] * dryGain + wetPostSvfL_[u] * wetGain;
+                    if (hasR) data1[offset + s] = alignedDryR_[u] * dryGain + wetPostSvfR_[u] * wetGain;
+                }
 
-                    const float gainLin = smoothedGain_;
-                    const float lsb = std::ldexp(1.0f, 1 - smoothedBits_);
-
+                // ── 9. Dither + quant stage (stateless except RNG) ────────
+                for (int s = 0; s < chunk; ++s)
+                {
+                    const auto u = static_cast<std::size_t>(s);
+                    const float gainLin = gainRamp_[u];
+                    const float lsb = lsbRamp_[u];
                     for (int ch = 0; ch < numChannels; ++ch)
                     {
                         auto *data = io[ch];
@@ -209,6 +244,7 @@ namespace MarsDSP {
                         data[offset + s] = std::round((scaled + dither) / lsb) * lsb;
                     }
                 }
+
                 offset += chunk;
             }
         }
@@ -280,11 +316,22 @@ namespace MarsDSP {
         float smoothedMix_{};
         float smoothedDrive_{};
 
+        // preallocated scratch (sized to wetBufCapacity_ in prepare)
+        std::vector<float> driveRamp_;
+        std::vector<float> thetaRamp_;
+        std::vector<float> gainRamp_;
+        std::vector<float> lsbRamp_;
+        std::vector<float> satL_;
+        std::vector<float> satR_;
+        std::vector<float> alignedDryL_;
+        std::vector<float> alignedDryR_;
+        std::vector<float> wetPostSvfL_;
+        std::vector<float> wetPostSvfR_;
+
         double sampleRate_{0.0};
         int numChannels_{0};
         float delaySamples_{0.0f};
         int adaaOrder_{2};
-
         Delays::Interpolation interp_{Delays::Interpolation::Lagrange5th};
     };
 }
