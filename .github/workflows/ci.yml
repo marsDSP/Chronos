@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-test:
+    name: Build & test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install JUCE Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libx11-dev libxcomposite-dev libxinerama-dev libxcursor-dev \
+            libxrandr-dev libxext-dev libfreetype6-dev libasound2-dev \
+            libgl-dev pkg-config
+
+      - name: Set up Python 3
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DBUILD_TEST_HARNESSES=ON
+          -DBUILD_AUDIO_PLUGIN_HOST=OFF
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release -j
+
+      - name: Test (correctness harnesses)
+        run: ctest --test-dir build -C Release --output-on-failure -LE bench
