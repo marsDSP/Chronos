@@ -73,7 +73,7 @@ struct ChainRef
     std::uint32_t                                        xsL {0x12345678u};
     std::uint32_t                                        xsR {0x9abcdef0u};
 
-    MarsDSP::Smoothers::LinearSmoother<float>            gainS, bitsS, hpfS, lpfS, mixS, driveS;
+    MarsDSP::Smoothers::LinearSmoother<float>            gainS, hpfS, lpfS, mixS, driveS;
 
     float   smGain {}, smHpf {}, smLpf {}, smMix {}, smDrive {};
     int     smBits {};
@@ -95,7 +95,7 @@ struct ChainRef
         wetBufL.resize(static_cast<std::size_t>(wetBufCap));
         wetBufR.resize(static_cast<std::size_t>(wetBufCap));
         constexpr double kRamp = 0.02;
-        gainS.reset(sr, kRamp); bitsS.reset(sr, kRamp);
+        gainS.reset(sr, kRamp);
         hpfS.reset(sr, kRamp);  lpfS.reset(sr, kRamp);
         mixS.reset(sr, kRamp);  driveS.reset(sr, kRamp);
         reset();
@@ -117,8 +117,8 @@ struct ChainRef
         // block after prepare)
         smHpf = hpfHz;
         smLpf = lpfHz;
+        smBits = bits;
         gainS.setCurrentAndTargetValue(gainLin);
-        bitsS.setCurrentAndTargetValue(static_cast<float>(bits));
         hpfS.setCurrentAndTargetValue(hpfHz);
         lpfS.setCurrentAndTargetValue(lpfHz);
         mixS.setCurrentAndTargetValue(mix);
@@ -131,8 +131,8 @@ struct ChainRef
         delaySamples = dlySmp;
         adaaOrder = order;
         delayLine.setInterpolation(interp);
+        smBits = bits;
         gainS.setTargetValue(gainLin);
-        bitsS.setTargetValue(static_cast<float>(bits));
         hpfS.setTargetValue(hpfHz);
         lpfS.setTargetValue(lpfHz);
         mixS.setTargetValue(mix);
@@ -172,10 +172,10 @@ struct ChainRef
             std::vector<float> thetaRamp(static_cast<std::size_t>(chunk));
             std::vector<float> gainRamp(static_cast<std::size_t>(chunk));
             std::vector<float> lsbRamp(static_cast<std::size_t>(chunk));
+            const float blockLsb = std::ldexp(1.0f, 1 - smBits);
             for (int s = 0; s < chunk; ++s)
             {
                 smGain  = gainS.getNextValue();
-                smBits  = static_cast<int>(bitsS.getNextValue());
                 smHpf   = hpfS.getNextValue();
                 smLpf   = lpfS.getNextValue();
                 smMix   = mixS.getNextValue();
@@ -187,7 +187,7 @@ struct ChainRef
                     (smMix * 0.01f) * (std::numbers::pi_v<float> * 0.5f);
                 gainRamp[static_cast<std::size_t>(s)] = smGain;
                 lsbRamp[static_cast<std::size_t>(s)]  =
-                    std::ldexp(1.0f, 1 - smBits);
+                    blockLsb;
             }
 
             hpf.setCoeffForBlock(SVF::SVFType::HighPass, fsSafe, hpfRamp[0], svfQ, 0.0, chunk);

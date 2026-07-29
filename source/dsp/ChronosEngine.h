@@ -75,7 +75,6 @@ namespace MarsDSP {
 
             constexpr double kRampSeconds = 0.02;
             gainSmoother_.reset(sampleRate, kRampSeconds);
-            bitsSmoother_.reset(sampleRate, kRampSeconds);
             hpfSmoother_.reset(sampleRate, kRampSeconds);
             lpfSmoother_.reset(sampleRate, kRampSeconds);
             mixSmoother_.reset(sampleRate, kRampSeconds);
@@ -124,7 +123,7 @@ namespace MarsDSP {
             smoothedLpf_ = p.lpfHz;
 
             gainSmoother_.setCurrentAndTargetValue(p.gainLin);
-            bitsSmoother_.setCurrentAndTargetValue(static_cast<float>(p.bits));
+            smoothedBits_ = p.bits;
             hpfSmoother_.setCurrentAndTargetValue(p.hpfHz);
             lpfSmoother_.setCurrentAndTargetValue(p.lpfHz);
             mixSmoother_.setCurrentAndTargetValue(p.mix);
@@ -139,7 +138,7 @@ namespace MarsDSP {
             delayLine_.setInterpolation(p.interp);
 
             gainSmoother_.setTargetValue(p.gainLin);
-            bitsSmoother_.setTargetValue(static_cast<float>(p.bits));
+            smoothedBits_ = p.bits;
             hpfSmoother_.setTargetValue(p.hpfHz);
             lpfSmoother_.setTargetValue(p.lpfHz);
             mixSmoother_.setTargetValue(p.mix);
@@ -169,6 +168,9 @@ namespace MarsDSP {
                                    hasR ? wetBufR_.data() : nullptr,
                                    chunk, delaySamples_, delaySamples_);
 
+                // bits is block-rate int, no smoother. lsb is computed
+                // once per block
+                const float blockLsb = std::ldexp(1.0f, 1 - smoothedBits_);
                 for (int s = 0; s < chunk; ++s)
                 {
                     smoothen_();
@@ -178,8 +180,7 @@ namespace MarsDSP {
                     thetaRamp_[static_cast<std::size_t>(s)] =
                         (smoothedMix_ * 0.01f) * (std::numbers::pi_v<float> * 0.5f);
                     gainRamp_[static_cast<std::size_t>(s)] = smoothedGain_;
-                    lsbRamp_[static_cast<std::size_t>(s)] =
-                        std::ldexp(1.0f, 1 - smoothedBits_);
+                    lsbRamp_[static_cast<std::size_t>(s)] = blockLsb;
                 }
 
                 // ── 3. SVF coefficients (this block's start cutoff) ───────
@@ -332,7 +333,6 @@ namespace MarsDSP {
         void smoothen_() noexcept
         {
             smoothedGain_ = gainSmoother_.getNextValue();
-            smoothedBits_ = static_cast<int>(bitsSmoother_.getNextValue());
             smoothedHpf_ = hpfSmoother_.getNextValue();
             smoothedLpf_ = lpfSmoother_.getNextValue();
             smoothedMix_ = mixSmoother_.getNextValue();
@@ -369,7 +369,6 @@ namespace MarsDSP {
         }
 
         Smoothers::LinearSmoother<float> gainSmoother_;
-        Smoothers::LinearSmoother<float> bitsSmoother_;
         Smoothers::LinearSmoother<float> hpfSmoother_;
         Smoothers::LinearSmoother<float> lpfSmoother_;
         Smoothers::LinearSmoother<float> mixSmoother_;
