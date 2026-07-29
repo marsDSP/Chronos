@@ -52,6 +52,10 @@
 // ══════════════════════════════════════════════════════════════
 // Branch A: Native x86 OR SIMDe is unavailable
 // ══════════════════════════════════════════════════════════════
+// NOTE: SIMDE_UNAVAILABLE is only meaningful on native x86. Branch A
+// defines MM(x) as _mm_##x, so a non-x86 target with SIMDE_UNAVAILABLE
+// has no _mm_* intrinsics to call and will not compile. Do not attempt
+// to make that case work; it is unsupported.
 #if defined(MARSCORE_SIMD_NATIVE_X86) || defined(SIMDE_UNAVAILABLE)
 
 // MM(add_ps)  expands to _mm_add_ps
@@ -64,6 +68,18 @@
 
 // _MM_SHUFFLE(z,y,x,w) builds an 8-bit immediate for shuffle ops
 #define MM_SHUFFLE _MM_SHUFFLE
+
+// FMA: fused multiply-add. simde_mm_fmadd_ps lowers to native vfmadd*ps
+// under -mfma on x86_64. Use FMADD(a,b,c) at call sites.
+#ifndef SIMDE_UNAVAILABLE
+#define FMADD simde_mm_fmadd_ps
+#else
+// No simde: separate mul+add. NOT bit-identical to the fused path — the
+// intermediate product rounds before the add. simd_delay_parity's 1e-5
+// tolerance was chosen against the FMA path, so it still holds, but a
+// tighter gate could fail on the unfused configuration.
+#define FMADD(a,b,c) _mm_add_ps(_mm_mul_ps((a),(b)), (c))
+#endif
 // ══════════════════════════════════════════════════════════════
 // Branch B: Non-x86 with SIMDe available
 // ══════════════════════════════════════════════════════════════
@@ -73,14 +89,11 @@
 #define M128I simde__m128i
 #define M128D simde__m128d
 #define MM_SHUFFLE SIMDE_MM_SHUFFLE
-#endif
-// ══════════════════════════════════════════════════════════════
-// FMA: single fused multiply-add alias. simde_mm_fmadd_ps lowers to the
-// native vfmadd*ps on x86_64+FMA3 / arm64, and to a mul+add pair elsewhere.
-// Config.h is the one place that pulls in <simde/x86/fma.h>; use FMADD(a,b,c)
-// everywhere instead of naming simde_mm_fmadd_ps at call sites.
-// ══════════════════════════════════════════════════════════════
+
+// FMA: simde_mm_fmadd_ps lowers to native vfmadd on arm64 (FMA is
+// unconditional there) or to a mul+add pair on other non-x86 targets.
 #define FMADD simde_mm_fmadd_ps
+#endif
 // ══════════════════════════════════════════════════════════════
 // Hard requirement: C++23 or later.
 // ══════════════════════════════════════════════════════════════
