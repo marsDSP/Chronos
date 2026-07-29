@@ -27,6 +27,16 @@
 //                               tying this harness to already-tested code.
 //   8. Reset                   – process 100 samples, reset(), reprocess,
 //                               assert bit-exact match.
+//   9. Impulse-response bit-equality – feed an impulse, assert the
+//                               16 output samples are bit-exactly the
+//                               coefficient array (the impulse response of
+//                               a folded-symmetric FIR is its coefficients,
+//                               so this catches a tap-order or indexing
+//                               error in the circular buffer).
+//  10. Memmove-vs-circular parity – a local twin that keeps the old
+//                               memmove-shift logic, compared bit-for-bit
+//                               against the new circular-buffer HalfSampleFir
+//                               over 2000 samples of a sine+ramp signal.
 //
 // Conventions (matching ring_buffer_check): plain main(), exit code, printf,
 // always-live CHECK/FAIL (NOT assert — NDEBUG in Release would void every
@@ -42,6 +52,7 @@
 #include <complex>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 // MSVC's <cmath> does not expose the POSIX M_PI macro unless
 // _USE_MATH_DEFINES is defined before include. Same fallback as
@@ -236,6 +247,61 @@ int runAll()
             if (y1[n] != y2[n])
                 FAIL("reset mismatch at n=%d: %g != %g", n, (double)y1[n], (double)y2[n]);
         std::printf("reset reproducibility (bit-exact): PASS\n");
+    }
+
+    // ── 9. Impulse-response bit-equality (C5) ──────────────────────────────
+    g_section = "impulse-response bit-equality";
+    {
+        HalfSampleFir fir;
+        fir.reset();
+        for (int n = 0; n < kN; ++n)
+        {
+            const float y = fir.process(n == 0 ? 1.0f : 0.0f);
+            const float exp = kHalfSampleCoeffs[static_cast<std::size_t>(n)];
+            if (y != exp)
+                FAIL("impulse response n=%d: got %g, expected coeff %g",
+                     n, (double)y, (double)exp);
+        }
+        std::printf("impulse-response bit-equality (coeffs): PASS\n");
+    }
+
+    // ── 10. Memmove-vs-circular parity (C5) ────────────────────────────────
+    g_section = "memmove parity";
+    {
+        // Local twin that keeps the OLD memmove-shift logic.
+        struct HalfSampleFirOld {
+            std::array<float, kN> z_{};
+            void reset() noexcept { z_.fill(0.0f); }
+            float process(float x) noexcept {
+                std::memmove(z_.data() + 1, z_.data(),
+                             static_cast<std::size_t>(kN - 1) * sizeof(float));
+                z_.front() = x;
+                float acc = 0.0f;
+                for (int j = 0; j < kN / 2; ++j)
+                    acc += kHalfSampleCoeffs[static_cast<std::size_t>(j)]
+                         * (z_[static_cast<std::size_t>(j)]
+                            + z_[static_cast<std::size_t>(kN - 1 - j)]);
+                return acc;
+            }
+        };
+
+        HalfSampleFir neu;
+        HalfSampleFirOld old;
+        neu.reset();
+        old.reset();
+
+        constexpr int kM = 2000;
+        for (int n = 0; n < kM; ++n)
+        {
+            const float x = 0.5f * std::sin(0.3f * float(n))
+                          + 0.3f * std::sin(1.1f * float(n))
+                          + 0.01f * float(n);   // ramp breaks any DC symmetry
+            const float yn = neu.process(x);
+            const float yo = old.process(x);
+            if (yn != yo)
+                FAIL("memmove parity n=%d: new=%g old=%g", n, (double)yn, (double)yo);
+        }
+        std::printf("memmove-vs-circular parity (%d samples): PASS\n", kM);
     }
 
     return 0;
