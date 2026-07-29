@@ -273,7 +273,7 @@ double errBound(double x0, double x1, double x2, double y) noexcept
 
 // Single-shot evaluation of the kernel at an explicit node triple. The state
 // is private, so prime it by feeding x2 then x1: after those two calls
-// x1_ = x1, x2_ = x2, F2x1_ = F2(x1), F2x2_ = F2(x2) and d2_ = F2[x1,x2] -
+// x1_ = x1, x2_ = x2, F2x1_ = F2(x1) and d2_ = F2[x1,x2] -
 // exactly (including any fallback it took) the state the third call needs.
 template <typename NL>
 double evalTriple(double x0, double x1, double x2) noexcept

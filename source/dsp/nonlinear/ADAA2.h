@@ -16,7 +16,6 @@ namespace MarsDSP::Nonlinear {
             x1_ = 0.0;
             x2_ = 0.0;
             F2x1_ = 0.0;
-            F2x2_ = 0.0;
             d2_ = 0.0;
         }
 
@@ -49,7 +48,6 @@ namespace MarsDSP::Nonlinear {
 
             x2_ = x1_;
             x1_ = x0;
-            F2x2_ = F2x1_;
             F2x1_ = F2x0;
             d2_ = d1;
             return y;
@@ -62,7 +60,6 @@ namespace MarsDSP::Nonlinear {
         double x1_{};
         double x2_{};
         double F2x1_{};
-        double F2x2_{};
         double d2_{};
     };
 }
