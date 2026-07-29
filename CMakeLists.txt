@@ -19,7 +19,7 @@ endif()
 # Keep CMake project version in sync with CURRENT_VERSION defined above
 project(${PROJECT_NAME} VERSION ${CURRENT_VERSION})
 
-option(BUILD_AUDIO_PLUGIN_HOST "Build JUCE AudioPluginHost" ON)
+option(BUILD_AUDIO_PLUGIN_HOST "Build JUCE AudioPluginHost" OFF)
 if(BUILD_AUDIO_PLUGIN_HOST)
     set(JUCE_BUILD_EXTRAS ON CACHE INTERNAL "")
 endif()
@@ -82,7 +82,6 @@ target_include_directories(SharedCode INTERFACE
         "${CMAKE_CURRENT_SOURCE_DIR}/source"
         "${CMAKE_CURRENT_SOURCE_DIR}/libs"
         "${CMAKE_CURRENT_SOURCE_DIR}/libs/JUCE/modules"
-        "${CMAKE_CURRENT_SOURCE_DIR}/libs/xsimd/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/libs/simde"
         "${GENERATED_DIR}"
 )
@@ -120,8 +119,6 @@ if(Assets)
     juce_add_binary_data(AudioPluginData SOURCES ${Assets})
     target_link_libraries("${PROJECT_NAME}" PRIVATE AudioPluginData)
 endif()
-
-target_link_libraries("${PROJECT_NAME}" PRIVATE ${OPENSSL_LIBRARIES})
 
 # Link libraries to main project
 target_link_libraries("${PROJECT_NAME}" PUBLIC
@@ -205,11 +202,13 @@ endif()
 enable_testing()
 add_subdirectory(tests)
 
-# Post-build script to copy VST3 bundle to Desktop/vst test
-if(TARGET ${PROJECT_NAME}_VST3)
+# Post-build script to copy VST3 bundle to a local test folder (opt-in)
+option(COPY_VST3_AFTER_BUILD "Copy built VST3 to a local test folder" OFF)
+set(VST3_COPY_DEST "$ENV{HOME}/Desktop/vst test" CACHE STRING "Destination folder for post-build VST3 copy")
+if(COPY_VST3_AFTER_BUILD AND TARGET ${PROJECT_NAME}_VST3)
     add_custom_command(TARGET ${PROJECT_NAME}_VST3 POST_BUILD
-            COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/scripts/bash/copy_vst3.sh" "$<TARGET_BUNDLE_DIR:${PROJECT_NAME}_VST3>"
-            COMMENT "Triggering post-build copy of VST3 to Desktop/vst test..."
+            COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/scripts/bash/copy_vst3.sh" "$<TARGET_BUNDLE_DIR:${PROJECT_NAME}_VST3>" "${VST3_COPY_DEST}"
+            COMMENT "Copying VST3 to ${VST3_COPY_DEST}..."
             VERBATIM
     )
 endif()
