@@ -18,6 +18,15 @@
 // kBudget = kHalfSampleTaps/2 = 16/2 = 8) and MaxDelay = 1 (the d in
 // {0,1} edge, wraps fastest).
 //
+//   4. Power-of-two parity (C4 proof) — for every MaxDelay in [1,16], run
+//      the new bit_ceil/mask ShortDelay alongside a local twin that keeps
+//      the old MaxDelay+1/modulo logic, over 2000 randomized trials with
+//      random 0<->nonzero setDelay changes and random reset()s. Require
+//      bit-equal output on every sample. This is the test the source plans
+//      asserted the change was "behaviour-preserving" without argument —
+//      align_check's mode-switching test (lines 397-420) only checks
+//      finiteness and would not have caught a divergence.
+//
 // Conventions (matching ring_buffer_check / halfsample_fir_check): plain
 // main(), exit code, printf, always-live CHECK/FAIL (NOT assert — NDEBUG in
 // Release would void every test). Links SharedCode only; no JUCE. No forced
@@ -26,6 +35,8 @@
 
 #include "dsp/align/ShortDelay.h"
 
+#include <array>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
@@ -135,6 +146,83 @@ void testReset()
     std::printf("reset reproducibility (MaxDelay=%d): PASS\n", MaxDelay);
 }
 
+// ── 4. Power-of-two parity proof ─────────────────────────────────────────
+// A local twin that keeps the OLD logic (MaxDelay+1 capacity, integer
+// modulo). Compared bit-for-bit against the new bit_ceil/mask ShortDelay
+template <int MaxDelay>
+class ShortDelayOld {
+public:
+    static constexpr int kCapacity = MaxDelay + 1;
+    void reset() noexcept { z_.fill(0.0f); w_ = 0; d_ = 0; }
+    void setDelay(int d) noexcept { d_ = d; }
+    float process(float x) noexcept {
+        if (d_ == 0) return x;
+        const float y = z_[(w_ - d_ + kCapacity) % kCapacity];
+        z_[w_] = x;
+        w_ = (w_ + 1) % kCapacity;
+        return y;
+    }
+private:
+    std::array<float, kCapacity> z_{};
+    int w_{0}, d_{0};
+};
+
+// Deterministic xorshift32 so the trial sequence is reproducible.
+struct Rng {
+    std::uint32_t s;
+    explicit Rng(std::uint32_t seed) : s(seed) {}
+    std::uint32_t next() noexcept {
+        s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+        return s;
+    }
+    int range(int lo, int hi) noexcept { // inclusive
+        return lo + static_cast<int>(next() % static_cast<std::uint32_t>(hi - lo + 1));
+    }
+    float unit() noexcept {
+        return static_cast<float>(next() >> 8) * (1.0f / 8388608.0f);
+    }
+};
+
+template <int MaxDelay>
+void testPow2Parity()
+{
+    g_section = "power-of-two parity";
+    constexpr int kTrials = 2000;
+    Rng rng(0xC4FEED01u ^ static_cast<std::uint32_t>(MaxDelay));
+
+    MarsDSP::Align::ShortDelay<MaxDelay> neu;
+    ShortDelayOld<MaxDelay> old;
+    neu.reset();
+    old.reset();
+
+    for (int t = 0; t < kTrials; ++t)
+    {
+        // Random delay change: 0 or a value in [1, MaxDelay].
+        if (rng.next() & 1)
+        {
+            const int d = (rng.next() & 1) ? 0 : rng.range(1, MaxDelay);
+            neu.setDelay(d);
+            old.setDelay(d);
+        }
+
+        // Random reset (~10% of trials).
+        if ((rng.next() % 10) == 0)
+        {
+            neu.reset();
+            old.reset();
+        }
+
+        // Process one sample and compare bit-exactly.
+        const float x = rng.unit() * 2.0f - 1.0f;
+        const float yn = neu.process(x);
+        const float yo = old.process(x);
+        if (yn != yo)
+            FAIL("MaxDelay=%d trial=%d: new=%g old=%g (bit mismatch)",
+                 MaxDelay, t, (double)yn, (double)yo);
+    }
+    std::printf("power-of-two parity (MaxDelay=%d, %d trials): PASS\n", MaxDelay, kTrials);
+}
+
 } // namespace
 
 int main()
@@ -153,6 +241,26 @@ int main()
     testImpulse<1>();
     testRamp<1>();
     testReset<1>();
+
+    // Power-of-two parity proof: old (MaxDelay+1, modulo) vs new (bit_ceil,
+    // mask) over MaxDelay in [1,16], 2000 randomized trials each.
+    std::printf("\n-- power-of-two parity (C4 proof) --\n");
+    testPow2Parity<1>();
+    testPow2Parity<2>();
+    testPow2Parity<3>();
+    testPow2Parity<4>();
+    testPow2Parity<5>();
+    testPow2Parity<6>();
+    testPow2Parity<7>();
+    testPow2Parity<8>();
+    testPow2Parity<9>();
+    testPow2Parity<10>();
+    testPow2Parity<11>();
+    testPow2Parity<12>();
+    testPow2Parity<13>();
+    testPow2Parity<14>();
+    testPow2Parity<15>();
+    testPow2Parity<16>();
 
     std::printf("\n=== ALL PROPERTIES HELD ===\n");
     return 0;
