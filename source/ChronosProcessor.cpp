@@ -187,7 +187,7 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
     alignL_.setMode(adaaOrder);
     alignR_.setMode(adaaOrder);
 
-    for (auto s {0uz}; s < numSamples; ++s)
+    for (int s = 0; s < numSamples; ++s)
     {
         parameters.smoothen();
 
@@ -201,7 +201,7 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
         const float dry0 = data0[s];
         const float dry0a = alignL_.processDry(dry0);   // dry delayed kBudget to align with the wet path
 
-        float wet0 = wetBufL_[s];
+        float wet0 = wetBufL_[static_cast<std::size_t>(s)];
 
         float dry1 = 0.0f;
         float dry1a = 0.0f;
@@ -210,7 +210,7 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
         {
             dry1 = data1[s];
             dry1a = alignR_.processDry(dry1);
-            wet1 = wetBufR_[s];
+            wet1 = wetBufR_[static_cast<std::size_t>(s)];
         }
 
         float sat0;
@@ -246,10 +246,10 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
         const float gainLin = parameters.getGain();
         const float lsb = std::ldexp(1.0f, 1 - parameters.getBits());
 
-        for (auto ch {0uz}; ch < totalNumInputChannels; ++ch)
+        for (int ch = 0; ch < totalNumInputChannels; ++ch)
         {
             auto *data = buffer.getWritePointer(static_cast<int>(ch));
-            auto &state = ch == 0uz ? xorshiftL : xorshiftR;
+            auto &state = ch == 0 ? xorshiftL : xorshiftR;
             const float scaled = data[s] * gainLin;
             const float dither = (nextUniform(state) - nextUniform(state)) * lsb;
             data[s] = std::round((scaled + dither) / lsb) * lsb;

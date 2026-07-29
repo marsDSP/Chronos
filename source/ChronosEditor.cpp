@@ -15,6 +15,7 @@ ChronosEditor::~ChronosEditor()
 //==============================================================================
 void ChronosEditor::paint (Graphics& g)
 {
+    ignoreUnused (g);
 }
 
 void ChronosEditor::resized()

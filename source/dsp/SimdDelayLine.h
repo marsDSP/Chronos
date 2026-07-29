@@ -177,12 +177,12 @@ namespace MarsDSP::Delays
                             const M128 wOld = (t == 0)
                                                   ? MM(load_ps)(scratchOld + j0)
                                                   : MM(loadu_ps)(scratchOld + j0 + t);
-                            vOld = FMADD(wOld, cbOld[t], vOld);
+                            vOld = FMADD(wOld, cbOld[static_cast<std::size_t>(t)], vOld);
 
                             const M128 wNew = (t == 0)
                                                   ? MM(load_ps)(scratchNew + j0)
                                                   : MM(loadu_ps)(scratchNew + j0 + t);
-                            vNew = FMADD(wNew, cbNew[t], vNew);
+                            vNew = FMADD(wNew, cbNew[static_cast<std::size_t>(t)], vNew);
                         }
 
                         const M128 vDelta = MM(sub_ps)(vNew, vOld);
@@ -200,13 +200,13 @@ namespace MarsDSP::Delays
                     for (int j = jFull; j < subN; ++j)
                     {
                         const float alpha = static_cast<float>(j) * invSubN;
-                        const float yOldL = dot6(cOld, &scratchOldL_[j]);
-                        const float yNewL = dot6(cNew, &scratchNewL_[j]);
+                        const float yOldL = dot6(cOld, &scratchOldL_[static_cast<std::size_t>(j)]);
+                        const float yNewL = dot6(cNew, &scratchNewL_[static_cast<std::size_t>(j)]);
                         wetL[sampleOffset + j] = (1.0f - alpha) * yOldL + alpha * yNewL;
                         if (hasR)
                         {
-                            const float yOldR = dot6(cOld, &scratchOldR_[j]);
-                            const float yNewR = dot6(cNew, &scratchNewR_[j]);
+                            const float yOldR = dot6(cOld, &scratchOldR_[static_cast<std::size_t>(j)]);
+                            const float yNewR = dot6(cNew, &scratchNewR_[static_cast<std::size_t>(j)]);
                             wetR[sampleOffset + j] = (1.0f - alpha) * yOldR + alpha * yNewR;
                         }
                     }
@@ -215,13 +215,13 @@ namespace MarsDSP::Delays
                     for (int j = 0; j < subN; ++j)
                     {
                         const float alpha = static_cast<float>(j) * invSubN;
-                        const float yOldL = dot6(cOld, &scratchOldL_[j]);
-                        const float yNewL = dot6(cNew, &scratchNewL_[j]);
+                        const float yOldL = dot6(cOld, &scratchOldL_[static_cast<std::size_t>(j)]);
+                        const float yNewL = dot6(cNew, &scratchNewL_[static_cast<std::size_t>(j)]);
                         wetL[sampleOffset + j] = (1.0f - alpha) * yOldL + alpha * yNewL;
                         if (hasR)
                         {
-                            const float yOldR = dot6(cOld, &scratchOldR_[j]);
-                            const float yNewR = dot6(cNew, &scratchNewR_[j]);
+                            const float yOldR = dot6(cOld, &scratchOldR_[static_cast<std::size_t>(j)]);
+                            const float yNewR = dot6(cNew, &scratchNewR_[static_cast<std::size_t>(j)]);
                             wetR[sampleOffset + j] = (1.0f - alpha) * yOldR + alpha * yNewR;
                         }
                     }

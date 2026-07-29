@@ -47,22 +47,22 @@ namespace MarsDSP::Delays {
             case Interpolation::Linear:
             {
                 constexpr std::array S{2, 3};
-                for (int j : S)
-                    out.c[j] = basis(S.data(), 2, j, e);
+            for (int j : S)
+                    out.c[static_cast<std::size_t>(j)] = basis(S.data(), 2, j, e);
                 break;
             }
             case Interpolation::Lagrange3rd:
             {
                 constexpr std::array S{1, 2, 3, 4};
-                for (int j : S)
-                    out.c[j] = basis(S.data(), 4, j, e);
+            for (int j : S)
+                    out.c[static_cast<std::size_t>(j)] = basis(S.data(), 4, j, e);
                 break;
             }
             case Interpolation::Lagrange5th:
             {
                 constexpr std::array S{0, 1, 2, 3, 4, 5};
-                for (int j : S)
-                    out.c[j] = basis(S.data(), 6, j, e);
+            for (int j : S)
+                    out.c[static_cast<std::size_t>(j)] = basis(S.data(), 6, j, e);
                 break;
             }
         }

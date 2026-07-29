@@ -400,37 +400,42 @@ inline float fasterLog(const float x) noexcept
 //==============================================================================//
 inline float boundToPi(const float angle)
 {
+    constexpr float kPi = static_cast<float>(M_PI);
     // fast path: already in canonical range
-    if (angle <= M_PI && angle >= -M_PI)
+    if (angle <= kPi && angle >= -kPi)
         return angle;
 
     // shift from [-π, π] target into [0, 2π) working range
-    const float shifted = angle + M_PI;
+    const float shifted = angle + kPi;
 
-    constexpr float invTwoPi = 1.0f / (2.0f * M_PI);
+    constexpr float kTwoPi = static_cast<float>(2.0 * M_PI);
+    constexpr float invTwoPi = 1.0f / kTwoPi;
 
     // how many whole turns of 2π fit inside `shifted` (truncated toward zero)
     const int wholeTurns = static_cast<int>(shifted * invTwoPi);
 
     // remainder after removing those whole turns; lies in (-2π, 2π)
-    float wrapped = shifted - 2.0f * M_PI * wholeTurns;
+    float wrapped = shifted - kTwoPi * static_cast<float>(wholeTurns);
 
     // fold any negative remainder up into [0, 2π)
     if (wrapped < 0.0f)
-        wrapped += 2.0f * M_PI;
+        wrapped += kTwoPi;
 
     // undo the initial π shift → result in [-π, π]
-    return wrapped - M_PI;
+    return wrapped - kPi;
 }
 
 inline M128 boundToPiSIMD(const M128 angle)
 {
+    constexpr float kPi    = static_cast<float>(M_PI);
+    constexpr float kTwoPi = static_cast<float>(2.0 * M_PI);
+
     // [π, π, π, π]
-    const auto vPi = MM(set1_ps)(M_PI);
+    const auto vPi = MM(set1_ps)(kPi);
 
     // [2π, 2π, 2π, 2π]
-    const auto vTwoPi = MM(set1_ps)(2.0f * M_PI);
-    const auto vInvTwoPi = MM(set1_ps)(1.0f / (2.0f * M_PI));
+    const auto vTwoPi = MM(set1_ps)(kTwoPi);
+    const auto vInvTwoPi = MM(set1_ps)(1.0f / kTwoPi);
     const auto vZero = MM(setzero_ps)();
 
     // shift range so we can work in [0, 2π) per lane

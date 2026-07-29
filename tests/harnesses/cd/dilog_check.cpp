@@ -157,7 +157,7 @@ int runAll()
                         t, got, ref, e);
         }
         CHECK(maxSingle <= 1e-11);
-        std::printf("independent oracle @ {0.2,0.5,0.9} (1e-11): PASS\n", maxSingle);
+        std::printf("independent oracle @ {0.1,0.2,0.5,0.9} (1e-11): max |err| = %.3e PASS\n", maxSingle);
 
         // Dense sweep over (0, 1]; fewer panels per point but still well under
         // the double floor relative to a 1e-9 bar.
