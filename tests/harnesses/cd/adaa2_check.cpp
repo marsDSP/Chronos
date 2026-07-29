@@ -29,6 +29,18 @@
 //                          the +-700 extremes; every output must be finite.
 //   6. Reset             – 100 samples, reset(), the same 100: bit-exact.
 //   7. Parity            – odd curves: -x[n] in => -y[n] out, bit-exact.
+//   8. a0-seam triples   – triples straddling TanhNL's a0 = 1.0 boundary
+//                          with spacings log-swept from 1e-8 to 1.0. The
+//                          sweep crosses kEpsInner and kEpsOuter and
+//                          exercises all four ADAA2 branches. Gate against
+//                          the Hermite-Genocchi oracle with the existing
+//                          per-point error model. This section is TanhNL-
+//                          only: AlgebraicNL has no regional structure.
+//                          The analysis bound: a seam jump delta in F2
+//                          propagates as 2*delta / (|x0-x1|*|x0-x2|).
+//                          At delta = 3e-17 and the tightest spacings above
+//                          kEpsOuter, that is ~6e-7, three orders under the
+//                          1e-3 surface gate.
 //
 // ──────────────────────────────────────────────────────────────
 // NOT a long double implementation of the generic formula: long double is
@@ -563,6 +575,81 @@ void checkParity(const char* what)
     std::printf("  %-22s odd symmetry bit-exact over 5000 samples: PASS\n", what);
 }
 
+// ── 8. a0-seam triples for TanhNL ────────────────────────────────────────
+// Every triple has at least one node on each side of a0 = 1.0 so that the
+// ADAA2 evaluation exercises F2 across the region boundary. The spacings
+// d1 and d2 run over a log grid; their ratio varies too so all four
+// branches get exercised.
+void checkA0Seam()
+{
+    constexpr double a0 = 1.0;   // TanhNL region I/II crossover
+    constexpr int kN = 22;       // log steps per dimension -> 22^2 = 484 triples
+
+    Worst w;
+    double maxAbs = 0.0;
+    int nBranches[4] = {};
+    int nTotal = 0;
+
+    for (int i = 0; i < kN; ++i)
+    {
+        // spacing d1 in [1e-8, 1.0]
+        const double d1 = std::pow(10.0, -8.0 + 8.0 * static_cast<double>(i) / (kN - 1));
+        for (int j = 0; j < kN; ++j)
+        {
+            const double d2 = std::pow(10.0, -8.0 + 8.0 * static_cast<double>(j) / (kN - 1));
+
+            // Four triple families, each straddling a0:
+            //   x0 above, x1 below, x2 above  (asymmetric)
+            //   x0 above, x1 below, x2 = x0   (confluent outer)
+            //   x0 below, x1 above, x2 below  (symmetric)
+            //   x0 below, x1 = x0, x2 above   (inner coincident)
+            const double t[4][3] = {
+                { a0 + d1, a0 - d2, a0 + d2 },
+                { a0 + d1, a0 - d2, a0 + d1 },
+                { a0 - d1, a0 + d2, a0 - d2 },
+                { a0 - d1, a0 - d1, a0 + d2 },
+            };
+
+            for (const auto& tr : t)
+            {
+                const double x0 = tr[0], x1 = tr[1], x2 = tr[2];
+                const double y = evalTriple<TanhNL>(x0, x1, x2);
+                if (!std::isfinite(y))
+                    FAIL("a0-seam non-finite at (%.6f, %.6f, %.6f)", x0, x1, x2);
+                const double ref = oracleADAA2<TanhNL>(x0, x1, x2);
+                const double e = std::fabs(y - ref);
+                const double bnd = errBound<TanhNL>(x0, x1, x2, y);
+                w.feed(e, bnd, x0, x1, x2);
+
+                // Count which branch fires (approximate from spacings).
+                const double A = std::fabs(x0 - x1);
+                const double B = std::fabs(x1 - x2);
+                const double C = std::fabs(x0 - x2);
+                if (A < kEpsInner && B < kEpsInner)     ++nBranches[0];  // (a) centroid
+                else if (C < kEpsOuter)                 ++nBranches[1];  // (b) confluent
+                else if (A < kEpsInner)                 ++nBranches[2];  // (c) inner-mid
+                else                                    ++nBranches[3];  // (d) generic
+
+                if (e > maxAbs) maxAbs = e;
+                ++nTotal;
+
+                if (e > kSlack * bnd)
+                    FAIL("a0-seam (%.6f, %.6f, %.6f): err=%.3e bound=%.3e ratio=%.1f",
+                         x0, x1, x2, e, bnd, e / bnd);
+            }
+        }
+    }
+    std::printf("  a0-seam (%d triples):  max |err| = %.3e  max err/bound = %.3f\n",
+                nTotal, maxAbs, w.ratio);
+    std::printf("  branches: (a) %d  (b) %d  (c) %d  (d) %d\n",
+                nBranches[0], nBranches[1], nBranches[2], nBranches[3]);
+    // The seam jump in TanhNL::F2 at a0 is measured at 0.000 ulp by
+    // f2_minimax_check. A real jump would spike this surface gate.
+    if (maxAbs > kSurfaceGate)
+        FAIL("a0-seam surface exceeded: %.3e > %.0e", maxAbs, kSurfaceGate);
+    std::printf("  a0-seam: PASS (gate kSurfaceGate = %.0e)\n", kSurfaceGate);
+}
+
 // Sanity check on the oracle itself: for f(x) = x the second divided
 // difference of F2 = x^3/6 is exactly (x0+x1+x2)/6, so y must be the node
 // centroid. Both quadrature forms are exercised (tight and wide spans).
@@ -643,6 +730,10 @@ int main()
 
     const double sTanh = runPolicy<TanhNL>("TanhNL");
     const double sAlg = runPolicy<AlgebraicNL>("AlgebraicNL");
+
+    std::printf("\n[8. a0-seam triples straddling TanhNL's region boundary]\n");
+    g_section = "a0-seam";
+    checkA0Seam();
 
     std::printf("\nerror-surface maxima: TanhNL %.3e, AlgebraicNL %.3e\n", sTanh, sAlg);
     std::printf("\n=== ALL PROPERTIES HELD ===\n");

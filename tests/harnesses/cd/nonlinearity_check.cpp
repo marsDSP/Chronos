@@ -37,7 +37,10 @@ namespace {
 using MarsDSP::Nonlinear::AlgebraicNL;
 using MarsDSP::Nonlinear::TanhNL;
 using MarsDSP::Nonlinear::kLn2;
-using MarsDSP::Nonlinear::kPiSqOver24;
+// kPiSqOver24 = pi^2/24. Used only by the G-tail check in checkTanhTail().
+// It was formerly a public constant in Nonlinearities.h; it is now defined
+// locally here so the harness does not depend on the header exposing it.
+constexpr double kPiSqOver24 = 0.4112335167120566;
 
 const char* g_section = "(startup)";
 
@@ -162,7 +165,7 @@ int runPolicy(const char* label, double f1AtZero)
 int main()
 {
     std::printf("=== Chronos nonlinearity (ADAA policy) correctness harness ===\n");
-    std::printf("ln2 = %.16f  pi^2/24 = %.16f\n", kLn2, kPiSqOver24);
+    std::printf("ln2 = %.16f\n", kLn2);
 
     runPolicy<TanhNL>("TanhNL", 0.0);
     runPolicy<AlgebraicNL>("AlgebraicNL", 1.0);

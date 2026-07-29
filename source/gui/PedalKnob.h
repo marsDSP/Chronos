@@ -70,7 +70,10 @@ namespace MarsDSP::GUI::Knobs {
         }
 
     private:
-        Image ellipse2, ellipse3, ellipse4, rectangle2;
+        Image ellipse2;
+        Image ellipse3;
+        Image ellipse4;
+        Image rectangle2;
     };
 
     namespace KnobHelpers

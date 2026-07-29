@@ -4,16 +4,11 @@
 #define CHRONOS_NONLINEARITIES_H
 
 #include <cmath>
-#include "math/Dilogarithm.h"
+#include "math/TanhAntiderivatives.h"
 
 namespace MarsDSP::Nonlinear {
-    constexpr double kLn2 = 0.6931471805599453; // ln(2)
-    constexpr double kPiSqOver24 = 0.4112335167120566; // pi^2 / 24
-
-    inline double signx(double x) noexcept
-    {
-        return x > 0.0 ? 1.0 : (x < 0.0 ? -1.0 : 0.0);
-    }
+    // kLn2 is part of the public interface (adaa2_check.cpp uses it for errBound).
+    constexpr double kLn2 = 0.6931471805599453;
 
     struct TanhNL
     {
@@ -21,19 +16,12 @@ namespace MarsDSP::Nonlinear {
 
         static double f(double x) noexcept { return std::tanh(x); }
 
-        static double F1(double x) noexcept
-        {
-            const double a = std::fabs(x);
-            return a - kLn2 + std::log1p(std::exp(-2.0 * a));
-        }
+        // F1 = ln cosh(x).  Three-region minimax, no dilogarithm.
+        // See source/math/TanhAntiderivatives.h.
+        static double F1(double x) noexcept { return Math::f1Tanh(x); }
 
-        static double F2(double x) noexcept
-        {
-            const double a = std::fabs(x);
-            const double t = std::exp(-2.0 * a); // t in (0, 1], =1 at x=0
-            const double g = 0.5 * Math::dilogNeg(t) + kPiSqOver24;
-            return signx(x) * (0.5 * a * a - a * kLn2 + g);
-        }
+        // F2 = integral_0^x ln cosh(u) du.  F2(0) == 0.0 exactly.
+        static double F2(double x) noexcept { return Math::f2Tanh(x); }
     };
 
     struct AlgebraicNL
