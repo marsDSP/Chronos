@@ -47,6 +47,7 @@ void testBypassNull(int adaaOrder)
     constexpr int kN = kBlockSize * kBlocks;
 
     // Generate input sine only
+    std::vector<float> in(static_cast<std::size_t>(kN));
     for (int i = 0; i < kN; ++i)
         in[static_cast<std::size_t>(i)] =
             0.5f * static_cast<float>(std::sin(0.3 * static_cast<double>(i)));

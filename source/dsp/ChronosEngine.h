@@ -239,8 +239,24 @@ namespace MarsDSP {
                 for (int s = 0; s < chunk; ++s)
                 {
                     const auto u = static_cast<std::size_t>(s);
-                    const float dryGain = mmCos(thetaRamp_[u]);
-                    const float wetGain = mmSin(thetaRamp_[u]);
+                    const float mixVal = mixSmoother_.getCurrentValue();
+                    float dryGain;
+                    float wetGain;
+                    if (mixVal <= 0.0f)
+                    {
+                        dryGain = 1.0f;
+                        wetGain = 0.0f;
+                    }
+                    else if (mixVal >= 100.0f)
+                    {
+                        dryGain = 0.0f;
+                        wetGain = 1.0f;
+                    }
+                    else
+                    {
+                        dryGain = mmCos(thetaRamp_[u]);
+                        wetGain = mmSin(thetaRamp_[u]);
+                    }
                     data0[offset + s] = alignedDryL_[u] * dryGain + wetPostSvfL_[u] * wetGain;
                     if (hasR) data1[offset + s] = alignedDryR_[u] * dryGain + wetPostSvfR_[u] * wetGain;
                 }

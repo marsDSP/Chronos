@@ -172,8 +172,25 @@ struct ChainRef
                 const float driveLin = smDrive;
                 const float mixNorm = smMix * 0.01f;
                 const float theta = mixNorm * (std::numbers::pi_v<float> * 0.5f);
-                const float dryGain = mmCos(theta);
-                const float wetGain = mmSin(theta);
+                // clamp endpoints (engine and reference both use exact
+                // values at mix=0 and mix=100; mmCos/mmSin leak ~1.1e-7).
+                const float mixVal = smMix;
+                float dryGain, wetGain;
+                if (mixVal <= 0.0f)
+                {
+                    dryGain = 1.0f;
+                    wetGain = 0.0f;
+                }
+                else if (mixVal >= 100.0f)
+                {
+                    dryGain = 0.0f;
+                    wetGain = 1.0f;
+                }
+                else
+                {
+                    dryGain = mmCos(theta);
+                    wetGain = mmSin(theta);
+                }
 
                 const float dry0 = data0[offset + s];
                 const float dry0a = alignL.processDry(dry0);
@@ -325,7 +342,8 @@ void runOne(const TestCfg& tc, long& totalSamples)
 
     totalSamples += static_cast<long>(tc.blockSize) * tc.numChannels;
 
-    // Compare bit-exactly.
+    // Compare bit-exactly. Engine and reference both clamp endpoints
+    // (D1), so bit-exact everywhere.
     for (int ch = 0; ch < tc.numChannels; ++ch)
     {
         const float* e = ch == 0 ? engL.data() : engR.data();
