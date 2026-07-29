@@ -180,7 +180,7 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
     const float delaySamples = parameters.getDelaySamples();
     const int adaaOrder = parameters.getADAAOrder();
 
-    for (int offset = 0; offset < numSamples; offset += chunk)
+    for (int offset = 0; offset < numSamples;)
     {
         const int chunk = std::min(wetBufCapacity_, numSamples - offset);
 
@@ -264,6 +264,7 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
                 data[offset + s] = std::round((scaled + dither) / lsb) * lsb;
             }
         }
+        offset += chunk;
     }
 }
 
