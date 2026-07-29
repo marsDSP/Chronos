@@ -202,6 +202,7 @@ if (BUILD_AUDIO_PLUGIN_HOST AND APPLE)
 endif()
 
 # Test / benchmark harnesses (opt-in; see tests/CMakeLists.txt)
+enable_testing()
 add_subdirectory(tests)
 
 # Post-build script to copy VST3 bundle to Desktop/vst test

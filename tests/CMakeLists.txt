@@ -79,4 +79,31 @@ if(BUILD_TEST_HARNESSES)
     if(APPLE)
         target_compile_options(delay_line_bench PRIVATE "-Xarch_x86_64" "-mfma")
     endif()
+
+    # ── CTest registration ──────────────────────────────────────────────
+    # 11 correctness harnesses: exit 0 = pass. The 3 benchmarks (tan_bench,
+    # adaa_bench, delay_line_bench) are labeled "bench" so `ctest -LE bench`
+    # excludes them. they report numbers rather than pass/fail (delay_line_bench
+    # does carry a timing-dependent SIMD≤1.05×scalar gate that is flaky in CI).
+    add_test(NAME ring_buffer_check      COMMAND ring_buffer_check)
+    add_test(NAME halfsample_fir_check   COMMAND halfsample_fir_check)
+    add_test(NAME short_delay_check      COMMAND short_delay_check)
+    add_test(NAME align_check            COMMAND align_check)
+    add_test(NAME latency_null_check     COMMAND latency_null_check)
+    add_test(NAME simd_delay_check       COMMAND simd_delay_check)
+    add_test(NAME dilog_check            COMMAND dilog_check)
+    add_test(NAME nonlinearity_check     COMMAND nonlinearity_check)
+    add_test(NAME adaa2_check            COMMAND adaa2_check)
+    add_test(NAME alias_check            COMMAND alias_check)
+    add_test(NAME simd_delay_parity      COMMAND simd_delay_parity)
+
+    # The 3 benchmarks are registered as tests but labeled "bench" so
+    # `ctest -LE bench` excludes them. They report numbers, not pass/fail
+    # (delay_line_bench carries a timing-dependent SIMD≤1.05×scalar gate
+    # that is flaky in CI, so it is excluded from the correctness gate).
+    add_test(NAME tan_bench          COMMAND tan_bench)
+    add_test(NAME adaa_bench         COMMAND adaa_bench)
+    add_test(NAME delay_line_bench   COMMAND delay_line_bench)
+
+    set_tests_properties(tan_bench adaa_bench delay_line_bench PROPERTIES LABELS "bench")
 endif()
