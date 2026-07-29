@@ -30,6 +30,8 @@ if(BUILD_TEST_HARNESSES)
     target_link_libraries(latency_null_check PRIVATE SharedCode)
     add_executable(chain_fuzz_check harnesses/dsp/chain_fuzz_check.cpp)
     target_link_libraries(chain_fuzz_check PRIVATE SharedCode)
+    add_executable(oversized_block_check harnesses/dsp/oversized_block_check.cpp)
+    target_link_libraries(oversized_block_check PRIVATE SharedCode)
     # Unlike the other correctness harnesses, this one deliberately feeds
     # NaN/inf through the DSP headers' precondition asserts (e.g. dilogNeg's
     # t in [0,1]) to measure IEEE propagation and recovery. NDEBUG disarms
@@ -123,7 +125,7 @@ if(BUILD_TEST_HARNESSES)
     endif()
 
     # ── CTest registration ──────────────────────────────────────────────
-    # 12 correctness harnesses: exit 0 = pass. The 4 benchmarks (tan_bench,
+    # 13 correctness harnesses: exit 0 = pass. The 4 benchmarks (tan_bench,
     # adaa_bench, delay_line_bench, chain_bench) are labeled "bench" so
     # `ctest -LE bench` excludes them. they report numbers rather than pass/fail
     # (delay_line_bench does carry a timing-dependent SIMD≤1.05×scalar gate
@@ -134,6 +136,7 @@ if(BUILD_TEST_HARNESSES)
     add_test(NAME align_check            COMMAND align_check)
     add_test(NAME latency_null_check     COMMAND latency_null_check)
     add_test(NAME chain_fuzz_check       COMMAND chain_fuzz_check)
+    add_test(NAME oversized_block_check  COMMAND oversized_block_check)
     add_test(NAME simd_delay_check       COMMAND simd_delay_check)
     add_test(NAME dilog_check            COMMAND dilog_check)
     add_test(NAME nonlinearity_check     COMMAND nonlinearity_check)

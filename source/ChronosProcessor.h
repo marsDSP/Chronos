@@ -68,6 +68,7 @@ private:
     MarsDSP::Delays::SimdDelayLine delayLine;
     std::vector<float> wetBufL_;
     std::vector<float> wetBufR_;
+    int wetBufCapacity_ {0};
 
     using SVF = MarsDSP::Filters::SimdSVF;
     SVF hpf;
