@@ -136,7 +136,7 @@ AccResult accuracySweep(std::size_t N)
         const double t   = static_cast<double>(i) / static_cast<double>(N - 1);
         const double x   = -kXmax + 2.0 * kXmax * t;          // [-kXmax, +kXmax]
         const double ref = std::tan(x);
-        const double got = mmTanScalar(x);
+        const double got = MarsDSP::Filters::detail::mmTanScalar(x);
         const double absErr = std::fabs(got - ref);
         const double denom  = std::fmax(std::fabs(ref), 1e-6);
         const double relErr = absErr / denom;
@@ -193,7 +193,7 @@ int main()
         double a = 0.0;
         CHRONOS_NO_VECTORIZE
         for (std::size_t i = 0; i < scalarOps; ++i) {
-            a += mmTanScalar(xs[i & mask]);
+            a += MarsDSP::Filters::detail::mmTanScalar(xs[i & mask]);
             doNotOptimize(a);
         }
         return a;

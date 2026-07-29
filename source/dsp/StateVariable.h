@@ -10,7 +10,7 @@
 #include "simd/Config.h"
 #include "math/Trigonometry.h"
 
-namespace detail::Scalar {
+namespace MarsDSP::Filters::detail {
     inline double mmTanScalar(const double x) noexcept {
         const M128 v = MM(set1_ps)(static_cast<float>(x));
         return MM(cvtss_f32)(mmTan(v));
@@ -37,7 +37,7 @@ namespace MarsDSP::Filters {
             const double nyq = 0.49 * fs;
             freqHz = std::clamp(freqHz, 10.0, nyq);
             type = t;
-            gNorm = detail::Scalar::mmTanScalar(pi * freqHz / fs);
+            gNorm = detail::mmTanScalar(pi * freqHz / fs);
             G = gNorm / (1.0 + gNorm);
         }
 
@@ -58,7 +58,7 @@ namespace MarsDSP::Filters {
             if (gNorm <= 0.0) return 1.0;
             const double fs = (sampleRate > 0.0) ? sampleRate : 48000.0;
             freqHz = std::clamp(freqHz, 10.0, 0.49 * fs);
-            const double omega = detail::Scalar::mmTanScalar(pi * (freqHz / fs)) / gNorm;
+            const double omega = detail::mmTanScalar(pi * (freqHz / fs)) / gNorm;
             const double denom = std::sqrt(1.0 + (omega * omega));
             return (type == Type::LowPass) ? (1.0 / denom) : (omega / denom);
         }
@@ -96,7 +96,7 @@ namespace MarsDSP::Filters {
             const double fs = (sampleRate > 0.0) ? sampleRate : 48000.0;
             const double nyq = 0.49 * fs;
             freqHz = std::clamp(freqHz, 10.0, nyq);
-            const auto gt = static_cast<float>(detail::Scalar::mmTanScalar(pi * freqHz / fs));
+            const auto gt = static_cast<float>(detail::mmTanScalar(pi * freqHz / fs));
             setCoeffPostGK(type, MM(set1_ps)(gt), Q, gainDB);
         }
 
