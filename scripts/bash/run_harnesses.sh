@@ -15,9 +15,11 @@
 #   --arch both|x86_64|arm64   Which architecture(s) to build and run.
 #                              macOS only: uses -DCMAKE_OSX_ARCHITECTURES and
 #                              `arch -<arch>` to select the slice. Default: both.
-#   --bench                    Also run the three *_bench targets (tan_bench,
-#                              adaa_bench, delay_line_bench) and print their
-#                              output. Benches are not gated (informational).
+#   --bench                    Also run the four *_bench targets (tan_bench,
+#                              adaa_bench, delay_line_bench, chain_bench) and
+#                              print their output. Benches are not gated
+#                              (informational). chain_bench also writes
+#                              <logdir>/chain_bench.csv for diffing.
 #   --baseline <dir>           Diff each harness stdout against the recorded
 #                              baseline in <dir>/<arch>/<name>.txt. Reports
 #                              drift; does not fail on diff (baselines capture
@@ -47,14 +49,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
 
-# ── The 11 correctness harnesses (gated) and 3 benchmarks (informational) ─
+# ── The 11 correctness harnesses (gated) and 4 benchmarks (informational) ─
 CORRECTNESS_HARNESSES=(
     ring_buffer_check halfsample_fir_check short_delay_check
     align_check latency_null_check simd_delay_check
     dilog_check nonlinearity_check adaa2_check
     alias_check simd_delay_parity
 )
-BENCH_HARNESSES=(tan_bench adaa_bench delay_line_bench)
+BENCH_HARNESSES=(tan_bench adaa_bench delay_line_bench chain_bench)
 ALL_HARNESSES=("${CORRECTNESS_HARNESSES[@]}" "${BENCH_HARNESSES[@]}")
 
 # ── Determine which arches to run ─────────────────────────────────────────
@@ -140,8 +142,11 @@ run_arch() {
         for name in "${BENCH_HARNESSES[@]}"; do
             local bin="$build_dir/tests/$name"
             local out="$log_dir/$name.txt"
+            local args=()
+            # chain_bench also emits a CSV next to its stdout log for diffing.
+            [[ "$name" == "chain_bench" ]] && args=(--csv "$log_dir/chain_bench.csv")
             echo -n "[bench] $name ... "
-            if $run_prefix "$bin" > "$out" 2>&1; then
+            if $run_prefix "$bin" "${args[@]}" > "$out" 2>&1; then
                 echo "done"
             else
                 echo "exit $? (benches are informational)"
