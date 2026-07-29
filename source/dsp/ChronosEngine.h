@@ -53,6 +53,8 @@ namespace MarsDSP {
 
             // preallocate all scratch, 16-byte aligned, sized to wetBufCapacity_.
             driveRamp_     .resize(static_cast<std::size_t>(wetBufCapacity_));
+            hpfRamp_       .resize(static_cast<std::size_t>(wetBufCapacity_));
+            lpfRamp_       .resize(static_cast<std::size_t>(wetBufCapacity_));
             thetaRamp_     .resize(static_cast<std::size_t>(wetBufCapacity_));
             gainRamp_      .resize(static_cast<std::size_t>(wetBufCapacity_));
             lsbRamp_       .resize(static_cast<std::size_t>(wetBufCapacity_));
@@ -102,6 +104,9 @@ namespace MarsDSP {
             smoothedLpf_ = 0.0f;
             smoothedMix_ = 0.0f;
             smoothedDrive_ = 0.0f;
+            // hpf/lpf smoothed values start at 0.0f here, but resetParams
+            // sets them to the raw parameter values so the SVF is configured
+            // correctly from the first block (not from 0.0f).
         }
 
         void resetParams(const Params &p) noexcept
@@ -110,6 +115,13 @@ namespace MarsDSP {
             adaaOrder_ = p.adaaOrder;
             interp_ = p.interp;
             delayLine_.setInterpolation(p.interp);
+
+            // init the smoothed values AND snap the smoothers to
+            // the raw parameters, so the SVF is configured from the correct
+            // cutoff on the first block (previously the SVF saw 0.0f on the
+            // first block after prepare).
+            smoothedHpf_ = p.hpfHz;
+            smoothedLpf_ = p.lpfHz;
 
             gainSmoother_.setCurrentAndTargetValue(p.gainLin);
             bitsSmoother_.setCurrentAndTargetValue(static_cast<float>(p.bits));
@@ -157,25 +169,26 @@ namespace MarsDSP {
                                    hasR ? wetBufR_.data() : nullptr,
                                    chunk, delaySamples_, delaySamples_);
 
-                // ── 2. SVF coefficients (before ramp — §1.4(c) preserved) ─
-                hpf_.setCoeffForBlock(SVF::SVFType::HighPass, fsSafe, smoothedHpf_, svfQ_, 0.0, chunk);
-                lpf_.setCoeffForBlock(SVF::SVFType::LowPass, fsSafe, smoothedLpf_, svfQ_, 0.0, chunk);
-
-                // ── 3. Align mode (once per chunk) ────────────────────────
-                alignL_.setMode(adaaOrder_);
-                alignR_.setMode(adaaOrder_);
-
-                // ── 4. Ramp pass: smoothen_() exactly chunk times ─────────
                 for (int s = 0; s < chunk; ++s)
                 {
                     smoothen_();
                     driveRamp_[static_cast<std::size_t>(s)] = smoothedDrive_;
+                    hpfRamp_[static_cast<std::size_t>(s)] = smoothedHpf_;
+                    lpfRamp_[static_cast<std::size_t>(s)] = smoothedLpf_;
                     thetaRamp_[static_cast<std::size_t>(s)] =
                         (smoothedMix_ * 0.01f) * (std::numbers::pi_v<float> * 0.5f);
                     gainRamp_[static_cast<std::size_t>(s)] = smoothedGain_;
                     lsbRamp_[static_cast<std::size_t>(s)] =
                         std::ldexp(1.0f, 1 - smoothedBits_);
                 }
+
+                // ── 3. SVF coefficients (this block's start cutoff) ───────
+                hpf_.setCoeffForBlock(SVF::SVFType::HighPass, fsSafe, hpfRamp_[0], svfQ_, 0.0, chunk);
+                lpf_.setCoeffForBlock(SVF::SVFType::LowPass, fsSafe, lpfRamp_[0], svfQ_, 0.0, chunk);
+
+                // ── 4. Align mode (once per chunk) ────────────────────────
+                alignL_.setMode(adaaOrder_);
+                alignR_.setMode(adaaOrder_);
 
                 // ── 5. Align dry stage (stateful: ShortDelay ring) ────────
                 for (int s = 0; s < chunk; ++s)
@@ -376,6 +389,8 @@ namespace MarsDSP {
 
         // preallocated scratch (sized to wetBufCapacity_ in prepare)
         std::vector<float> driveRamp_;
+        std::vector<float> hpfRamp_;
+        std::vector<float> lpfRamp_;
         std::vector<float> thetaRamp_;
         std::vector<float> gainRamp_;
         std::vector<float> lsbRamp_;

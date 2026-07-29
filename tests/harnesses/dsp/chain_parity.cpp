@@ -111,6 +111,12 @@ struct ChainRef
 
     void resetParams(float drvLin, float mix, float gainLin, float hpfHz, float lpfHz, int bits) noexcept
     {
+        // init the smoothed values AND snap the smoothers to the
+        // raw parameters, so the SVF is configured from the correct cutoff
+        // on the first block (previously the SVF saw 0.0f on the first
+        // block after prepare)
+        smHpf = hpfHz;
+        smLpf = lpfHz;
         gainS.setCurrentAndTargetValue(gainLin);
         bitsS.setCurrentAndTargetValue(static_cast<float>(bits));
         hpfS.setCurrentAndTargetValue(hpfHz);
@@ -153,28 +159,53 @@ struct ChainRef
                               data1 != nullptr ? wetBufR.data() : nullptr,
                               chunk, delaySamples, delaySamples);
 
-            hpf.setCoeffForBlock(SVF::SVFType::HighPass, fsSafe, smHpf, svfQ, 0.0, chunk);
-            lpf.setCoeffForBlock(SVF::SVFType::LowPass,  fsSafe, smLpf, svfQ, 0.0, chunk);
-
-            alignL.setMode(adaaOrder);
-            alignR.setMode(adaaOrder);
-
+            // the ramp pass runs BEFORE setCoeffForBlock so the SVF
+            // uses this block's start cutoff (hpfRamp[0]/lpfRamp[0]), not
+            // the previous block's end value. The SVF ramp over this block
+            // spans prev_start to this_start, which is exactly the
+            // smoother's trajectory from the previous block. a pure
+            // one-block delay with no distortion.
+            // Ramp pass: advance the smoothers and materialize.
+            std::vector<float> hpfRamp(static_cast<std::size_t>(chunk));
+            std::vector<float> lpfRamp(static_cast<std::size_t>(chunk));
+            std::vector<float> drvRamp(static_cast<std::size_t>(chunk));
+            std::vector<float> thetaRamp(static_cast<std::size_t>(chunk));
+            std::vector<float> gainRamp(static_cast<std::size_t>(chunk));
+            std::vector<float> lsbRamp(static_cast<std::size_t>(chunk));
             for (int s = 0; s < chunk; ++s)
             {
-                // smoothen
                 smGain  = gainS.getNextValue();
                 smBits  = static_cast<int>(bitsS.getNextValue());
                 smHpf   = hpfS.getNextValue();
                 smLpf   = lpfS.getNextValue();
                 smMix   = mixS.getNextValue();
                 smDrive = driveS.getNextValue();
+                hpfRamp[static_cast<std::size_t>(s)]  = smHpf;
+                lpfRamp[static_cast<std::size_t>(s)]  = smLpf;
+                drvRamp[static_cast<std::size_t>(s)]  = smDrive;
+                thetaRamp[static_cast<std::size_t>(s)] =
+                    (smMix * 0.01f) * (std::numbers::pi_v<float> * 0.5f);
+                gainRamp[static_cast<std::size_t>(s)] = smGain;
+                lsbRamp[static_cast<std::size_t>(s)]  =
+                    std::ldexp(1.0f, 1 - smBits);
+            }
 
-                const float driveLin = smDrive;
-                const float mixNorm = smMix * 0.01f;
-                const float theta = mixNorm * (std::numbers::pi_v<float> * 0.5f);
+            hpf.setCoeffForBlock(SVF::SVFType::HighPass, fsSafe, hpfRamp[0], svfQ, 0.0, chunk);
+            lpf.setCoeffForBlock(SVF::SVFType::LowPass,  fsSafe, lpfRamp[0], svfQ, 0.0, chunk);
+
+            alignL.setMode(adaaOrder);
+            alignR.setMode(adaaOrder);
+
+            for (int s = 0; s < chunk; ++s)
+            {
+                // Use the materialized ramp arrays (smoothers advanced in the
+                // ramp pass above, not here — same advance count as before).
+                const float driveLin = drvRamp[static_cast<std::size_t>(s)];
+                const float mixNorm = thetaRamp[static_cast<std::size_t>(s)] / (std::numbers::pi_v<float> * 0.5f);
+                const float theta = thetaRamp[static_cast<std::size_t>(s)];
                 // clamp endpoints (engine and reference both use exact
                 // values at mix=0 and mix=100; mmCos/mmSin leak ~1.1e-7).
-                const float mixVal = smMix;
+                const float mixVal = mixS.getCurrentValue();
                 float dryGain, wetGain;
                 if (mixVal <= 0.0f)
                 {
