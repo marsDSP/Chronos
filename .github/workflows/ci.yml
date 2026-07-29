@@ -55,6 +55,18 @@ jobs:
             libgtk-3-dev "$WEBKIT_PKG" libfontconfig1-dev \
             libgdk-pixbuf2.0-dev
 
+      - name: Install modern GCC (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          # GCC 13+ reports __cplusplus = 202302L for -std=c++23; GCC 12 reports
+          # 202100L, which fails Config.h's static_assert(__cplusplus >= 202302L).
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-13 g++-13
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 100
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-13 100
+          g++ --version
+
       - name: Set up Python 3
         uses: actions/setup-python@v5
         with:
@@ -66,6 +78,9 @@ jobs:
           -DBUILD_TEST_HARNESSES=ON
           -DBUILD_AUDIO_PLUGIN_HOST=OFF
           -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_STANDARD=23
+          -DCMAKE_CXX_STANDARD_REQUIRED=ON
+          -DCMAKE_CXX_EXTENSIONS=OFF
 
       - name: Build
         run: cmake --build build --config Release -j
