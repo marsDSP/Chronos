@@ -100,11 +100,27 @@ if(BUILD_TEST_HARNESSES)
         target_compile_options(delay_line_bench PRIVATE "-mfma")
     endif()
 
+    add_executable(chain_bench harnesses/perf/chain_bench.cpp)
+    target_link_libraries(chain_bench PRIVATE SharedCode)
+    if(MSVC)
+        target_compile_options(chain_bench PRIVATE /O2)
+    else()
+        target_compile_options(chain_bench PRIVATE -O2)
+    endif()
+    if(APPLE)
+        target_compile_options(chain_bench PRIVATE "-Xarch_x86_64" "-mfma")
+    elseif(MSVC)
+        target_compile_options(chain_bench PRIVATE "/arch:AVX2")
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64|AMD64)")
+        target_compile_options(chain_bench PRIVATE "-mfma")
+    endif()
+
     # ── CTest registration ──────────────────────────────────────────────
-    # 11 correctness harnesses: exit 0 = pass. The 3 benchmarks (tan_bench,
-    # adaa_bench, delay_line_bench) are labeled "bench" so `ctest -LE bench`
-    # excludes them. they report numbers rather than pass/fail (delay_line_bench
-    # does carry a timing-dependent SIMD≤1.05×scalar gate that is flaky in CI).
+    # 11 correctness harnesses: exit 0 = pass. The 4 benchmarks (tan_bench,
+    # adaa_bench, delay_line_bench, chain_bench) are labeled "bench" so
+    # `ctest -LE bench` excludes them. they report numbers rather than pass/fail
+    # (delay_line_bench does carry a timing-dependent SIMD≤1.05×scalar gate
+    # that is flaky in CI).
     add_test(NAME ring_buffer_check      COMMAND ring_buffer_check)
     add_test(NAME halfsample_fir_check   COMMAND halfsample_fir_check)
     add_test(NAME short_delay_check      COMMAND short_delay_check)
@@ -117,13 +133,14 @@ if(BUILD_TEST_HARNESSES)
     add_test(NAME alias_check            COMMAND alias_check)
     add_test(NAME simd_delay_parity      COMMAND simd_delay_parity)
 
-    # The 3 benchmarks are registered as tests but labeled "bench" so
+    # The 4 benchmarks are registered as tests but labeled "bench" so
     # `ctest -LE bench` excludes them. They report numbers, not pass/fail
     # (delay_line_bench carries a timing-dependent SIMD≤1.05×scalar gate
     # that is flaky in CI, so it is excluded from the correctness gate).
     add_test(NAME tan_bench          COMMAND tan_bench)
     add_test(NAME adaa_bench         COMMAND adaa_bench)
     add_test(NAME delay_line_bench   COMMAND delay_line_bench)
+    add_test(NAME chain_bench        COMMAND chain_bench)
 
-    set_tests_properties(tan_bench adaa_bench delay_line_bench PROPERTIES LABELS "bench")
+    set_tests_properties(tan_bench adaa_bench delay_line_bench chain_bench PROPERTIES LABELS "bench")
 endif()

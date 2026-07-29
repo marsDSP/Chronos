@@ -43,6 +43,13 @@
 #include <cstdio>
 #include <cstdlib>
 
+// MSVC's <cmath> does not expose the POSIX M_PI macro unless
+// _USE_MATH_DEFINES is defined before include. Same fallback as
+// source/math/Trigonometry.h.
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 namespace {
 
 constexpr int    kN  = MarsDSP::Align::kHalfSampleTaps;
