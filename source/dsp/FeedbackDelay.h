@@ -191,10 +191,8 @@ namespace MarsDSP::Delays {
                 }
 
                 // 1. Advance smoothers into stack ramps.
-                alignas(16) float dR[kMaxChunk];
-                float gR[kMaxChunk];
-                floatcrossR[kMaxChunk];
-                float driveR[kMaxChunk];
+                alignas(16) float dR[kMaxChunk], gR[kMaxChunk],
+                                 crossR[kMaxChunk], driveR[kMaxChunk];
                 for (int i = 0; i < Lc; ++i)
                 {
                     dR[i]     = delaySm_.getNextValue();
@@ -343,9 +341,6 @@ namespace MarsDSP::Delays {
         }
 
         // reference only -- do not optimize, do not delete.
-        // Verbatim per-sample loop (the pre-C3 implementation), factored to
-        // call processSampleScalar_ so there is exactly one scalar implementation.
-        // fb_parity gates process (chunked) against this reference twin.
         void processRef(const float* inL, const float* inR,
                         float* wetL, float* wetR, int n) noexcept
         {
@@ -366,9 +361,6 @@ namespace MarsDSP::Delays {
         }
 
         [[nodiscard]] static constexpr int latencySamples() noexcept { return 0; }
-
-        // C1: the largest delay the ring can hold (capacity - kTail - 2).
-        // ChronosEngine::prepare asserts this >= the contractual max delay.
         [[nodiscard]] float getMaxDelay() const noexcept { return maxDelay_; }
 
     private:

@@ -5,6 +5,7 @@
 
 #include <array>
 #include <string_view>
+#include <utility>
 
 namespace MarsDSP::Utils::Helpers::inline TempoSync
 {
@@ -57,8 +58,8 @@ namespace MarsDSP::Utils::Helpers::inline TempoSync
             1.0, 1.5, 2.0 / 3.0,  // thirty-second
         };
 
-    inline constexpr std::array<std::string_view, static_cast<std::size_t>(TempoSyncInterval::NumberOfIntervals)>
-        kSyncIntervalDisplayLabels = {
+    inline constexpr std::array<std::string_view, static_cast<std::size_t>(std::to_underlying(TempoSyncInterval::NumberOfIntervals))>
+    kSyncIntervalDisplayLabels = {
             "1/1",   "1/1 .",   "1/1 T",
             "1/2",   "1/2 .",   "1/2 T",
             "1/4",   "1/4 .",   "1/4 T",
@@ -72,7 +73,7 @@ namespace MarsDSP::Utils::Helpers::inline TempoSync
         if (beatsPerMinute <= 0.0)
             return 0.0;
 
-        const auto index = static_cast<std::size_t>(tempoSyncInterval);
+        const auto index = static_cast<std::size_t>(std::to_underlying(tempoSyncInterval));
 
         if (index >= kNominalNoteValues.size())
             return 0.0;
@@ -90,12 +91,12 @@ namespace MarsDSP::Utils::Helpers::inline TempoSync
 
     [[nodiscard]] constexpr int getNumberOfTempoSyncIntervals() noexcept
     {
-        return static_cast<int>(TempoSyncInterval::NumberOfIntervals);
+        return std::to_underlying(TempoSyncInterval::NumberOfIntervals);
     }
 
     [[nodiscard]] inline std::string_view getTempoSyncIntervalDisplayLabel(TempoSyncInterval tempoSyncInterval) noexcept
     {
-        const auto index = static_cast<std::size_t>(tempoSyncInterval);
+        const auto index = static_cast<std::size_t>(std::to_underlying(tempoSyncInterval));
         return index < kSyncIntervalDisplayLabels.size()
                    ? kSyncIntervalDisplayLabels[index]
                    : std::string_view{};

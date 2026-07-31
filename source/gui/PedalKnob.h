@@ -107,16 +107,11 @@ namespace MarsDSP::GUI::Knobs {
         ~PDLKnob() override;
 
         void paint(Graphics &g) override;
-
         void paintOverChildren(Graphics &g) override;
-
         void resized() override;
-
         Slider &getSlider() { return slider; }
         void setLabelText(const String &text) { label.setText(text, dontSendNotification); }
-
         void setArcColour(Colour c);
-
         void setDrawFromMiddle(bool v) { slider.getProperties().set("drawFromMiddle", v); }
 
     private:

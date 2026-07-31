@@ -324,16 +324,26 @@ namespace MarsDSP::Diffusion {
         alignas(16) std::array<float, kChunk> rd_{};
         alignas(16) std::array<float, kChunk> gRamp_{};
         alignas(16) std::array<float, kChunk> sizeRamp_{};
-        alignas(16) std::array<float, kChunk> modAL_{}, modBL_{}, modAR_{}, modBR_{};
+        alignas(16) std::array<float, kChunk> modAL_{};
+        alignas(16) std::array<float, kChunk> modBL_{};
+        alignas(16) std::array<float, kChunk> modAR_{};
+        alignas(16) std::array<float, kChunk> modBR_{};
 
-        Bank secL_{}, secR_{};
+        Bank secL_{};
+        Bank secR_{};
         double sampleRate_ = 48000.0;
 
-        Smoothers::LinearSmoother<float> sizeSm_, coefSm_, depthSm_;
+        Smoothers::LinearSmoother<float> sizeSm_;
+        Smoothers::LinearSmoother<float> coefSm_;
+        Smoothers::LinearSmoother<float> depthSm_;
 
         // quadrature LFOs: double state (see header note 6), (c, s) pairs.
-        double oscAc_ = 1.0, oscAs_ = 0.0, oscAk_ = 0.0;
-        double oscBc_ = 0.0, oscBs_ = 1.0, oscBk_ = 0.0;
+        double oscAc_ = 1.0;
+        double oscAs_ = 0.0;
+        double oscAk_ = 0.0;
+        double oscBc_ = 0.0;
+        double oscBs_ = 1.0;
+        double oscBk_ = 0.0;
     };
 }
 #endif
