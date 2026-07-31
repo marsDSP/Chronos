@@ -64,24 +64,10 @@ namespace MarsDSP {
 
             delayLine_.prepare(sampleRate, wetBufCapacity_, 5000.0f);
 
-            // C1: pass the contractual max delay (pre-pow2), not the capacity.
-            // The capacity double-rounds the fb ring (262144 + 1024 + 16 ->
-            // 524288 = 2 MB/ch); the contractual max (240000 @48k/5000ms)
-            // rounds once -> 262144 = 1 MB/ch. Invariant: fbDelay_.getMaxDelay()
-            // >= the largest delay the engine can request -- holds by
-            // construction (FeedbackDelay adds maxBlockSize + kTail + 8 before
-            // bit_ceil, so getMaxDelay() >= maxDelaySamples + maxBlockSize + 6).
             fbDelay_.prepare(sampleRate, wetBufCapacity_, delayLine_.getMaxDelaySamples());
             assert(fbDelay_.getMaxDelay() >= static_cast<float>(delayLine_.getMaxDelaySamples()));
             diffuser_.prepare(sampleRate);
-            // All per-sample scratch in ONE contiguous allocation so the
-            // multi-pass chain streams through adjacent memory: one heap
-            // block instead of 17 scattered std::vector allocations → fewer
-            // TLB entries, better hardware-prefetch coverage, no allocator
-            // fragmentation across prepare/reprepare. Each sub-buffer is a
-            // span of wetBufCapacity_ floats; existing [i] / .data() call
-            // sites compile unchanged. Loads/stores stay unaligned
-            // (loadu/storeu), which is fine on Haswell+ and arm64.
+
             constexpr int kNumScratch = 17;
             const auto cap = static_cast<std::size_t>(wetBufCapacity_);
             scratch_.assign(static_cast<std::size_t>(kNumScratch) * cap, 0.0f);
@@ -134,9 +120,6 @@ namespace MarsDSP {
             smoothedLpf_ = 0.0f;
             smoothedMix_ = 0.0f;
             smoothedDrive_ = 0.0f;
-            // hpf/lpf smoothed values start at 0.0f here, but resetParams
-            // sets them to the raw parameter values so the SVF is configured
-            // correctly from the first block (not from 0.0f).
         }
 
         void resetParams(const Params &p) noexcept
@@ -146,10 +129,6 @@ namespace MarsDSP {
             interp_ = p.interp;
             delayLine_.setInterpolation(p.interp);
 
-            // init the smoothed values AND snap the smoothers to
-            // the raw parameters, so the SVF is configured from the correct
-            // cutoff on the first block (previously the SVF saw 0.0f on the
-            // first block after prepare).
             smoothedHpf_ = p.hpfHz;
             smoothedLpf_ = p.lpfHz;
 
@@ -220,10 +199,7 @@ namespace MarsDSP {
                                        chunk, delaySamples_, delaySamples_);
                 }
 
-                //  Optional 8-section Schroeder allpass diffuser on the wet
-                //  path (input-diffuser placement). Off by default; when on it
-                //  runs in-place over the wet buffers before the per-sample
-                //  drive / ADAA / SVF tail. Adds 0 chain latency.
+                //  Optional 8-section Schroeder allpass diffuser
                 if (enableDiffuser_)
                 {
                     diffuser_.processBlock(wetBufL_.data(),
@@ -231,8 +207,7 @@ namespace MarsDSP {
                                            chunk);
                 }
 
-                // bits is block-rate int, no smoother. lsb is computed
-                // once per block
+                // bits is block-rate int, no smoother. lsb is computed once per block
                 const float blockLsb = std::ldexp(1.0f, 1 - smoothedBits_);
                 for (int s = 0; s < chunk; ++s)
                 {
@@ -312,8 +287,6 @@ namespace MarsDSP {
                 }
 
                 // ── 8. Crossfade stage (stateless) ────────────────────────
-                // 4-wide SIMD. Endpoint clamp from D1 applies to both
-                // paths. If mix is at an endpoint, skip trig entirely.
                 const float mixVal = mixSmoother_.getCurrentValue();
                 const bool fullDry = (mixVal <= 0.0f);
                 const bool fullWet = (mixVal >= 100.0f);
@@ -467,9 +440,7 @@ namespace MarsDSP {
         {
             xorshiftL_ = l;
             xorshiftR_ = r;
-            // V2: seed 4-lane SIMD xorshift. Each lane gets a different
-            // seed derived from the base seed. Zero-state guard: if a
-            // lane is zero, set it to 1.
+
             std::uint32_t seedsL[4] = { l, l * 2654435761u + 1u, l * 40503u + 2u, l * 2246822519u + 3u };
             std::uint32_t seedsR[4] = { r, r * 2654435761u + 1u, r * 40503u + 2u, r * 2246822519u + 3u };
             for (int i = 0; i < 4; ++i)
@@ -503,10 +474,6 @@ namespace MarsDSP {
             smoothedDrive_ = driveSmoother_.getNextValue();
         }
 
-        // Forward the feedback-loop params. FeedbackDelay owns its own
-        // smoothers; `snap` selects resetParams (transport jump) vs
-        // setParams (automation). No audio effect unless feedback_ > 0,
-        // but keeping the loop state warm avoids a click when feedback opens.
         void applyFeedbackParams_(const Params &p, bool snap) noexcept
         {
             Delays::FeedbackDelay::Params fp;
@@ -520,9 +487,6 @@ namespace MarsDSP {
             else      fbDelay_.setParams(fp);
         }
 
-        // Diffuser setters target its internal LinearSmoothers; it has no
-        // snap API, so both resetParams and setParams call the same setters
-        // (a ~50 ms ramp from 0 on first enable, which is desirable).
         void applyDiffuserParams_(const Params &p) noexcept
         {
             diffuser_.setDiffusion(p.diffusion);
@@ -562,7 +526,6 @@ namespace MarsDSP {
             return static_cast<float>(state >> 8) * (1.0f / 16777216.0f);
         }
 
-        // V2: 4-lane SIMD xorshift32. Each lane is independent.
         M128I xorshiftSimdL_{};
         M128I xorshiftSimdR_{};
 
@@ -596,12 +559,6 @@ namespace MarsDSP {
         Align::ShortDelay<Align::SaturatorAlign::kBudget> bypassDryL_;
         Align::ShortDelay<Align::SaturatorAlign::kBudget> bypassDryR_;
 
-        // Per-sample scratch: one contiguous arena carved into spans in
-        // prepare(). Consolidated from 17 separate std::vector allocations
-        // for cache locality (the multi-pass chain streams through one heap
-        // block instead of scattered ones). lsbRamp_ was removed: it was
-        // written every sample but never read (the dither stage uses
-        // blockLsb directly via set1_ps).
         std::vector<float> scratch_;
         std::span<float> driveRamp_;
         std::span<float> hpfRamp_;

@@ -160,10 +160,6 @@ namespace MarsDSP::Filters {
 
         M128 processBlockStep(const M128 input) noexcept
         {
-            // NaN/inf hygiene: one non-finite input would otherwise latch
-            // the IIR state forever (v3 = in − ic2eq stays NaN from then
-            // on). Scrub bad input lanes to +0.0f and reset latched state.
-            // Never taken for finite signals — bit-exact for any real input.
             const M128 badIn = nonFiniteMask(input);
             const M128 badSt = MM(or_ps)(nonFiniteMask(ic1eq), nonFiniteMask(ic2eq));
             M128 in = input;

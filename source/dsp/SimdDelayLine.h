@@ -3,6 +3,7 @@
 #ifndef CHRONOS_SIMD_DELAY_LINE_H
 #define CHRONOS_SIMD_DELAY_LINE_H
 
+#include "BlockTapReader.h"
 #include "DelayInterpolator.h"
 #include "OnePoleSmoother.h"
 #include "Pow2RingBuffer.h"
@@ -34,7 +35,7 @@ namespace MarsDSP::Delays
 
             const auto fs = sampleRate > 0.0 ? sampleRate : 48000.0;
             const auto maxDelaySamples = static_cast<int>(std::ceil(static_cast<double>(maxDelayMs) * fs / 1000.0));
-            maxDelaySamples_ = maxDelaySamples;   // C1: expose the contractual max (pre-rounding)
+            maxDelaySamples_ = maxDelaySamples;
             const int blk = std::max(maxBlockSize, 1);
 
             const int raw = maxDelaySamples + blk + kTail + kGuard;
@@ -63,10 +64,6 @@ namespace MarsDSP::Delays
         [[nodiscard]] Interpolation getInterpolation() const noexcept { return mode_; }
         [[nodiscard]] int getCapacity() const noexcept { return bufL_.getCapacity(); }
         [[nodiscard]] int getWriteIndex() const noexcept { return writeIdx_; }
-        // C1: the contractual max delay in samples (pre-rounding). getCapacity()
-        // is the pow2 allocation; this is the largest delay a caller may request.
-        // Passing the capacity instead of this value double-rounds a downstream
-        // ring (see ChronosEngine::prepare -> FeedbackDelay::prepare).
         [[nodiscard]] int getMaxDelaySamples() const noexcept { return maxDelaySamples_; }
 
         void process(const float *inL, const float *inR,
@@ -147,30 +144,25 @@ namespace MarsDSP::Delays
                 const int bNew = (blockStart + sampleOffset - iNew - 3) & mask;
 
                 const int winLen = subN + kTail;
-                // elide the contiguous-window copy. When windowPtr returns
-                // non-null the window is contiguous in the mirrored ring and
-                // read directly from it; otherwise fall back to readWindow
-                // into the 16-byte-aligned scratch. The SIMD eval4 below uses
-                // loadu_ps for the pointer path (a ring pointer is not 16-byte
-                // aligned in general) and load_ps for the scratch path
-                const float* oldL = bufL_.windowPtr(bOld, winLen);
-                const float* newL = bufL_.windowPtr(bNew, winLen);
-                if (oldL == nullptr) { bufL_.readWindow(scratchOldL_.data(), bOld, winLen); oldL = scratchOldL_.data(); }
-                if (newL == nullptr) { bufL_.readWindow(scratchNewL_.data(), bNew, winLen); newL = scratchNewL_.data(); }
+
+                const auto wOldL = BlockTapReader::acquireWindow(bufL_, bOld, winLen, scratchOldL_.data());
+                const auto wNewL = BlockTapReader::acquireWindow(bufL_, bNew, winLen, scratchNewL_.data());
+                const float* oldL = wOldL.ptr;
+                const float* newL = wNewL.ptr;
+                const bool  oldLAligned = wOldL.aligned;
+                const bool  newLAligned = wNewL.aligned;
 
                 const float* oldR = nullptr;
                 const float* newR = nullptr;
+                bool oldRAligned = false;
+                bool newRAligned = false;
                 if (hasR)
                 {
-                    oldR = bufR_.windowPtr(bOld, winLen);
-                    newR = bufR_.windowPtr(bNew, winLen);
-                    if (oldR == nullptr) { bufR_.readWindow(scratchOldR_.data(), bOld, winLen); oldR = scratchOldR_.data(); }
-                    if (newR == nullptr) { bufR_.readWindow(scratchNewR_.data(), bNew, winLen); newR = scratchNewR_.data(); }
+                    const auto wOldR = BlockTapReader::acquireWindow(bufR_, bOld, winLen, scratchOldR_.data());
+                    const auto wNewR = BlockTapReader::acquireWindow(bufR_, bNew, winLen, scratchNewR_.data());
+                    oldR = wOldR.ptr;  newR = wNewR.ptr;
+                    oldRAligned = wOldR.aligned; newRAligned = wNewR.aligned;
                 }
-                const bool oldLAligned = (oldL == scratchOldL_.data());
-                const bool newLAligned = (newL == scratchNewL_.data());
-                const bool oldRAligned = (oldR == scratchOldR_.data());
-                const bool newRAligned = (newR == scratchNewR_.data());
 
                 const float invSubN = 1.0f / static_cast<float>(subN);
 
@@ -186,56 +178,27 @@ namespace MarsDSP::Delays
                     }};
                     const M128 laneOff = MM(mul_ps)(MM(set_ps)(3.0f, 2.0f, 1.0f, 0.0f), MM(set1_ps)(invSubN));
 
-                    // Evaluate 4 consecutive output samples starting at j0 into dst.
-                    // The `aligned` flags select load_ps (scratch path, 16-byte
-                    // aligned) vs loadu_ps (pointer path, ring address). On any
-                    // core from the last decade loadu_ps on an aligned address
-                    // is free, so the pointer path should win despite the
-                    // unaligned load
-                    auto eval4 = [&](float const *scratchOld, bool oldAligned,
-                                     float const *scratchNew, bool newAligned,
-                                     float *dst, int j0)
-                    {
-                        const M128 vAlpha = MM(add_ps)(laneOff, MM(set1_ps)(static_cast<float>(j0) * invSubN));
-
-                        M128 vOld = MM(setzero_ps)();
-                        M128 vNew = MM(setzero_ps)();
-
-                        for (int t = 0; t < 6; ++t)
-                        {
-                            const M128 wOld = (t == 0 && oldAligned)
-                                                  ? MM(load_ps)(scratchOld + j0)
-                                                  : MM(loadu_ps)(scratchOld + j0 + t);
-                            vOld = FMADD(wOld, cbOld[static_cast<std::size_t>(t)], vOld);
-
-                            const M128 wNew = (t == 0 && newAligned)
-                                                  ? MM(load_ps)(scratchNew + j0)
-                                                  : MM(loadu_ps)(scratchNew + j0 + t);
-                            vNew = FMADD(wNew, cbNew[static_cast<std::size_t>(t)], vNew);
-                        }
-
-                        const M128 vDelta = MM(sub_ps)(vNew, vOld);
-                        const M128 vOut = FMADD(vAlpha, vDelta, vOld);
-                        MM(storeu_ps)(dst, vOut);
-                    };
-
                     const int jFull = subN & ~3; // largest multiple of 4 ≤ subN
                     for (int j0 = 0; j0 + 4 <= subN; j0 += 4)
                     {
-                        eval4(oldL, oldLAligned, newL, newLAligned, wetL + sampleOffset + j0, j0);
-                        if (hasR) eval4(oldR, oldRAligned, newR, newRAligned, wetR + sampleOffset + j0, j0);
+                        const M128 vAlpha = MM(add_ps)(laneOff, MM(set1_ps)(static_cast<float>(j0) * invSubN));
+                        BlockTapReader::eval4(oldL + j0, oldLAligned, newL + j0, newLAligned,
+                                              cbOld, cbNew, vAlpha, wetL + sampleOffset + j0);
+                        if (hasR)
+                            BlockTapReader::eval4(oldR + j0, oldRAligned, newR + j0, newRAligned,
+                                                  cbOld, cbNew, vAlpha, wetR + sampleOffset + j0);
                     }
                     // ---- scalar tail for the 0..3 remaining samples ----
                     for (int j = jFull; j < subN; ++j)
                     {
                         const float alpha = static_cast<float>(j) * invSubN;
-                        const float yOldL = dot6(cOld, oldL + j);
-                        const float yNewL = dot6(cNew, newL + j);
+                        const float yOldL = BlockTapReader::dot6(cOld, oldL + j);
+                        const float yNewL = BlockTapReader::dot6(cNew, newL + j);
                         wetL[sampleOffset + j] = (1.0f - alpha) * yOldL + alpha * yNewL;
                         if (hasR)
                         {
-                            const float yOldR = dot6(cOld, oldR + j);
-                            const float yNewR = dot6(cNew, newR + j);
+                            const float yOldR = BlockTapReader::dot6(cOld, oldR + j);
+                            const float yNewR = BlockTapReader::dot6(cNew, newR + j);
                             wetR[sampleOffset + j] = (1.0f - alpha) * yOldR + alpha * yNewR;
                         }
                     }
@@ -244,13 +207,13 @@ namespace MarsDSP::Delays
                     for (int j = 0; j < subN; ++j)
                     {
                         const float alpha = static_cast<float>(j) * invSubN;
-                        const float yOldL = dot6(cOld, oldL + j);
-                        const float yNewL = dot6(cNew, newL + j);
+                        const float yOldL = BlockTapReader::dot6(cOld, oldL + j);
+                        const float yNewL = BlockTapReader::dot6(cNew, newL + j);
                         wetL[sampleOffset + j] = (1.0f - alpha) * yOldL + alpha * yNewL;
                         if (hasR)
                         {
-                            const float yOldR = dot6(cOld, oldR + j);
-                            const float yNewR = dot6(cNew, newR + j);
+                            const float yOldR = BlockTapReader::dot6(cOld, oldR + j);
+                            const float yNewR = BlockTapReader::dot6(cNew, newR + j);
                             wetR[sampleOffset + j] = (1.0f - alpha) * yOldR + alpha * yNewR;
                         }
                     }
@@ -261,17 +224,11 @@ namespace MarsDSP::Delays
             writeIdx_ = (blockStart + n) & mask;
         }
 
-        static float dot6(const Coeffs6 &c, const float *w) noexcept
-        {
-            return c.c[0] * w[0] + c.c[1] * w[1] + c.c[2] * w[2]
-                 + c.c[3] * w[3] + c.c[4] * w[4] + c.c[5] * w[5];
-        }
-
         Pow2RingBuffer bufL_;
         Pow2RingBuffer bufR_;
         int writeIdx_ = 0;
         int maxBlockSize_ = 0;
-        int maxDelaySamples_ = 0;   // C1: contractual max delay (pre-pow2-rounding)
+        int maxDelaySamples_ = 0;
         Interpolation mode_ = Interpolation::Lagrange5th;
         Smoothers::OnePoleSmoother<float> posSmoother_;
         bool firstBlock_ = true;

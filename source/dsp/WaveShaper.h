@@ -11,7 +11,6 @@ namespace MarsDSP::DSP::Primitives {
     enum class WaveshaperType
     {
         Soft = 0,
-        Hard,
         Asymmetric,
         Sine,
         NUM_TYPES
