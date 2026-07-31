@@ -18,7 +18,6 @@
 #include <numbers>
 
 namespace MarsDSP::Delays {
-
     class FeedbackDelay {
     public:
         static constexpr float kMaxFeedback     = 1.2f;

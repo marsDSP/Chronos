@@ -68,7 +68,7 @@ namespace MarsDSP {
             assert(fbDelay_.getMaxDelay() >= static_cast<float>(delayLine_.getMaxDelaySamples()));
             diffuser_.prepare(sampleRate);
 
-            constexpr int kNumScratch = 17;
+            constexpr int kNumScratch = 19;
             const auto cap = static_cast<std::size_t>(wetBufCapacity_);
             scratch_.assign(static_cast<std::size_t>(kNumScratch) * cap, 0.0f);
             float* p = scratch_.data();
@@ -81,6 +81,7 @@ namespace MarsDSP {
             take(wetPostSvfL_);  take(wetPostSvfR_);
             take(bypassDryInL_); take(bypassDryInR_);
             take(blendL_);       take(blendR_);
+            take(undiffWetL_);   take(undiffWetR_);
 
             bypassSmoother_.reset(sampleRate, 0.01);
             bypassDryL_.reset();
@@ -120,6 +121,9 @@ namespace MarsDSP {
             smoothedLpf_ = 0.0f;
             smoothedMix_ = 0.0f;
             smoothedDrive_ = 0.0f;
+
+            diffState_ = DiffuserState::Off;
+            diffFade_ = 0.0f;
         }
 
         void resetParams(const Params &p) noexcept
@@ -199,13 +203,8 @@ namespace MarsDSP {
                                        chunk, delaySamples_, delaySamples_);
                 }
 
-                //  Optional 8-section Schroeder allpass diffuser
-                if (enableDiffuser_)
-                {
-                    diffuser_.processBlock(wetBufL_.data(),
-                                           hasR ? wetBufR_.data() : nullptr,
-                                           chunk);
-                }
+
+                stepDiffuser_(chunk, hasR);
 
                 // bits is block-rate int, no smoother. lsb is computed once per block
                 const float blockLsb = std::ldexp(1.0f, 1 - smoothedBits_);
@@ -434,6 +433,9 @@ namespace MarsDSP {
             return Align::SaturatorAlign::kBudget;
         }
 
+        // C5: diffuser toggle crossfade length in samples (~10 ms @48 kHz).
+        static constexpr int kDiffuserFadeSamples = 480;
+
         [[nodiscard]] int getWetBufCapacity() const noexcept { return wetBufCapacity_; }
 
         void setDitherSeeds(std::uint32_t l, std::uint32_t r) noexcept
@@ -493,6 +495,100 @@ namespace MarsDSP {
             diffuser_.setSize(p.diffuserSize);
             diffuser_.setModDepthSamples(p.diffModDepth);
             diffuser_.setModRateHz(p.diffModRateHz);
+        }
+
+        // diffuser enable-toggle state machine. Off = bypassed (wet stays
+        // undiffused, smoothers frozen). On = diffuser runs in place. FadingIn
+        // / FadingOut = a per-sample linear crossfade between the undiffused
+        // and diffused wet over kDiffuserFadeSamples, carried across chunks and
+        // blocks via diffFade_ (0 = undiffused, 1 = diffused). On a rising edge
+        // (Off -> on), prime() clears the rings first so no stale audio
+        // replays. Mid-fade reversal (re-toggle during a fade) just flips the
+        // fade direction without re-priming (the rings are already warm). RT-
+        // safe: no allocation (undiffWetL_/R_ sized in prepare), bounded loops.
+        enum class DiffuserState { Off, FadingIn, On, FadingOut };
+
+        void stepDiffuser_(int chunk, bool hasR) noexcept
+        {
+            const bool wantOn = enableDiffuser_;
+
+            // ── state transitions ──
+            if (wantOn && diffState_ == DiffuserState::Off)
+            {
+                diffuser_.prime();
+                diffState_ = DiffuserState::FadingIn;
+                diffFade_ = 0.0f;
+            }
+            else if (!wantOn && diffState_ == DiffuserState::On)
+            {
+                diffState_ = DiffuserState::FadingOut;   // diffFade_ is 1.0
+            }
+            else if (wantOn && diffState_ == DiffuserState::FadingOut)
+            {
+                diffState_ = DiffuserState::FadingIn;     // reverse: rings warm
+            }
+            else if (!wantOn && diffState_ == DiffuserState::FadingIn)
+            {
+                diffState_ = DiffuserState::FadingOut;    // reverse
+            }
+
+            if (diffState_ == DiffuserState::Off)
+                return;   // bypassed: wetBuf stays undiffused
+
+            if (diffState_ == DiffuserState::On)
+            {
+                diffuser_.processBlock(wetBufL_.data(),
+                                       hasR ? wetBufR_.data() : nullptr, chunk);
+                return;
+            }
+
+            // FadingIn / FadingOut: copy the undiffused wet, run the diffuser
+            // in place (wetBuf -> diffused), then per-sample blend
+            //   out = undiff*(1-a) + diff*a,  a = diffFade_
+            // advancing a by inc per sample. FadingIn: a 0->1. FadingOut: a 1->0.
+            std::memcpy(undiffWetL_.data(), wetBufL_.data(),
+                        static_cast<std::size_t>(chunk) * sizeof(float));
+            if (hasR)
+                std::memcpy(undiffWetR_.data(), wetBufR_.data(),
+                            static_cast<std::size_t>(chunk) * sizeof(float));
+            diffuser_.processBlock(wetBufL_.data(),
+                                   hasR ? wetBufR_.data() : nullptr, chunk);
+
+            const float inc = 1.0f / static_cast<float>(kDiffuserFadeSamples);
+            const bool fadingIn = (diffState_ == DiffuserState::FadingIn);
+            for (int s = 0; s < chunk; ++s)
+            {
+                const auto u = static_cast<std::size_t>(s);
+                const float a = diffFade_;
+                const float oneMinusA = 1.0f - a;
+                wetBufL_[u] = undiffWetL_[u] * oneMinusA + wetBufL_[u] * a;
+                if (hasR)
+                    wetBufR_[u] = undiffWetR_[u] * oneMinusA + wetBufR_[u] * a;
+
+                diffFade_ += fadingIn ? inc : -inc;
+                if (fadingIn && diffFade_ >= 1.0f)
+                {
+                    diffFade_ = 1.0f;
+                    diffState_ = DiffuserState::On;
+                    // remaining samples: a=1 -> out=diffused (wetBuf already
+                    // holds the diffused signal from processBlock above).
+                    break;
+                }
+                if (!fadingIn && diffFade_ <= 0.0f)
+                {
+                    diffFade_ = 0.0f;
+                    diffState_ = DiffuserState::Off;
+                    // remaining samples: a=0 -> out=undiffused (wetBuf holds
+                    // the diffused signal, so restore from the pre-diffuser copy).
+                    for (int t = s + 1; t < chunk; ++t)
+                    {
+                        const auto ut = static_cast<std::size_t>(t);
+                        wetBufL_[ut] = undiffWetL_[ut];
+                        if (hasR) wetBufR_[ut] = undiffWetR_[ut];
+                    }
+                    break;
+                }
+            }
         }
 
         Delays::SimdDelayLine delayLine_;
@@ -575,6 +671,8 @@ namespace MarsDSP {
         std::span<float> bypassDryInR_;
         std::span<float> blendL_;
         std::span<float> blendR_;
+        std::span<float> undiffWetL_;   // C5: diffuser crossfade (undiffused copy)
+        std::span<float> undiffWetR_;
 
         double sampleRate_{0.0};
         int numChannels_{0};
@@ -583,6 +681,10 @@ namespace MarsDSP {
         Delays::Interpolation interp_{Delays::Interpolation::Lagrange5th};
         float feedback_{0.0f};
         bool enableDiffuser_{false};
+
+        // C5: diffuser enable-toggle crossfade state machine.
+        DiffuserState diffState_{DiffuserState::Off};
+        float diffFade_{0.0f};   // 0 = undiffused, 1 = diffused
     };
 }
 #endif

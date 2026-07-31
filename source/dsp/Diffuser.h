@@ -64,7 +64,7 @@ namespace MarsDSP::Diffusion {
             reset();
         }
 
-        void reset() noexcept
+        void prime() noexcept
         {
             for (auto* bank : { &secL_, &secR_ })
                 for (auto& s : *bank) { s.ring.clear(); s.w = 0; }
@@ -74,6 +74,11 @@ namespace MarsDSP::Diffusion {
             sizeSm_.setCurrentAndTargetValue(sizeSm_.getTargetValue());
             coefSm_.setCurrentAndTargetValue(coefSm_.getTargetValue());
             depthSm_.setCurrentAndTargetValue(depthSm_.getTargetValue());
+        }
+
+        void reset() noexcept
+        {
+            prime();
         }
 
         void setDiffusion(float amount01) noexcept
