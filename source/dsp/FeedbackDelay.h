@@ -3,6 +3,7 @@
 #ifndef CHRONOS_FEEDBACK_DELAY_H
 #define CHRONOS_FEEDBACK_DELAY_H
 
+#include "BlockTapReader.h"
 #include "FracDelayTap.h"
 #include "LinearSmoother.h"
 #include "Pow2RingBuffer.h"
@@ -11,6 +12,7 @@
 #include "nonlinear/Nonlinearities.h"
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <cmath>
 #include <numbers>
@@ -22,6 +24,9 @@ namespace MarsDSP::Delays {
         static constexpr float kMaxFeedback     = 1.2f;
         static constexpr float kMinLoopDelay    = 4.0f;   // > FracDelayTap's 3.0 contract
         static constexpr float kMinDriveMakeup  = 1.0f;
+
+        static constexpr int   kMaxChunk    = 64;   // max sub-chunk length (ramp-array footprint)
+        static constexpr int   kChunkGuard  = 6;    // interpolator window (base = wIdx - i - 3, len 6 ≤ kTail)
 
         struct Params
         {
@@ -95,8 +100,254 @@ namespace MarsDSP::Delays {
             driveSm_.setTargetValue(std::clamp(p.loopDrive, 0.1f, 16.0f));
         }
 
+        // ──────────────────────────────────────────────────────────────────
+        // chunked block processing over the loop-carried distance.
+        //
+        // The recursion is y[n] = x[n] + N(y[n − D]) — a loop-carried
+        // dependency at distance D, where N is damp → DC → cross →
+        // drive·tanh(ADAA) → makeup. SimdDelayLine's write-before-read contract
+        // (commit the whole block, then read) is the exact negation of this
+        // dataflow, which is why the feedback loop cannot be routed through it.
+        // But a dependency at distance D licenses processing in chunks of
+        // Lc ≤ D − guard samples: every read in the chunk lands ≥ D behind the
+        // write head, so no read touches a write from the same chunk. This is
+        // the same invariant Diffuser::chunk_ already relies on (kMinDelay 32 >
+        // kChunk 16, proven by diffuser_parity); this commit applies it to the
+        // feedback loop with a dynamic chunk length.
+        //
+        // Per sub-chunk:
+        //  1. Advance the four smoothers into stack ramps dR[], gR[], crossR[],
+        //     driveR[] (Lc values each, fixed-size alignas(16) arrays).
+        //  2. Bulk tap read: Lc taps from both rings at the per-sample ramped
+        //     delay. When the delay ramp is settled (dR[0] == dR[Lc−1]), hoist
+        //     the window acquisition (one windowPtr / readWindow for the whole
+        //     chunk via BlockTapReader::acquireWindow) and the Lagrange3
+        //     coefficients, then read Lc taps in a tight per-sample dot loop
+        //     from the hoisted window — same mul + horizontal-sum op order as
+        //     FracDelayTap::read, so satOrder = 0 parity is bit-exact. When the
+        //     ramp is moving, fall back to per-sample FracDelayTap::read (the
+        //     base varies per sample).
+        //  3. Scalar recursive chain over the chunk into w[]: damp one-pole,
+        //     DC blocker, cross-mix, ADAA saturate, makeup, isfinite scrub.
+        //     The satOrder_ switch is hoisted out of the sample loop (three
+        //     specialized inner loops — it is block-rate state). These
+        //     recursions are distance-1 in their own state (filter / ADAA
+        //     history), not through the ring, so they are legal inside the
+        //     chunk; they are irreducibly serial (ADAA is a nonlinear state
+        //     recursion — no scan), so do not attempt to vectorize them. ADAA
+        //     stays in double (conditioning analysis stands).
+        //  4. Bulk write: one writeBlock(w, writeIdx_, Lc) + one
+        //     refreshMirror(writeIdx_, Lc) per channel per chunk (replaces
+        //     Lc single-float write+mirror pairs).
+        //  5. Output: wet[s] = tap[s] from the bulk read.
+        //
+        // Lc = clamp(int(floor(dMin)) − kChunkGuard, 1, min(kMaxChunk, remaining))
+        //   where dMin = max(kMinLoopDelay, min(dCur, dTgt) − satLatency_) — the
+        //   minimum read delay over the next Lc smoother steps (the delay
+        //   smoother ramps linearly, so min(dCur, dTgt) is the ramp minimum).
+        //   kChunkGuard = 6 is the interpolator window (base = writeIdx − i − 3,
+        //   window length 6 ≤ kTail). If Lc < 4, fall through to the per-sample
+        //   scalar path for this sub-chunk (degenerate only when delay < ~10
+        //   samples; kMinLoopDelay = 4 keeps it legal).
+        // ──────────────────────────────────────────────────────────────────
         void process(const float* inL, const float* inR,
                      float* wetL, float* wetR, int n) noexcept
+        {
+            assert(inL != nullptr && wetL != nullptr);
+            const bool hasR = (inR != nullptr && wetR != nullptr);
+            const int  mask = ringL_.mask();
+
+            int s = 0;
+            while (s < n)
+            {
+                const int remaining = n - s;
+
+                // dMin = minimum read delay over the next Lc smoother steps.
+                // The delay smoother ramps linearly from dCur to dTgt, so
+                // min(dCur, dTgt) is the ramp minimum.
+                const float dCur = delaySm_.getCurrentValue();
+                const float dTgt = delaySm_.getTargetValue();
+                const float dMin = std::max(kMinLoopDelay,
+                    std::min(dCur, dTgt) - satLatency_);
+
+                int Lc = static_cast<int>(std::floor(dMin)) - kChunkGuard;
+                Lc = std::clamp(Lc, 1, std::min(kMaxChunk, remaining));
+
+                if (Lc < 4)
+                {
+                    // Per-sample scalar path (same code as processRef's body).
+                    for (int i = 0; i < Lc; ++i)
+                    {
+                        const float d     = delaySm_.getNextValue();
+                        const float g     = fbSm_.getNextValue();
+                        const float cross = crossSm_.getNextValue();
+                        const float drive = driveSm_.getNextValue();
+                        processSampleScalar_(inL + s + i, hasR ? inR + s + i : nullptr,
+                                             wetL + s + i, hasR ? wetR + s + i : nullptr,
+                                             d, g, cross, drive, hasR, mask);
+                    }
+                    s += Lc;
+                    continue;
+                }
+
+                // 1. Advance smoothers into stack ramps.
+                alignas(16) float dR[kMaxChunk];
+                float gR[kMaxChunk];
+                floatcrossR[kMaxChunk];
+                float driveR[kMaxChunk];
+                for (int i = 0; i < Lc; ++i)
+                {
+                    dR[i]     = delaySm_.getNextValue();
+                    gR[i]     = fbSm_.getNextValue();
+                    crossR[i] = crossSm_.getNextValue();
+                    driveR[i] = driveSm_.getNextValue();
+                }
+
+                // 2. Bulk tap read.
+                alignas(16) float tapL[kMaxChunk], tapR[kMaxChunk];
+                const bool settled = (dR[0] == dR[Lc - 1]);
+
+                if (settled)
+                {
+                    // Hoist window + coefficients; per-sample dot from the
+                    // hoisted window (same mul + horizontal-sum op order as
+                    // FracDelayTap::read → bit-exact at satOrder = 0).
+                    const float readDelay = std::max(kMinLoopDelay, dR[0] - satLatency_);
+                    const auto  iInt = static_cast<int>(readDelay);
+                    const float f = readDelay - static_cast<float>(iInt);
+                    const FracDelayTap::Coeffs4 k = FracDelayTap::lagrange3(f);
+                    const int base = (writeIdx_ - iInt - 3) & mask;
+                    const int winLen = Lc + 6;
+                    const M128 cf = MM(set_ps)(k.c4, k.c3, k.c2, k.c1);
+
+                    const auto wL = BlockTapReader::acquireWindow(ringL_, base, winLen, tapWinL_.data());
+                    const float* winL = wL.ptr;
+                    for (int i = 0; i < Lc; ++i)
+                    {
+                        const M128 taps = MM(loadu_ps)(winL + i + 1);
+                        const M128 prod = MM(mul_ps)(taps, cf);
+                        const M128 sh1  = MM(add_ps)(prod, MM(movehl_ps)(prod, prod));
+                        const M128 sh2  = MM(add_ss)(sh1, MM(shuffle_ps)(sh1, sh1, MM_SHUFFLE(0, 0, 0, 1)));
+                        tapL[i] = MM(cvtss_f32)(sh2);
+                    }
+
+                    if (hasR)
+                    {
+                        const auto wR = BlockTapReader::acquireWindow(ringR_, base, winLen, tapWinR_.data());
+                        const float* winR = wR.ptr;
+                        for (int i = 0; i < Lc; ++i)
+                        {
+                            const M128 taps = MM(loadu_ps)(winR + i + 1);
+                            const M128 prod = MM(mul_ps)(taps, cf);
+                            const M128 sh1  = MM(add_ps)(prod, MM(movehl_ps)(prod, prod));
+                            const M128 sh2  = MM(add_ss)(sh1, MM(shuffle_ps)(sh1, sh1, MM_SHUFFLE(0, 0, 0, 1)));
+                            tapR[i] = MM(cvtss_f32)(sh2);
+                        }
+                    }
+                }
+                else
+                {
+                    // Per-sample FracDelayTap::read (the base varies per sample).
+                    for (int i = 0; i < Lc; ++i)
+                    {
+                        const float readDelay = std::max(kMinLoopDelay, dR[i] - satLatency_);
+                        tapL[i] = FracDelayTap::read(ringL_, writeIdx_ + i, readDelay);
+                        if (hasR)
+                            tapR[i] = FracDelayTap::read(ringR_, writeIdx_ + i, readDelay);
+                    }
+                }
+
+                // When mono, tapR = tapL (same as processRef's
+                // `tapR = hasR ? ... : tapL`). The damp/DC/cross chain reads
+                // tapR[i] unconditionally to keep dampR_ tracking dampL_.
+                if (!hasR)
+                    for (int i = 0; i < Lc; ++i) tapR[i] = tapL[i];
+
+                // 3. Scalar recursive chain: damp → DC → cross (common), then
+                //    saturate with hoisted sat switch. vL[]/vR[] bridge the two
+                //    loops (stack arrays — storing a float to memory and reading
+                //    it back is bit-exact, so parity is preserved).
+                alignas(16) float vL[kMaxChunk], vR[kMaxChunk];
+                for (int i = 0; i < Lc; ++i)
+                {
+                    dampL_ += dampG_ * (tapL[i] - dampL_);
+                    dampR_ += dampG_ * (tapR[i] - dampR_);
+
+                    const float hL = dampL_ - dcXL_ + dcR_ * dcYL_;
+                    dcXL_ = dampL_; dcYL_ = hL;
+                    const float hR = dampR_ - dcXR_ + dcR_ * dcYR_;
+                    dcXR_ = dampR_; dcYR_ = hR;
+
+                    const float g = gR[i], cross = crossR[i];
+                    vL[i] = g * ((1.0f - cross) * hL + cross * hR);
+                    vR[i] = g * ((1.0f - cross) * hR + cross * hL);
+                }
+
+                alignas(16) float wL[kMaxChunk], wR[kMaxChunk];
+                if (satOrder_ == 0)
+                {
+                    for (int i = 0; i < Lc; ++i)
+                    {
+                        const float makeup = 1.0f / std::max(driveR[i], kMinDriveMakeup);
+                        const float sL = std::clamp(driveR[i] * vL[i], -1.0f, 1.0f) * makeup;
+                        const float sR = hasR ? std::clamp(driveR[i] * vR[i], -1.0f, 1.0f) * makeup : sL;
+                        wL[i] = inL[s + i] + sL;
+                        if (!std::isfinite(wL[i])) wL[i] = 0.0f;
+                        if (hasR) { wR[i] = inR[s + i] + sR; if (!std::isfinite(wR[i])) wR[i] = 0.0f; }
+                    }
+                }
+                else if (satOrder_ == 1)
+                {
+                    for (int i = 0; i < Lc; ++i)
+                    {
+                        const float makeup = 1.0f / std::max(driveR[i], kMinDriveMakeup);
+                        const float sL = static_cast<float>(adaa1L_.process(static_cast<double>(driveR[i] * vL[i]))) * makeup;
+                        const float sR = hasR ? static_cast<float>(adaa1R_.process(static_cast<double>(driveR[i] * vR[i]))) * makeup : sL;
+                        wL[i] = inL[s + i] + sL;
+                        if (!std::isfinite(wL[i])) wL[i] = 0.0f;
+                        if (hasR) { wR[i] = inR[s + i] + sR; if (!std::isfinite(wR[i])) wR[i] = 0.0f; }
+                    }
+                }
+                else
+                {
+                    for (int i = 0; i < Lc; ++i)
+                    {
+                        const float makeup = 1.0f / std::max(driveR[i], kMinDriveMakeup);
+                        const float sL = static_cast<float>(adaa2L_.process(static_cast<double>(driveR[i] * vL[i]))) * makeup;
+                        const float sR = hasR ? static_cast<float>(adaa2R_.process(static_cast<double>(driveR[i] * vR[i]))) * makeup : sL;
+                        wL[i] = inL[s + i] + sL;
+                        if (!std::isfinite(wL[i])) wL[i] = 0.0f;
+                        if (hasR) { wR[i] = inR[s + i] + sR; if (!std::isfinite(wR[i])) wR[i] = 0.0f; }
+                    }
+                }
+
+                // 4. Bulk write (one writeBlock + refreshMirror per channel).
+                ringL_.writeBlock(wL, writeIdx_, Lc);
+                ringL_.refreshMirror(writeIdx_, Lc);
+                if (hasR)
+                {
+                    ringR_.writeBlock(wR, writeIdx_, Lc);
+                    ringR_.refreshMirror(writeIdx_, Lc);
+                }
+                writeIdx_ = (writeIdx_ + Lc) & mask;
+
+                // 5. Output: wet = taps.
+                for (int i = 0; i < Lc; ++i)
+                {
+                    wetL[s + i] = tapL[i];
+                    if (hasR) wetR[s + i] = tapR[i];
+                }
+
+                s += Lc;
+            }
+        }
+
+        // reference only -- do not optimize, do not delete.
+        // Verbatim per-sample loop (the pre-C3 implementation), factored to
+        // call processSampleScalar_ so there is exactly one scalar implementation.
+        // fb_parity gates process (chunked) against this reference twin.
+        void processRef(const float* inL, const float* inR,
+                        float* wetL, float* wetR, int n) noexcept
         {
             assert(inL != nullptr && wetL != nullptr);
             const bool hasR = (inR != nullptr && wetR != nullptr);
@@ -108,49 +359,9 @@ namespace MarsDSP::Delays {
                 const float g     = fbSm_.getNextValue();
                 const float cross = crossSm_.getNextValue();
                 const float drive = driveSm_.getNextValue();
-                const float makeup = 1.0f / std::max(drive, kMinDriveMakeup);
-
-                const float readDelay =
-                    std::max(kMinLoopDelay, d - satLatency_);
-
-                const float tapL = FracDelayTap::read(ringL_, writeIdx_, readDelay);
-                const float tapR = hasR
-                    ? FracDelayTap::read(ringR_, writeIdx_, readDelay)
-                    : tapL;
-
-                dampL_ += dampG_ * (tapL - dampL_);
-                dampR_ += dampG_ * (tapR - dampR_);
-
-                const float hL = dampL_ - dcXL_ + dcR_ * dcYL_;
-                dcXL_ = dampL_; dcYL_ = hL;
-                const float hR = dampR_ - dcXR_ + dcR_ * dcYR_;
-                dcXR_ = dampR_; dcYR_ = hR;
-
-                const float vL = g * ((1.0f - cross) * hL + cross * hR);
-                const float vR = g * ((1.0f - cross) * hR + cross * hL);
-
-                const float sL = saturate_(adaa1L_, adaa2L_, drive * vL) * makeup;
-                const float sR = hasR
-                    ? saturate_(adaa1R_, adaa2R_, drive * vR) * makeup
-                    : sL;
-
-                float wL = inL[s] + sL;
-                if (!std::isfinite(wL)) wL = 0.0f;
-                ringL_.writeBlock(&wL, writeIdx_, 1);
-                ringL_.refreshMirror(writeIdx_, 1);
-
-                if (hasR)
-                {
-                    float wR = inR[s] + sR;
-                    if (!std::isfinite(wR)) wR = 0.0f;
-                    ringR_.writeBlock(&wR, writeIdx_, 1);
-                    ringR_.refreshMirror(writeIdx_, 1);
-                }
-
-                writeIdx_ = (writeIdx_ + 1) & mask;
-
-                wetL[s] = tapL;
-                if (hasR) wetR[s] = tapR;
+                processSampleScalar_(inL + s, hasR ? inR + s : nullptr,
+                                     wetL + s, hasR ? wetR + s : nullptr,
+                                     d, g, cross, drive, hasR, mask);
             }
         }
 
@@ -195,6 +406,60 @@ namespace MarsDSP::Delays {
             }
         }
 
+        // the one scalar per-sample implementation. Called by processRef
+        // (the reference twin) and by the Lc < 4 fallback in process. Reads a
+        // tap, runs the recursive chain (damp → DC → cross → saturate →
+        // makeup), writes to the ring, and outputs the raw tap as wet.
+        // Identical op order to the pre process() body.
+        void processSampleScalar_(const float* in, const float* inR,
+                                   float* wet, float* wetR,
+                                   float d, float g, float cross, float drive,
+                                   bool hasR, int mask) noexcept
+        {
+            const float makeup = 1.0f / std::max(drive, kMinDriveMakeup);
+            const float readDelay =
+                std::max(kMinLoopDelay, d - satLatency_);
+
+            const float tapL = FracDelayTap::read(ringL_, writeIdx_, readDelay);
+            const float tapR = hasR
+                ? FracDelayTap::read(ringR_, writeIdx_, readDelay)
+                : tapL;
+
+            dampL_ += dampG_ * (tapL - dampL_);
+            dampR_ += dampG_ * (tapR - dampR_);
+
+            const float hL = dampL_ - dcXL_ + dcR_ * dcYL_;
+            dcXL_ = dampL_; dcYL_ = hL;
+            const float hR = dampR_ - dcXR_ + dcR_ * dcYR_;
+            dcXR_ = dampR_; dcYR_ = hR;
+
+            const float vL = g * ((1.0f - cross) * hL + cross * hR);
+            const float vR = g * ((1.0f - cross) * hR + cross * hL);
+
+            const float sL = saturate_(adaa1L_, adaa2L_, drive * vL) * makeup;
+            const float sR = hasR
+                ? saturate_(adaa1R_, adaa2R_, drive * vR) * makeup
+                : sL;
+
+            float wL = *in + sL;
+            if (!std::isfinite(wL)) wL = 0.0f;
+            ringL_.writeBlock(&wL, writeIdx_, 1);
+            ringL_.refreshMirror(writeIdx_, 1);
+
+            if (hasR)
+            {
+                float wR = *inR + sR;
+                if (!std::isfinite(wR)) wR = 0.0f;
+                ringR_.writeBlock(&wR, writeIdx_, 1);
+                ringR_.refreshMirror(writeIdx_, 1);
+            }
+
+            writeIdx_ = (writeIdx_ + 1) & mask;
+
+            *wet = tapL;
+            if (hasR) *wetR = tapR;
+        }
+
         Pow2RingBuffer ringL_, ringR_;
         int   writeIdx_ = 0;
         float maxDelay_ = 0.0f;
@@ -215,6 +480,12 @@ namespace MarsDSP::Delays {
 
         Nonlinear::ADAA1<Nonlinear::TanhNL> adaa1L_, adaa1R_;
         Nonlinear::ADAA2<Nonlinear::TanhNL> adaa2L_, adaa2R_;
+
+        // scratch for the settled bulk-tap-read window fallback (when the
+        // window wraps past capacity, readWindow copies into here). Sized for
+        // the largest chunk: kMaxChunk + 6 taps ≤ kMaxChunk + kTail.
+        alignas(16) std::array<float, static_cast<std::size_t>(kMaxChunk) + Pow2RingBuffer::kTail> tapWinL_{};
+        alignas(16) std::array<float, static_cast<std::size_t>(kMaxChunk) + Pow2RingBuffer::kTail> tapWinR_{};
     };
 }
 #endif
