@@ -223,8 +223,8 @@ option(COPY_VST3_AFTER_BUILD "Copy built VST3 to a local test folder" OFF)
 set(VST3_COPY_DEST "$ENV{HOME}/Desktop/vst test" CACHE STRING "Destination folder for post-build VST3 copy")
 if(COPY_VST3_AFTER_BUILD AND TARGET ${PROJECT_NAME}_VST3)
     add_custom_command(TARGET ${PROJECT_NAME}_VST3 POST_BUILD
-            COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/scripts/bash/copy_vst3.sh" "$<TARGET_BUNDLE_DIR:${PROJECT_NAME}_VST3>" "${VST3_COPY_DEST}"
-            COMMENT "Copying VST3 to ${VST3_COPY_DEST}..."
+            COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/scripts/bash/copy_vst3.sh" "$<TARGET_BUNDLE_DIR:${PROJECT_NAME}_VST3>" "${VST3_COPY_DEST}" "$<CONFIG>"
+            COMMENT "Copying VST3 (config: $<CONFIG>) to ${VST3_COPY_DEST}..."
             VERBATIM
     )
 endif()

@@ -170,9 +170,40 @@ if(BUILD_TEST_HARNESSES)
         target_compile_options(chain_bench PRIVATE "-mfma")
     endif()
 
+    add_executable(fb_bench harnesses/perf/fb_bench.cpp)
+    target_link_libraries(fb_bench PRIVATE SharedCode)
+    if(MSVC)
+        target_compile_options(fb_bench PRIVATE /O2)
+    else()
+        target_compile_options(fb_bench PRIVATE -O2)
+    endif()
+    if(APPLE)
+        target_compile_options(fb_bench PRIVATE "-Xarch_x86_64" "-mfma")
+    elseif(MSVC)
+        target_compile_options(fb_bench PRIVATE "/arch:AVX2")
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64|AMD64)")
+        target_compile_options(fb_bench PRIVATE "-mfma")
+    endif()
+
+    add_executable(diffuser_bench harnesses/perf/diffuser_bench.cpp)
+    target_link_libraries(diffuser_bench PRIVATE SharedCode)
+    if(MSVC)
+        target_compile_options(diffuser_bench PRIVATE /O2)
+    else()
+        target_compile_options(diffuser_bench PRIVATE -O2)
+    endif()
+    if(APPLE)
+        target_compile_options(diffuser_bench PRIVATE "-Xarch_x86_64" "-mfma")
+    elseif(MSVC)
+        target_compile_options(diffuser_bench PRIVATE "/arch:AVX2")
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64|AMD64)")
+        target_compile_options(diffuser_bench PRIVATE "-mfma")
+    endif()
+
     # ── CTest registration ──────────────────────────────────────────────
-    # 20 correctness harnesses: exit 0 = pass. The 4 benchmarks (tan_bench,
-    # adaa_bench, delay_line_bench, chain_bench) are labeled "bench" so
+    # 20 correctness harnesses: exit 0 = pass. The 6 benchmarks (tan_bench,
+    # adaa_bench, delay_line_bench, chain_bench, fb_bench, diffuser_bench) are
+    # labeled "bench" so
     # `ctest -LE bench` excludes them. they report numbers rather than pass/fail
     # (delay_line_bench does carry a timing-dependent SIMD≤1.05×scalar gate
     # that is flaky in CI).
@@ -199,7 +230,7 @@ if(BUILD_TEST_HARNESSES)
     add_test(NAME simd_delay_parity      COMMAND simd_delay_parity)
     add_test(NAME diffuser_parity        COMMAND diffuser_parity)
 
-    # The 4 benchmarks are registered as tests but labeled "bench" so
+    # The 6 benchmarks are registered as tests but labeled "bench" so
     # `ctest -LE bench` excludes them. They report numbers, not pass/fail
     # (delay_line_bench carries a timing-dependent SIMD≤1.05×scalar gate
     # that is flaky in CI, so it is excluded from the correctness gate).
@@ -207,6 +238,8 @@ if(BUILD_TEST_HARNESSES)
     add_test(NAME adaa_bench         COMMAND adaa_bench)
     add_test(NAME delay_line_bench   COMMAND delay_line_bench)
     add_test(NAME chain_bench        COMMAND chain_bench)
+    add_test(NAME fb_bench           COMMAND fb_bench)
+    add_test(NAME diffuser_bench     COMMAND diffuser_bench)
 
-    set_tests_properties(tan_bench adaa_bench delay_line_bench chain_bench PROPERTIES LABELS "bench")
+    set_tests_properties(tan_bench adaa_bench delay_line_bench chain_bench fb_bench diffuser_bench PROPERTIES LABELS "bench")
 endif()
