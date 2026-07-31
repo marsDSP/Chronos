@@ -22,6 +22,7 @@
 #include <cmath>
 #include <cstdint>
 #include <numbers>
+#include <span>
 #include <vector>
 
 namespace MarsDSP {
@@ -65,26 +66,27 @@ namespace MarsDSP {
 
             fbDelay_.prepare(sampleRate, wetBufCapacity_, delayLine_.getCapacity());
             diffuser_.prepare(sampleRate);
-            wetBufL_.resize(static_cast<std::size_t>(wetBufCapacity_));
-            wetBufR_.resize(static_cast<std::size_t>(wetBufCapacity_));
-
-            // preallocate all scratch, 16-byte aligned, sized to wetBufCapacity_.
-            driveRamp_     .resize(static_cast<std::size_t>(wetBufCapacity_));
-            hpfRamp_       .resize(static_cast<std::size_t>(wetBufCapacity_));
-            lpfRamp_       .resize(static_cast<std::size_t>(wetBufCapacity_));
-            thetaRamp_     .resize(static_cast<std::size_t>(wetBufCapacity_));
-            gainRamp_      .resize(static_cast<std::size_t>(wetBufCapacity_));
-            lsbRamp_       .resize(static_cast<std::size_t>(wetBufCapacity_));
-            satL_          .resize(static_cast<std::size_t>(wetBufCapacity_));
-            satR_          .resize(static_cast<std::size_t>(wetBufCapacity_));
-            alignedDryL_   .resize(static_cast<std::size_t>(wetBufCapacity_));
-            alignedDryR_   .resize(static_cast<std::size_t>(wetBufCapacity_));
-            wetPostSvfL_   .resize(static_cast<std::size_t>(wetBufCapacity_));
-            wetPostSvfR_   .resize(static_cast<std::size_t>(wetBufCapacity_));
-            bypassDryInL_  .resize(static_cast<std::size_t>(wetBufCapacity_));
-            bypassDryInR_  .resize(static_cast<std::size_t>(wetBufCapacity_));
-            blendL_        .resize(static_cast<std::size_t>(wetBufCapacity_));
-            blendR_        .resize(static_cast<std::size_t>(wetBufCapacity_));
+            // All per-sample scratch in ONE contiguous allocation so the
+            // multi-pass chain streams through adjacent memory: one heap
+            // block instead of 17 scattered std::vector allocations → fewer
+            // TLB entries, better hardware-prefetch coverage, no allocator
+            // fragmentation across prepare/reprepare. Each sub-buffer is a
+            // span of wetBufCapacity_ floats; existing [i] / .data() call
+            // sites compile unchanged. Loads/stores stay unaligned
+            // (loadu/storeu), which is fine on Haswell+ and arm64.
+            constexpr int kNumScratch = 17;
+            const auto cap = static_cast<std::size_t>(wetBufCapacity_);
+            scratch_.assign(static_cast<std::size_t>(kNumScratch) * cap, 0.0f);
+            float* p = scratch_.data();
+            auto take = [&](std::span<float>& s) { s = { p, cap }; p += cap; };
+            take(wetBufL_);      take(wetBufR_);
+            take(driveRamp_);    take(hpfRamp_);    take(lpfRamp_);
+            take(thetaRamp_);    take(gainRamp_);
+            take(satL_);         take(satR_);
+            take(alignedDryL_);  take(alignedDryR_);
+            take(wetPostSvfL_);  take(wetPostSvfR_);
+            take(bypassDryInL_); take(bypassDryInR_);
+            take(blendL_);       take(blendR_);
 
             bypassSmoother_.reset(sampleRate, 0.01);
             bypassDryL_.reset();
@@ -233,7 +235,6 @@ namespace MarsDSP {
                     thetaRamp_[static_cast<std::size_t>(s)] =
                         (smoothedMix_ * 0.01f) * (std::numbers::pi_v<float> * 0.5f);
                     gainRamp_[static_cast<std::size_t>(s)] = smoothedGain_;
-                    lsbRamp_[static_cast<std::size_t>(s)] = blockLsb;
                 }
 
                 // ── 3. SVF coefficients (this block's start cutoff) ───────
@@ -525,8 +526,8 @@ namespace MarsDSP {
         Delays::SimdDelayLine delayLine_;
         Delays::FeedbackDelay fbDelay_;
         Diffusion::Diffuser diffuser_;
-        std::vector<float> wetBufL_;
-        std::vector<float> wetBufR_;
+        std::span<float> wetBufL_;
+        std::span<float> wetBufR_;
         int wetBufCapacity_{0};
 
         using SVF = Filters::SimdSVF;
@@ -587,23 +588,28 @@ namespace MarsDSP {
         Align::ShortDelay<Align::SaturatorAlign::kBudget> bypassDryL_;
         Align::ShortDelay<Align::SaturatorAlign::kBudget> bypassDryR_;
 
-        // preallocated scratch (sized to wetBufCapacity_ in prepare)
-        std::vector<float> driveRamp_;
-        std::vector<float> hpfRamp_;
-        std::vector<float> lpfRamp_;
-        std::vector<float> thetaRamp_;
-        std::vector<float> gainRamp_;
-        std::vector<float> lsbRamp_;
-        std::vector<float> satL_;
-        std::vector<float> satR_;
-        std::vector<float> alignedDryL_;
-        std::vector<float> alignedDryR_;
-        std::vector<float> wetPostSvfL_;
-        std::vector<float> wetPostSvfR_;
-        std::vector<float> bypassDryInL_;
-        std::vector<float> bypassDryInR_;
-        std::vector<float> blendL_;
-        std::vector<float> blendR_;
+        // Per-sample scratch: one contiguous arena carved into spans in
+        // prepare(). Consolidated from 17 separate std::vector allocations
+        // for cache locality (the multi-pass chain streams through one heap
+        // block instead of scattered ones). lsbRamp_ was removed: it was
+        // written every sample but never read (the dither stage uses
+        // blockLsb directly via set1_ps).
+        std::vector<float> scratch_;
+        std::span<float> driveRamp_;
+        std::span<float> hpfRamp_;
+        std::span<float> lpfRamp_;
+        std::span<float> thetaRamp_;
+        std::span<float> gainRamp_;
+        std::span<float> satL_;
+        std::span<float> satR_;
+        std::span<float> alignedDryL_;
+        std::span<float> alignedDryR_;
+        std::span<float> wetPostSvfL_;
+        std::span<float> wetPostSvfR_;
+        std::span<float> bypassDryInL_;
+        std::span<float> bypassDryInR_;
+        std::span<float> blendL_;
+        std::span<float> blendR_;
 
         double sampleRate_{0.0};
         int numChannels_{0};
