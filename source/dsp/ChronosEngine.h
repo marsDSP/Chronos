@@ -64,7 +64,15 @@ namespace MarsDSP {
 
             delayLine_.prepare(sampleRate, wetBufCapacity_, 5000.0f);
 
-            fbDelay_.prepare(sampleRate, wetBufCapacity_, delayLine_.getCapacity());
+            // C1: pass the contractual max delay (pre-pow2), not the capacity.
+            // The capacity double-rounds the fb ring (262144 + 1024 + 16 ->
+            // 524288 = 2 MB/ch); the contractual max (240000 @48k/5000ms)
+            // rounds once -> 262144 = 1 MB/ch. Invariant: fbDelay_.getMaxDelay()
+            // >= the largest delay the engine can request -- holds by
+            // construction (FeedbackDelay adds maxBlockSize + kTail + 8 before
+            // bit_ceil, so getMaxDelay() >= maxDelaySamples + maxBlockSize + 6).
+            fbDelay_.prepare(sampleRate, wetBufCapacity_, delayLine_.getMaxDelaySamples());
+            assert(fbDelay_.getMaxDelay() >= static_cast<float>(delayLine_.getMaxDelaySamples()));
             diffuser_.prepare(sampleRate);
             // All per-sample scratch in ONE contiguous allocation so the
             // multi-pass chain streams through adjacent memory: one heap

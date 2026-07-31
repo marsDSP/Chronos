@@ -34,6 +34,7 @@ namespace MarsDSP::Delays
 
             const auto fs = sampleRate > 0.0 ? sampleRate : 48000.0;
             const auto maxDelaySamples = static_cast<int>(std::ceil(static_cast<double>(maxDelayMs) * fs / 1000.0));
+            maxDelaySamples_ = maxDelaySamples;   // C1: expose the contractual max (pre-rounding)
             const int blk = std::max(maxBlockSize, 1);
 
             const int raw = maxDelaySamples + blk + kTail + kGuard;
@@ -62,6 +63,11 @@ namespace MarsDSP::Delays
         [[nodiscard]] Interpolation getInterpolation() const noexcept { return mode_; }
         [[nodiscard]] int getCapacity() const noexcept { return bufL_.getCapacity(); }
         [[nodiscard]] int getWriteIndex() const noexcept { return writeIdx_; }
+        // C1: the contractual max delay in samples (pre-rounding). getCapacity()
+        // is the pow2 allocation; this is the largest delay a caller may request.
+        // Passing the capacity instead of this value double-rounds a downstream
+        // ring (see ChronosEngine::prepare -> FeedbackDelay::prepare).
+        [[nodiscard]] int getMaxDelaySamples() const noexcept { return maxDelaySamples_; }
 
         void process(const float *inL, const float *inR,
                      float *wetL, float *wetR,
@@ -265,6 +271,7 @@ namespace MarsDSP::Delays
         Pow2RingBuffer bufR_;
         int writeIdx_ = 0;
         int maxBlockSize_ = 0;
+        int maxDelaySamples_ = 0;   // C1: contractual max delay (pre-pow2-rounding)
         Interpolation mode_ = Interpolation::Lagrange5th;
         Smoothers::OnePoleSmoother<float> posSmoother_;
         bool firstBlock_ = true;

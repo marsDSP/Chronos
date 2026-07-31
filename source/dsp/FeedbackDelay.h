@@ -33,6 +33,15 @@ namespace MarsDSP::Delays {
             int   satOrder     = 2;       // 0 = hard bypass sat, 1 = ADAA1, 2 = ADAA2
         };
 
+        // Callers must pass the contractual max delay, not a pow2 capacity.
+        // prepare() adds (maxBlockSize + kTail + 8) and bit-ceils the sum into
+        // the ring capacity; passing an already-pow2 capacity double-rounds it
+        // (e.g. 262144 -> 524288, a 2x waste). ChronosEngine passes
+        // SimdDelayLine::getMaxDelaySamples() (the pre-rounding max, 240000 @
+        // 48 kHz/5000 ms), which rounds once to 262144 = 1 MB/channel. The
+        // invariant getMaxDelay() >= maxDelaySamples holds by construction:
+        // capacity = bit_ceil(maxDelaySamples + maxBlockSize + 16) >= that sum,
+        // so getMaxDelay() = capacity - 10 >= maxDelaySamples + maxBlockSize + 6.
         void prepare(double sampleRate, int maxBlockSize, int maxDelaySamples) noexcept
         {
             assert(sampleRate > 0.0);
@@ -146,6 +155,10 @@ namespace MarsDSP::Delays {
         }
 
         [[nodiscard]] static constexpr int latencySamples() noexcept { return 0; }
+
+        // C1: the largest delay the ring can hold (capacity - kTail - 2).
+        // ChronosEngine::prepare asserts this >= the contractual max delay.
+        [[nodiscard]] float getMaxDelay() const noexcept { return maxDelay_; }
 
     private:
         float clampDelay_(float d) const noexcept

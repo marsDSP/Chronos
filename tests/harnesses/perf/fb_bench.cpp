@@ -11,8 +11,8 @@
 //
 // Matrix (stereo and mono, 48 kHz):
 //   delay ∈ {48, 480, 4800, 96000, 235000}  short, typical, and long.
-//     235000 tests the tap reads in the cold region of the 2 MB ring. The fb
-//     ring is sized from the SimdDelayLine capacity (see the prepare note).
+//   235000 tests the tap reads in the cold region of the 1 MB ring. The fb
+//     ring is sized from the SimdDelayLine contractual max (see the prepare note).
 //   feedback ∈ {0.5, 0.95}
 //   satOrder ∈ {0, 1, 2}                     hard clamp, ADAA1, ADAA2
 //   block ∈ {64, 256, 512}
@@ -22,22 +22,22 @@
 //   ADAA1 and ADAA2 do real work. The input is a sine at 0.5 amplitude. It has
 //   no denormals.
 //
-// Ring sizing — this matches ChronosEngine::prepare:
+// Ring sizing — this matches ChronosEngine::prepare (post-C1):
 //   ChronosEngine prepares the 5000 ms SimdDelayLine and passes
-//   delayLine_.getCapacity() to fbDelay_.prepare(...). This harness does the
-//   same. It builds a SimdDelayLine, calls prepare(48k, 512, 5000ms), and gets
-//   capacity 262144. It passes that capacity as FeedbackDelay's
+//   delayLine_.getMaxDelaySamples() to fbDelay_.prepare(...). This is the
+//   contractual max delay, not the pow2 capacity. This harness does the same.
+//   It builds a SimdDelayLine, calls prepare(48k, 512, 5000ms), and gets
+//   maxDelaySamples 240000. It passes this value as FeedbackDelay's
 //   maxDelaySamples. FeedbackDelay adds (maxDelaySamples + maxBlockSize +
 //   kTail + 8) and rounds the sum up to the next power of two. The result is
-//   524288 = 2 MB/channel. This reproduces the current engine fb rings. C1
-//   will reduce this to half its size when it passes the contractual max
-//   (240000) instead of the pow2 capacity. When C1 does this, update this
-//   prepare line to match the engine.
+//   262144 = 1 MB/channel. Before C1, the engine passed getCapacity() =
+//   262144, which double-rounded to 524288 = 2 MB/channel. C1 halves the fb
+//   rings: 6 MB total becomes 4 MB total.
 //
 // Timing idiom (the same as delay_line_bench and chain_bench): steady_clock,
 // doNotOptimize compiler barriers, min-of-5 reps, and sink accumulators that
 // keep the loop body live. The FeedbackDelay is prepared one time per config,
-// outside the timed region. The allocation and the memset of its 4 MB ring
+// outside the timed region. The allocation and the memset of its 2 MB ring
 // would increase the measured time. The state carries across reps. This has
 // no effect on the result because the per-sample kernel cost does not depend
 // on the data: the operation sequence per sample is fixed, and the ADAA
@@ -61,6 +61,7 @@
 #include "dsp/SimdDelayLine.h"
 
 #include <algorithm>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -190,20 +191,27 @@ int main(int argc, char** argv)
         inR[u] = 0.5f * static_cast<float>(std::sin(2.0 * kPi * 330.0 * static_cast<double>(i) / kFs));
     }
 
-    // This matches ChronosEngine::prepare: 5000 ms SimdDelayLine → getCapacity()
-    // → FeedbackDelay's maxDelaySamples. For maxBlock ≤ 512 the capacity is
-    // 262144. This gives the current 2 MB/channel fb ring (see the header note).
+    // This matches ChronosEngine::prepare after C1: 5000 ms SimdDelayLine →
+    // getMaxDelaySamples() (the contractual max, 240000) → FeedbackDelay's
+    // maxDelaySamples. For the matrix blocks {64,256,512} this gives a
+    // 262144-float ring = 1.0 MB/channel (see the header note).
     SimdDelayLine dl;
     dl.prepare(kFs, kMaxBlock, 5000.0f);
-    const int fbMaxDelay = dl.getCapacity();
+    const int fbMaxDelay = dl.getMaxDelaySamples();
+    // The fb ring capacity = bit_ceil(maxDelaySamples + maxBlockSize + kTail +
+    // 8). Compute it here for the headline (all matrix blocks round to the
+    // same value at 48 kHz).
+    const unsigned fbMinCap = static_cast<unsigned>(
+        fbMaxDelay + kMaxBlock + MarsDSP::Delays::Pow2RingBuffer::kTail + 8);
+    const int fbRingCap = static_cast<int>(std::bit_ceil(fbMinCap));
 
     const float loopDriveLin = std::pow(10.0f, kLoopDriveDb / 20.0f);
 
     std::printf("=== Chronos fb_bench: FeedbackDelay throughput ===\n");
     std::printf("fs=%.0f  total=%d samples/rep  reps=%d (min)  arch=%s\n",
                 kFs, kTotal, kReps, archName());
-    std::printf("fb maxDelaySamples=%d (SimdDelayLine 5000ms capacity) -> %.1f MB/ch ring\n",
-                fbMaxDelay, static_cast<double>(fbMaxDelay) * 8.0 / 1048576.0);
+    std::printf("fb maxDelaySamples=%d (contractual max) -> ring capacity %d floats = %.2f MB/channel\n",
+                fbMaxDelay, fbRingCap, static_cast<double>(fbRingCap) * 4.0 / 1048576.0);
     std::printf("fixed: dampHz=%.0f crossFeed=%.2f loopDrive=%.0fdB(lin %.3f)  sine 0.5 amp\n\n",
                 static_cast<double>(kDampHz), static_cast<double>(kCrossFeed),
                 static_cast<double>(kLoopDriveDb), static_cast<double>(loopDriveLin));
