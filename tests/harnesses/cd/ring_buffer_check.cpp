@@ -20,6 +20,12 @@
 //                        non-null, it returns the same data as readWindow;
 //                        and windowPtr returns null exactly when a naive
 //                        modulo oracle says the window wraps past the mirror.
+//   7. Arena-backed    – C9b: prepare(minimumCapacity, arena) carves storage
+//                        from a BumpArena instead of owning it. Checks the
+//                        carve is 64-byte aligned, arenaFloatsFor accounting
+//                        is exact, and an interleaved write/read sequence is
+//                        BIT-IDENTICAL to an owning ring running the same
+//                        sequence (both against the modulo oracle).
 //
 // Conventions (matching tan_bench): plain main(), exit code, printf, always-
 // live CHECK/FAIL (NOT assert — NDEBUG in Release would void every test).
@@ -27,6 +33,7 @@
 // ──────────────────────────────────────────────────────────────────────────
 
 #include "dsp/Pow2RingBuffer.h"
+#include "utils/memory/BumpArena.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -342,6 +349,115 @@ int runAll()
             }
         }
         std::printf("windowPtr parity (contiguous == readWindow, null == wrap oracle): PASS\n");
+    }
+
+    // ── 7. Arena-backed storage parity (C9b) ─────────────────────────────
+    g_section = "arena-backed";
+    {
+        using MarsDSP::Memory::BumpArena;
+
+        // Size query must be exact: carve of two rings' floats fits exactly.
+        const std::size_t floatsOne = Pow2RingBuffer::arenaFloatsFor(kTestCap);
+        CHECK(floatsOne >= static_cast<std::size_t>(kTestCap + kTail));
+        CHECK(floatsOne % 16 == 0);   // padded to a 64-byte multiple
+
+        BumpArena arena;
+        arena.reset(2 * floatsOne * sizeof(float));
+
+        Pow2RingBuffer buf;     // arena-backed
+        buf.prepare(kTestCap, arena);
+        CHECK(buf.getCapacity() == kTestCap);
+        CHECK(buf.mask() == kTestCap - 1);
+        CHECK(arena.get_bytes_used() == floatsOne * sizeof(float));
+
+        Pow2RingBuffer own;     // owning
+        own.prepare(kTestCap);
+        oracle.init(kTestCap);
+
+        // The carved base is 64-byte aligned (windowPtr(0,1) IS the base).
+        const float* base = buf.windowPtr(0, 1);
+        CHECK(base != nullptr);
+        CHECK(reinterpret_cast<std::uintptr_t>(base) % BumpArena::kBaseAlignment == 0);
+
+        // Zero state matches the owning path.
+        {
+            std::vector<float> got(static_cast<std::size_t>(kTestCap));
+            buf.readWindow(got.data(), 0, kTestCap);
+            for (int i = 0; i < kTestCap; ++i)
+                if (got[i] != 0.0f) FAIL("arena zero state i=%d is %g", i, (double)got[i]);
+        }
+
+        // Interleaved pseudo-random sequence through both rings + oracle:
+        // arena-backed must be bit-identical to owning (same op order).
+        Rng rng(20260801u);
+        constexpr int kBlocks = 2000;
+        int wA = 0, wO = 0;
+        std::vector<float> blk, gotA, gotO, exp;
+        for (int b = 0; b < kBlocks; ++b)
+        {
+            const int n = rng.range(1, kMaxBlock);
+            blk.resize(static_cast<std::size_t>(n));
+            for (int k = 0; k < n; ++k)
+                blk[k] = static_cast<float>(b * 10 + 1 + k);
+
+            buf.writeBlock(blk.data(), wA, n);
+            buf.refreshMirror(wA, n);
+            own.writeBlock(blk.data(), wO, n);
+            own.refreshMirror(wO, n);
+            oracle.write(wA, blk.data(), n);
+            wA = (wA + n) & buf.mask();
+            wO = (wO + n) & own.mask();
+
+            const int readStarts[3] = {
+                (wA - n + kTestCap) & buf.mask(),
+                rng.range(0, kTestCap - 1),
+                (wA - kMaxWindow + kTestCap) & buf.mask()
+            };
+            for (int rs : readStarts)
+            {
+                for (int len = 1; len <= kMaxWindow; ++len)
+                {
+                    gotA.resize(static_cast<std::size_t>(len));
+                    gotO.resize(static_cast<std::size_t>(len));
+                    exp.resize(static_cast<std::size_t>(len));
+                    buf.readWindow(gotA.data(), rs, len);
+                    own.readWindow(gotO.data(), rs, len);
+                    oracle.read(rs, exp.data(), len);
+                    for (int j = 0; j < len; ++j)
+                    {
+                        if (gotA[static_cast<std::size_t>(j)] != exp[static_cast<std::size_t>(j)])
+                            FAIL("arena block %d rs=%d len=%d j=%d got=%g exp=%g",
+                                 b, rs, len, j, (double)gotA[static_cast<std::size_t>(j)],
+                                 (double)exp[static_cast<std::size_t>(j)]);
+                        if (gotA[static_cast<std::size_t>(j)] != gotO[static_cast<std::size_t>(j)])
+                            FAIL("arena vs owning block %d rs=%d len=%d j=%d %g != %g",
+                                 b, rs, len, j, (double)gotA[static_cast<std::size_t>(j)],
+                                 (double)gotO[static_cast<std::size_t>(j)]);
+                    }
+                    // windowPtr parity on the arena-backed ring too.
+                    const float* p = buf.windowPtr(rs, len);
+                    const bool wraps = (rs + len) > (kTestCap + kTail);
+                    if (p == nullptr) { CHECK(wraps); }
+                    else
+                    {
+                        CHECK(!wraps);
+                        for (int j = 0; j < len; ++j)
+                            CHECK(p[j] == exp[static_cast<std::size_t>(j)]);
+                    }
+                }
+            }
+        }
+
+        // Second ring carved from the same arena lands immediately after the
+        // first (documented contiguous layout), also 64-byte aligned.
+        Pow2RingBuffer buf2;
+        buf2.prepare(kTestCap, arena);
+        CHECK(arena.get_bytes_used() == 2 * floatsOne * sizeof(float));
+        const float* base2 = buf2.windowPtr(0, 1);
+        CHECK(base2 == base + floatsOne);
+        CHECK(reinterpret_cast<std::uintptr_t>(base2) % BumpArena::kBaseAlignment == 0);
+
+        std::printf("arena-backed storage (aligned, exact accounting, owning parity): PASS\n");
     }
 
     return 0;

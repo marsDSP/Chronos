@@ -7,6 +7,7 @@
 #include "LinearSmoother.h"
 #include "Pow2RingBuffer.h"
 #include "simd/Config.h"
+#include "utils/memory/BumpArena.h"
 
 #include <algorithm>
 #include <array>
@@ -38,30 +39,32 @@ namespace MarsDSP::Diffusion {
 
         void prepare(double sampleRate) noexcept
         {
-            assert(sampleRate > 0.0);
-            sampleRate_ = sampleRate;
-            const double samplesPerMeter = sampleRate / kSpeedOfSoundMps;
+            prepareImpl_(sampleRate, nullptr);
+        }
 
-            bool used[kMaxPrimeScan] = {};
+        // C9b: carve all 16 section rings from the caller's arena (sized via
+        // ringStorageFloats) instead of owning them.
+        void prepare(double sampleRate, Memory::BumpArena& arena) noexcept
+        {
+            prepareImpl_(sampleRate, &arena);
+        }
+
+        // floats an arena must supply for all 16 rings: the section lengths
+        // come from the same computeSectionLens prepareImpl_ uses, so the
+        // carve fits exactly.
+        static std::size_t ringStorageFloats(double sampleRate) noexcept
+        {
+            int lenL[kNumSections], lenR[kNumSections];
+            computeSectionLens(sampleRate, lenL, lenR);
+            std::size_t total = 0;
             for (int i = 0; i < kNumSections; ++i)
             {
-                const int wantL = static_cast<int>(
-                    std::lround(static_cast<double>(kPathMetersL[static_cast<std::size_t>(i)]) * samplesPerMeter));
-                const int wantR = static_cast<int>(
-                    std::lround(static_cast<double>(kPathMetersR[static_cast<std::size_t>(i)]) * samplesPerMeter));
-                secL_[static_cast<std::size_t>(i)].len = distinctPrimeNear_(wantL, used);
-                secR_[static_cast<std::size_t>(i)].len = distinctPrimeNear_(wantR, used);
+                total += Delays::Pow2RingBuffer::arenaFloatsFor(
+                    lenL[i] + kModHeadroom + Delays::Pow2RingBuffer::kTail + 8);
+                total += Delays::Pow2RingBuffer::arenaFloatsFor(
+                    lenR[i] + kModHeadroom + Delays::Pow2RingBuffer::kTail + 8);
             }
-
-            for (auto* bank : { &secL_, &secR_ })
-                for (auto& s : *bank)
-                    s.ring.prepare(s.len + kModHeadroom + Delays::Pow2RingBuffer::kTail + 8);
-
-            sizeSm_.reset(sampleRate, 0.050);
-            coefSm_.reset(sampleRate, 0.020);
-            depthSm_.reset(sampleRate, 0.050);
-            setModRateHz(0.5f);
-            reset();
+            return total;
         }
 
         void prime() noexcept
@@ -221,6 +224,53 @@ namespace MarsDSP::Diffusion {
         static constexpr double kSpeedOfSoundMps = 343.0;
         static constexpr int    kModHeadroom     = 64;
         static constexpr int    kMaxPrimeScan    = 1 << 16;
+
+        // prime-snapped section lengths from the acoustic path tables.
+        // Shared by prepareImpl_ (the rings) and ringStorageFloats (the
+        // arena size query) so the two can never drift.
+        static void computeSectionLens(double sampleRate,
+                                       int* outL, int* outR) noexcept
+        {
+            const double samplesPerMeter = sampleRate / kSpeedOfSoundMps;
+            bool used[kMaxPrimeScan] = {};
+            for (int i = 0; i < kNumSections; ++i)
+            {
+                const int wantL = static_cast<int>(
+                    std::lround(static_cast<double>(kPathMetersL[static_cast<std::size_t>(i)]) * samplesPerMeter));
+                const int wantR = static_cast<int>(
+                    std::lround(static_cast<double>(kPathMetersR[static_cast<std::size_t>(i)]) * samplesPerMeter));
+                outL[i] = distinctPrimeNear_(wantL, used);
+                outR[i] = distinctPrimeNear_(wantR, used);
+            }
+        }
+
+        void prepareImpl_(double sampleRate, Memory::BumpArena* arena) noexcept
+        {
+            assert(sampleRate > 0.0);
+            sampleRate_ = sampleRate;
+
+            int lenL[kNumSections], lenR[kNumSections];
+            computeSectionLens(sampleRate, lenL, lenR);
+            for (int i = 0; i < kNumSections; ++i)
+            {
+                secL_[static_cast<std::size_t>(i)].len = lenL[i];
+                secR_[static_cast<std::size_t>(i)].len = lenR[i];
+            }
+
+            for (auto* bank : { &secL_, &secR_ })
+                for (auto& s : *bank)
+                {
+                    const int minCap = s.len + kModHeadroom + Delays::Pow2RingBuffer::kTail + 8;
+                    if (arena != nullptr) s.ring.prepare(minCap, *arena);
+                    else                  s.ring.prepare(minCap);
+                }
+
+            sizeSm_.reset(sampleRate, 0.050);
+            coefSm_.reset(sampleRate, 0.020);
+            depthSm_.reset(sampleRate, 0.050);
+            setModRateHz(0.5f);
+            reset();
+        }
 
         struct Section
         {

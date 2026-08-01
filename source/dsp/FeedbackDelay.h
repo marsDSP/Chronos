@@ -10,6 +10,7 @@
 #include "nonlinear/ADAA1.h"
 #include "nonlinear/ADAA2.h"
 #include "nonlinear/Nonlinearities.h"
+#include "utils/memory/BumpArena.h"
 
 #include <algorithm>
 #include <array>
@@ -48,23 +49,24 @@ namespace MarsDSP::Delays {
         // so getMaxDelay() = capacity - 10 >= maxDelaySamples + maxBlockSize + 6.
         void prepare(double sampleRate, int maxBlockSize, int maxDelaySamples) noexcept
         {
-            assert(sampleRate > 0.0);
-            assert(maxBlockSize > 0);
-            assert(maxDelaySamples > static_cast<int>(kMinLoopDelay));
+            prepareImpl_(sampleRate, maxBlockSize, maxDelaySamples, nullptr);
+        }
 
-            sampleRate_ = sampleRate;
+        // C9b: carve both rings from the caller's arena (sized via
+        // ringStorageFloats) instead of owning them.
+        void prepare(double sampleRate, int maxBlockSize, int maxDelaySamples,
+                     Memory::BumpArena& arena) noexcept
+        {
+            prepareImpl_(sampleRate, maxBlockSize, maxDelaySamples, &arena);
+        }
+
+        // floats an arena must supply for both rings: token-identical
+        // minCap arithmetic to prepareImpl_, so the carve fits exactly.
+        static std::size_t ringStorageFloats(int maxBlockSize, int maxDelaySamples) noexcept
+        {
             const int minCap = maxDelaySamples + maxBlockSize
                              + Pow2RingBuffer::kTail + 8;
-            ringL_.prepare(minCap);
-            ringR_.prepare(minCap);
-            maxDelay_ = static_cast<float>(
-                ringL_.getCapacity() - Pow2RingBuffer::kTail - 2);
-
-            delaySm_.reset(sampleRate, 0.050);
-            fbSm_.reset(sampleRate, 0.020);
-            crossSm_.reset(sampleRate, 0.020);
-            driveSm_.reset(sampleRate, 0.020);
-            reset();
+            return 2 * Pow2RingBuffer::arenaFloatsFor(minCap);
         }
 
         void reset() noexcept
@@ -455,6 +457,36 @@ namespace MarsDSP::Delays {
         }
 
     private:
+        void prepareImpl_(double sampleRate, int maxBlockSize, int maxDelaySamples,
+                          Memory::BumpArena* arena) noexcept
+        {
+            assert(sampleRate > 0.0);
+            assert(maxBlockSize > 0);
+            assert(maxDelaySamples > static_cast<int>(kMinLoopDelay));
+
+            sampleRate_ = sampleRate;
+            const int minCap = maxDelaySamples + maxBlockSize
+                             + Pow2RingBuffer::kTail + 8;
+            if (arena != nullptr)
+            {
+                ringL_.prepare(minCap, *arena);
+                ringR_.prepare(minCap, *arena);
+            }
+            else
+            {
+                ringL_.prepare(minCap);
+                ringR_.prepare(minCap);
+            }
+            maxDelay_ = static_cast<float>(
+                ringL_.getCapacity() - Pow2RingBuffer::kTail - 2);
+
+            delaySm_.reset(sampleRate, 0.050);
+            fbSm_.reset(sampleRate, 0.020);
+            crossSm_.reset(sampleRate, 0.020);
+            driveSm_.reset(sampleRate, 0.020);
+            reset();
+        }
+
         float clampDelay_(float d) const noexcept
         {
             return std::clamp(d, kMinLoopDelay + 1.5f, maxDelay_);
@@ -559,13 +591,17 @@ namespace MarsDSP::Delays {
             if (hasR) *wetR = outTapR;
         }
 
-        Pow2RingBuffer ringL_, ringR_;
-        int   writeIdx_ = 0;
+        Pow2RingBuffer ringL_;
+        Pow2RingBuffer ringR_;
+        int writeIdx_ = 0;
         float maxDelay_ = 0.0f;
         double sampleRate_ = 48000.0;
         bool  firstBlock_ = true;
 
-        Smoothers::LinearSmoother<float> delaySm_, fbSm_, crossSm_, driveSm_;
+        Smoothers::LinearSmoother<float> delaySm_;
+        Smoothers::LinearSmoother<float> fbSm_;
+        Smoothers::LinearSmoother<float> crossSm_;
+        Smoothers::LinearSmoother<float> driveSm_;
 
         // block-rate coefficients
         float dampG_ = 0.0f;
@@ -574,11 +610,17 @@ namespace MarsDSP::Delays {
         float satLatency_ = 1.0f;
 
         // per-channel loop state
-        float dampL_ = 0.0f, dampR_ = 0.0f;
-        float dcXL_ = 0.0f, dcYL_ = 0.0f, dcXR_ = 0.0f, dcYR_ = 0.0f;
+        float dampL_ = 0.0f;
+        float dampR_ = 0.0f;
+        float dcXL_ = 0.0f;
+        float dcYL_ = 0.0f;
+        float dcXR_ = 0.0f;
+        float dcYR_ = 0.0f;
 
-        Nonlinear::ADAA1<Nonlinear::TanhNL> adaa1L_, adaa1R_;
-        Nonlinear::ADAA2<Nonlinear::TanhNL> adaa2L_, adaa2R_;
+        Nonlinear::ADAA1<Nonlinear::TanhNL> adaa1L_;
+        Nonlinear::ADAA1<Nonlinear::TanhNL> adaa1R_;
+        Nonlinear::ADAA2<Nonlinear::TanhNL> adaa2L_;
+        Nonlinear::ADAA2<Nonlinear::TanhNL> adaa2R_;
 
         // scratch for the settled bulk-tap-read window fallback (when the
         // window wraps past capacity, readWindow copies into here). Sized for

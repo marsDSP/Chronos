@@ -64,25 +64,35 @@ namespace MarsDSP {
             numChannels_ = numChannels;
             wetBufCapacity_ = std::max(1, 2 * maxBlockSize);
 
-            delayLine_.prepare(sampleRate, wetBufCapacity_, 5000.0f);
-
-            fbDelay_.prepare(sampleRate, wetBufCapacity_, delayLine_.getMaxDelaySamples());
-            assert(fbDelay_.getMaxDelay() >= static_cast<float>(delayLine_.getMaxDelaySamples()));
-            diffuser_.prepare(sampleRate);
-
             constexpr int kNumScratch = 19;
             const auto cap = static_cast<std::size_t>(wetBufCapacity_);
-            // C9: one 64-byte-aligned BumpArena instead of a std::vector +
-            // manual float* carve — one allocation to reason about, and one
-            // get_total_num_bytes() for the memory map. strideFloats pads
-            // the span stride to a multiple of 16 floats (64 bytes) so every
-            // span starts 64-byte aligned even when wetBufCapacity_ is not a
-            // multiple of 16 (a host may pass maxBlockSize = 24 -> cap 48).
-            // Spans keep their logical size cap, so every loop body stays
-            // textually identical. The logical region is zeroed to preserve
-            // the old scratch_.assign(..., 0.0f) behavior; padding unread.
             const std::size_t strideFloats = (cap + 15u) & ~static_cast<std::size_t>(15u);
-            arena_.reset(static_cast<std::size_t>(kNumScratch) * strideFloats * sizeof(float));
+
+            // C9/C9b: one 64-byte-aligned BumpArena backs ALL engine storage
+            // — the 20 rings (delay 2, feedback 2, diffuser 16) and the 19
+            // scratch spans — so the whole DSP layer is one allocation with
+            // one get_total_num_bytes() (C11's memory-map figure). Sizes are
+            // exact by construction: every ring carve is 64-aligned and
+            // padded to a 16-float multiple (Pow2RingBuffer::arenaFloatsFor)
+            // and the scratch stride is a 16-float multiple, so the
+            // component sums add exactly with no alignment slop. Spans keep
+            // their logical size cap, so every loop body stays textually
+            // identical; the scratch logical region stays zero-initialized
+            // (padding unread).
+            const int maxDelaySamp =
+                Delays::SimdDelayLine::maxDelaySamplesFor(sampleRate, 5000.0f);
+            const std::size_t ringFloats =
+                  Delays::SimdDelayLine::ringStorageFloats(sampleRate, wetBufCapacity_, 5000.0f)
+                + Delays::FeedbackDelay::ringStorageFloats(wetBufCapacity_, maxDelaySamp)
+                + Diffusion::Diffuser::ringStorageFloats(sampleRate);
+            arena_.reset(static_cast<std::size_t>(kNumScratch) * strideFloats * sizeof(float)
+                         + ringFloats * sizeof(float));
+
+            delayLine_.prepare(sampleRate, wetBufCapacity_, 5000.0f, arena_);
+            fbDelay_.prepare(sampleRate, wetBufCapacity_, maxDelaySamp, arena_);
+            assert(fbDelay_.getMaxDelay() >= static_cast<float>(maxDelaySamp));
+            diffuser_.prepare(sampleRate, arena_);
+
             auto take = [&](std::span<float>& s)
             {
                 float* q = arena_.allocate<float>(strideFloats, Memory::BumpArena::kBaseAlignment);
@@ -686,7 +696,7 @@ namespace MarsDSP {
         Align::ShortDelay<Align::SaturatorAlign::kBudget> bypassDryL_;
         Align::ShortDelay<Align::SaturatorAlign::kBudget> bypassDryR_;
 
-        Memory::BumpArena arena_;   // C9: backs all scratch spans below
+        Memory::BumpArena arena_;   // C9/C9b: backs the 20 rings + scratch spans
         std::span<float> driveRamp_;
         std::span<float> hpfRamp_;
         std::span<float> lpfRamp_;

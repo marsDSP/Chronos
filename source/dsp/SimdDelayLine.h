@@ -8,6 +8,7 @@
 #include "OnePoleSmoother.h"
 #include "Pow2RingBuffer.h"
 #include "simd/Config.h"
+#include "utils/memory/BumpArena.h"
 
 #include <algorithm>
 #include <array>
@@ -29,27 +30,36 @@ namespace MarsDSP::Delays
 
         void prepare(double sampleRate, int maxBlockSize, float maxDelayMs) noexcept
         {
-            assert(sampleRate > 0.0);
-            assert(maxBlockSize > 0);
-            assert(maxDelayMs > 0.0f);
+            prepareImpl_(sampleRate, maxBlockSize, maxDelayMs, nullptr);
+        }
 
+        // C9b: carve both rings from the caller's arena (sized via
+        // ringStorageFloats) instead of owning them.
+        void prepare(double sampleRate, int maxBlockSize, float maxDelayMs,
+                     Memory::BumpArena& arena) noexcept
+        {
+            prepareImpl_(sampleRate, maxBlockSize, maxDelayMs, &arena);
+        }
+
+        // the contractual (pre-rounding) max delay prepare() computes.
+        static int maxDelaySamplesFor(double sampleRate, float maxDelayMs) noexcept
+        {
             const auto fs = sampleRate > 0.0 ? sampleRate : 48000.0;
-            const auto maxDelaySamples = static_cast<int>(std::ceil(static_cast<double>(maxDelayMs) * fs / 1000.0));
-            maxDelaySamples_ = maxDelaySamples;
-            const int blk = std::max(maxBlockSize, 1);
+            return static_cast<int>(std::ceil(static_cast<double>(maxDelayMs) * fs / 1000.0));
+        }
 
+        // floats an arena must supply for both rings: identical arithmetic
+        // to prepareImpl_ (token-identical maxDelaySamples/capacity chain),
+        // so the carve fits exactly.
+        static std::size_t ringStorageFloats(double sampleRate, int maxBlockSize,
+                                             float maxDelayMs) noexcept
+        {
+            const int maxDelaySamples = maxDelaySamplesFor(sampleRate, maxDelayMs);
+            const int blk = std::max(maxBlockSize, 1);
             const int raw = maxDelaySamples + blk + kTail + kGuard;
             const int capacityReq = std::max(raw, kScratchLen);
             const auto capacity = static_cast<int>(std::bit_ceil(static_cast<unsigned int>(capacityReq)));
-            assert(capacity >= kScratchLen);
-
-            bufL_.prepare(capacity);
-            bufR_.prepare(capacity);
-            maxBlockSize_ = blk;
-            writeIdx_ = 0;
-
-            posSmoother_.reset(sampleRate, kDelaySmoothMs * 0.001, kSubBlock);
-            firstBlock_ = true;
+            return 2 * Pow2RingBuffer::arenaFloatsFor(capacity);
         }
 
         void reset() noexcept
@@ -84,6 +94,39 @@ namespace MarsDSP::Delays
 
     private:
         static constexpr bool kUseSimd = true;
+
+        void prepareImpl_(double sampleRate, int maxBlockSize, float maxDelayMs,
+                          Memory::BumpArena* arena) noexcept
+        {
+            assert(sampleRate > 0.0);
+            assert(maxBlockSize > 0);
+            assert(maxDelayMs > 0.0f);
+
+            const auto maxDelaySamples = maxDelaySamplesFor(sampleRate, maxDelayMs);
+            maxDelaySamples_ = maxDelaySamples;
+            const int blk = std::max(maxBlockSize, 1);
+
+            const int raw = maxDelaySamples + blk + kTail + kGuard;
+            const int capacityReq = std::max(raw, kScratchLen);
+            const auto capacity = static_cast<int>(std::bit_ceil(static_cast<unsigned int>(capacityReq)));
+            assert(capacity >= kScratchLen);
+
+            if (arena != nullptr)
+            {
+                bufL_.prepare(capacity, *arena);
+                bufR_.prepare(capacity, *arena);
+            }
+            else
+            {
+                bufL_.prepare(capacity);
+                bufR_.prepare(capacity);
+            }
+            maxBlockSize_ = blk;
+            writeIdx_ = 0;
+
+            posSmoother_.reset(sampleRate, kDelaySmoothMs * 0.001, kSubBlock);
+            firstBlock_ = true;
+        }
 
         template<bool UseSimd>
         void processImpl(const float *inL, const float *inR,
