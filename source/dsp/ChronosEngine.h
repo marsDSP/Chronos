@@ -48,7 +48,7 @@ namespace MarsDSP {
             float loopDrive      = 1.0f;   // linear gain into the loop tanh
             int   loopSatOrder   = 2;      // 0 hard, 1 ADAA1, 2 ADAA2
             float diffusion      = 0.7f;   // 0..1 -> allpass coeff 0..0.92
-            float diffuserSize   = 0.5f;   // 0..1 (0 = full path lengths)
+            float diffuserSize   = 0.5f;   // 0..1 (1 = full path length)
             float diffModDepth   = 16.0f;  // samples, 0..62
             float diffModRateHz  = 0.5f;   // 0..8
             bool  enableDiffuser = false;  // off by default

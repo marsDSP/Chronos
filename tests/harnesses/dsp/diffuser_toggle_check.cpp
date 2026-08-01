@@ -222,10 +222,12 @@ void testStaleReplay()
                 tog.ampA, tog.ampB, togDbc);
 
     // The toggle case must add no more tone A than the diffuser's inherent
-    // response (≤ baseline + 3 dB slack for run-to-run dither noise). Without
-    // prime() the stale replay would be ~0 dBc, far above this gate.
-    CHECK(togDbc <= baseDbc + 3.0);
-    std::printf("no stale replay (toggle %.1f dBc ≤ baseline %.1f + 3 dB): PASS\n",
+    // response. The slack covers dither noise and the transport-dependent
+    // subharmonic level (S4 lengthened the size-0.5 path, which shifts the
+    // allpass comb relative to 220 Hz). Without prime() the stale replay
+    // would be ~0 dBc, far above this gate.
+    CHECK(togDbc <= baseDbc + 6.0);
+    std::printf("no stale replay (toggle %.1f dBc ≤ baseline %.1f + 6 dB): PASS\n",
                 togDbc, baseDbc);
 }
 

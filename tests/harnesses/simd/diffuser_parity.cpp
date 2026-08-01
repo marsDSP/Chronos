@@ -128,16 +128,14 @@ void runOne(const Cfg& c)
 
 // ── C6: base-transport unit check ─────────────────────────────────────
 // Verify baseTransportSamples / baseTransportSamplesLR match an inline
-// recomputation of the same per-section eff expression, and sanity-check the
-// measured transport table (size 0 ≈ 61 ms; size 1 → ~10% of that, with the
-// shortest sections floor-clamped at kMinDelay).
+// recomputation via effLen, and sanity-check the measured transport table
+// (S4: size 0 = shortest path ~28 ms; size 1 = full path ~61 ms).
 void testBaseTransport()
 {
     g_section = "base-transport";
     MarsDSP::Diffusion::Diffuser d;
     d.prepare(kFs);   // primes the section lengths (prime-snapped at 48 kHz)
 
-    const float kMaxSizeCut = MarsDSP::Diffusion::Diffuser::kMaxSizeCut;
     const float kMinDelayF  = MarsDSP::Diffusion::Diffuser::kMinDelay;
     const int   kNum        = MarsDSP::Diffusion::Diffuser::kNumSections;
 
@@ -147,21 +145,21 @@ void testBaseTransport()
         const auto lr = d.baseTransportSamplesLR(sz);
         const float mean = d.baseTransportSamples(sz);
 
-        // Independent recompute via the same per-section expression, using the
-        // public section-length getters. This verifies baseTransportSamplesLR
-        // uses the token-identical arithmetic to chunk_/chain_ (unmodulated).
+        // Independent recompute via effLen, using the public section-length
+        // getters. This verifies baseTransportSamplesLR uses the token-
+        // identical arithmetic to chunk_/chain_ (unmodulated).
         const float s = std::clamp(sz, 0.0f, 1.0f);
         float refL = 0.0f, refR = 0.0f;
         for (int i = 0; i < kNum; ++i)
         {
             const float lenFL = static_cast<float>(d.sectionLenL(i));
-            float effL = lenFL * (1.0f - kMaxSizeCut * s);
+            float effL = MarsDSP::Diffusion::Diffuser::effLen(lenFL, s);
             effL = std::nearbyintf(effL);
             effL = std::clamp(effL, kMinDelayF, lenFL);
             refL += effL;
 
             const float lenFR = static_cast<float>(d.sectionLenR(i));
-            float effR = lenFR * (1.0f - kMaxSizeCut * s);
+            float effR = MarsDSP::Diffusion::Diffuser::effLen(lenFR, s);
             effR = std::nearbyintf(effR);
             effR = std::clamp(effR, kMinDelayF, lenFR);
             refR += effR;
@@ -181,42 +179,39 @@ void testBaseTransport()
                     (double)mean);
     }
 
-    // Sanity: size 0 transport ≈ 61 ms at 48 kHz (short-smear tables: Σlen ≈
-    // 2930 samples per bank, prime-snapped, so within a few samples). Bounds
-    // bracket the intended scale — a regression to the old 10× tables
-    // (≈ 29400) fails the upper bound.
+    // Sanity: size 0 is the shortest path (S4 flipped the direction). At 48
+    // kHz the prime-snapped banks sum to ~1326/1331 samples; bounds bracket
+    // the intended scale.
     {
         const auto lr0 = d.baseTransportSamplesLR(0.0f);
-        CHECK(lr0[0] > 2800.0f && lr0[0] < 3100.0f);
-        CHECK(lr0[1] > 2800.0f && lr0[1] < 3100.0f);
-        std::printf("    size=0 sanity: L=%.0f R=%.0f (both in (2800, 3100)): PASS\n",
+        CHECK(lr0[0] > 1200.0f && lr0[0] < 1500.0f);
+        CHECK(lr0[1] > 1200.0f && lr0[1] < 1500.0f);
+        std::printf("    size=0 sanity: L=%.0f R=%.0f (both in (1200, 1500)): PASS\n",
                     (double)lr0[0], (double)lr0[1]);
     }
 
-    // Sanity: size 1 → eff = len*(1-0.9*1) = len*0.1 per section, floor-
-    // clamped at kMinDelay=32 — the three shortest sections (len < 320)
-    // clamp, so the transport is a bit above 10% of size=0. The recompute
-    // loop above already verified the exact value; monotonicity (below)
-    // verifies it is the minimum across the grid.
+    // Sanity: size 1 is the full path (S4). The recompute loop above
+    // verified the exact value; monotonicity (below) verifies it is the
+    // maximum across the grid.
     {
         const auto lr0 = d.baseTransportSamplesLR(0.0f);
         const auto lr1 = d.baseTransportSamplesLR(1.0f);
-        CHECK(lr1[0] < lr0[0]);   // size=1 is the shortest transport
-        CHECK(lr1[1] < lr0[1]);
-        std::printf("    size=1 sanity: L=%.0f R=%.0f (both < size=0): PASS\n",
+        CHECK(lr1[0] > lr0[0]);   // size=1 is the full (longest) transport
+        CHECK(lr1[1] > lr0[1]);
+        std::printf("    size=1 sanity: L=%.0f R=%.0f (both > size=0): PASS\n",
                     (double)lr1[0], (double)lr1[1]);
     }
 
-    // Monotonicity: transport(size) is non-increasing (size shortens delays).
+    // Monotonicity: transport(size) is non-decreasing (size lengthens delays).
     float prev = d.baseTransportSamples(0.0f);
     for (float sz : sizes)
     {
         const float cur = d.baseTransportSamples(sz);
-        if (cur > prev + 1e-4f)
-            FAIL("non-monotonic at size=%.2f: cur=%.1f > prev=%.1f", (double)sz, (double)cur, (double)prev);
+        if (cur < prev - 1e-4f)
+            FAIL("non-monotonic at size=%.2f: cur=%.1f < prev=%.1f", (double)sz, (double)cur, (double)prev);
         prev = cur;
     }
-    std::printf("    monotonicity (transport non-increasing in size): PASS\n");
+    std::printf("    monotonicity (transport non-decreasing in size): PASS\n");
     std::printf("base-transport unit check: PASS\n");
 }
 

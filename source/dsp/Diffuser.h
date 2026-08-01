@@ -22,7 +22,7 @@ namespace MarsDSP::Diffusion {
     public:
         static constexpr int   kNumSections    = 8;
         static constexpr float kMaxCoefficient = 0.92f;
-        static constexpr float kMaxSizeCut     = 0.90f; // size shortens delay by <= 90%
+        static constexpr float kMaxSizeCut     = 0.55f; // size 0 cuts the path by 55%; size 1 is the full path
         static constexpr int   kChunk          = 16;    // block-vectorized chunk
         static constexpr float kMinDelay       = 32.0f; // MUST exceed kChunk: a chunk's
                                                         // reads must not touch that same
@@ -179,7 +179,7 @@ namespace MarsDSP::Diffusion {
                 for (int i = 0; i < kNumSections; ++i)
                 {
                     const float lenF = static_cast<float>(bank[static_cast<std::size_t>(i)].len);
-                    float eff = lenF * (1.0f - kMaxSizeCut * s);
+                    float eff = effLen(lenF, s);
                     eff = std::nearbyintf(eff);
                     eff = std::clamp(eff, kMinDelay, lenF);
                     sum += eff;
@@ -204,6 +204,13 @@ namespace MarsDSP::Diffusion {
         static constexpr float sectionSign(int i) noexcept
         {
             return (i & 1) != 0 ? -1.0f : 1.0f;
+        }
+
+        // Return the section length in samples for the size control.
+        // A size of 0 gives the shortest path. A size of 1 gives the full path.
+        [[nodiscard]] static float effLen(float lenF, float size01) noexcept
+        {
+            return lenF * (1.0f - kMaxSizeCut * (1.0f - size01));
         }
 
     private:
@@ -309,7 +316,7 @@ namespace MarsDSP::Diffusion {
                 if (settled && !isMod)
                 {
                     // ---- fast path: constant integer tap, 4-wide ----
-                    float eff = lenF * (1.0f - kMaxSizeCut * sizeRamp_[0]);
+                    float eff = effLen(lenF, sizeRamp_[0]);
                     eff = std::clamp(std::nearbyintf(eff), kMinDelay, lenF);
                     const int D = static_cast<int>(eff);
                     const int base = (sec.w - D) & mask;
@@ -355,7 +362,7 @@ namespace MarsDSP::Diffusion {
                     for (int j = 0; j < m; ++j)
                     {
                         const float gj = sgn * gRamp_[static_cast<std::size_t>(j)];
-                        float eff = lenF * (1.0f - kMaxSizeCut * sizeRamp_[static_cast<std::size_t>(j)]);
+                        float eff = effLen(lenF, sizeRamp_[static_cast<std::size_t>(j)]);
                         const float mm = (i == kModSectionA) ? modA[j]
                                        : (i == kModSectionB) ? modB[j]
                                                              : 0.0f;
@@ -386,7 +393,7 @@ namespace MarsDSP::Diffusion {
             {
                 auto& sec = bank[static_cast<std::size_t>(i)];
                 const float lenF = static_cast<float>(sec.len);
-                float eff = lenF * (1.0f - kMaxSizeCut * size);
+                float eff = effLen(lenF, size);
 
                 const float m = (i == kModSectionA) ? modA
                               : (i == kModSectionB) ? modB
