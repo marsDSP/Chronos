@@ -150,6 +150,27 @@ if(BUILD_TEST_HARNESSES)
         target_compile_options(diffuser_parity PRIVATE "-mfma")
     endif()
 
+    # Golden render harness: deterministic FNV-1a 64 hashes over 12 fixed
+    # configurations x 3 fixed inputs, plus audible metrics. Forced -O2 and
+    # FMA so the SIMD kernels inline and the numerics match the plugin build.
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/golden")
+    add_executable(golden_render_check harnesses/dsp/golden_render_check.cpp)
+    target_link_libraries(golden_render_check PRIVATE SharedCode)
+    target_compile_definitions(golden_render_check PRIVATE
+        CHRONOS_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden")
+    if(MSVC)
+        target_compile_options(golden_render_check PRIVATE /O2)
+    else()
+        target_compile_options(golden_render_check PRIVATE -O2)
+    endif()
+    if(APPLE)
+        target_compile_options(golden_render_check PRIVATE "-Xarch_x86_64" "-mfma")
+    elseif(MSVC)
+        target_compile_options(golden_render_check PRIVATE "/arch:AVX2")
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64|AMD64)")
+        target_compile_options(golden_render_check PRIVATE "-mfma")
+    endif()
+
     add_executable(delay_line_bench harnesses/perf/delay_line_bench.cpp)
     target_link_libraries(delay_line_bench PRIVATE SharedCode juce::juce_dsp)
     if(MSVC)
@@ -211,7 +232,7 @@ if(BUILD_TEST_HARNESSES)
     endif()
 
     # ── CTest registration ──────────────────────────────────────────────
-    # 20 correctness harnesses: exit 0 = pass. The 6 benchmarks (tan_bench,
+    # 21 correctness harnesses: exit 0 = pass. The 6 benchmarks (tan_bench,
     # adaa_bench, delay_line_bench, chain_bench, fb_bench, diffuser_bench) are
     # labeled "bench" so
     # `ctest -LE bench` excludes them. they report numbers rather than pass/fail
@@ -244,6 +265,7 @@ if(BUILD_TEST_HARNESSES)
     add_test(NAME alias_check            COMMAND alias_check)
     add_test(NAME simd_delay_parity      COMMAND simd_delay_parity)
     add_test(NAME diffuser_parity        COMMAND diffuser_parity)
+    add_test(NAME golden_render_check    COMMAND golden_render_check)
 
     # The 6 benchmarks are registered as tests but labeled "bench" so
     # `ctest -LE bench` excludes them. They report numbers, not pass/fail
