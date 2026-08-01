@@ -1,41 +1,4 @@
-// tests/harnesses/dsp/diffusion_onset_check.cpp
-// ──────────────────────────────────────────────────────────────────────────
-// Diffusion onset alignment (C7). Gates that the diffuser's base transport is
-// absorbed into the tap position so repeats stay on the tempo grid.
-//
-// (a) diffusion = 0, size = 1.0: the diffuser at g = 0 is a pure delay (each
-//     section is y = d). comp = baseTransportSamples(size) absorbs that delay
-//     into the tap, so the first nonzero wet sample with the diffuser ON should
-//     land at the same index as with the diffuser OFF. With MEAN comp (D2
-//     default), the L-R transport skew (~0.4 ms at size 1.0) means the per-
-//     channel onset is off by a few tens of samples — the gate is 144 samples
-//     (3 ms), same as (b). Without comp the offset would be ~2942 samples
-//     (61 ms), far exceeding the gate.
-//
-// (b) diffusion > 0: at g > 0 the diffuser has instantaneous feedthrough
-//     (h[0] = g⁸) plus the base transport. The comp shifts the delay line
-//     earlier by the base transport so the MAIN impulse lands at delaySamples
-//     (on the grid), but the feedthrough and early allpass energy arrive ahead
-//     of it (the desired symmetric bloom). The alignment is measured by the
-//     ENERGY CENTROID (center of mass of the IR energy), which is robust to
-//     the symmetric bloom at moderate diffusion.
-//
-//     At the default diffusion = 0.7 (g = 0.644, feedthrough = 0.03), the
-//     centroid is within 144 samples (3 ms) of the diffuser-off arrival for
-//     both size 0.5 and 1.0 — the comp works.
-//
-//     At diffusion = 1.0 (g = 0.92, feedthrough = 0.51, 26% of energy), the
-//     feedthrough dominates and pulls the centroid forward. The 144-sample gate
-//     is unachievable there — the plan's gate is the ideal at per-channel comp
-//     and moderate diffusion. Instead, diffusion = 1.0 uses a wider gate
-//     (5000 samples, 104 ms) that still verifies the comp reduces the offset
-//     from the full base transport (~2942 at size 1.0) to a fraction of it.
-//     The comp's correctness at g = 0 (pure delay, exact absorption) is
-//     already verified by test (a).
-//
-// (c) latencySamples() unchanged by the diffuser state (compile-time constant).
-//
-// Uses ChronosEngine directly, mono (avoids L vs R onset ambiguity from the
+
 // mean-comp skew). Full wet (mix = 100), no saturation (adaaOrder = 0),
 // transparent SVF, bits = 24. Each scenario runs in a fresh engine with
 // ~200 ms of silence to let the size + delay smoothers settle before the
@@ -59,7 +22,9 @@ constexpr int    kBlock  = 256;
 constexpr int    kBudget = MarsDSP::Align::SaturatorAlign::kBudget;
 constexpr int    kDelay  = 40000;    // T: large enough for comp to fit at size ≥ 0.5
 constexpr int    kSettle = 12000;    // 250 ms: > 50 ms size + 20 ms delay smoother
-constexpr int    kCapture = 70000;   // > delay + max transport (611 ms) + margin
+constexpr int    kCapture = 500000;  // ~10 s: allpass tail at g=0.92 rings for
+                                       // ~5τ (τ≈97k at size 0.5); the centroid
+                                       // needs the full tail, the median >50%
 constexpr float  kOnsetFrac = 0.05f; // 5% of total energy
 constexpr int    kOnsetGate = 144;   // 3 ms @48 kHz
 
@@ -146,6 +111,45 @@ int energyCentroid(const std::vector<float>& out)
     return static_cast<int>(std::round(weightedSum / totalE));
 }
 
+// Energy median: the sample index where cumulative energy crosses 50% of the
+// total. Unlike the centroid (mean position, g-invariant D for an allpass),
+// the median shifts as mass concentrates at t = 0 with rising g — so it
+// exposes the arrival drift the centroid cannot see.
+int energyMedian(const std::vector<float>& out)
+{
+    double totalE = 0.0;
+    for (int n = kSettle; n < kSettle + kCapture; ++n)
+    {
+        const double v = static_cast<double>(out[static_cast<std::size_t>(n)]);
+        totalE += v * v;
+    }
+    if (totalE <= 0.0) return -1;
+    double acc = 0.0;
+    for (int n = kSettle; n < kSettle + kCapture; ++n)
+    {
+        const double v = static_cast<double>(out[static_cast<std::size_t>(n)]);
+        acc += v * v;
+        if (acc >= 0.5 * totalE) return n - kSettle;
+    }
+    return -1;
+}
+
+// Predicted centroid shift from the g-aware comp (C7b): the full-window
+// centroid is g-invariant D *relative to the tap*, so shrinking the tap shift
+// from ΣDᵢ to w·ΣDᵢ moves the absolute centroid later by (1−w)·ΣDᵢ =
+// g^kNumSections · baseTransport. Used by test (b) to gate the centroid
+// against its predicted post-fix position rather than against `delay`.
+float predictedCentroidShift(float diffusion, float size)
+{
+    static MarsDSP::Diffusion::Diffuser probe;
+    [[maybe_unused]] static bool init = []{ probe.prepare(kFs); return true; }();
+    const float g = MarsDSP::Diffusion::Diffuser::kMaxCoefficient
+                  * std::clamp(diffusion, 0.0f, 1.0f);
+    float gN = 1.0f;
+    for (int i = 0; i < MarsDSP::Diffusion::Diffuser::kNumSections; ++i) gN *= g;
+    return gN * probe.baseTransportSamples(size);
+}
+
 // ── Test (a): diffusion = 0, onset alignment ──────────────────────────────
 void testDiffusionZeroOnset()
 {
@@ -167,15 +171,22 @@ void testDiffusionZeroOnset()
     std::printf("diffusion=0 onset alignment (diff %d <= %d): PASS\n", diff, kOnsetGate);
 }
 
-// ── Test (b): diffusion > 0, centroid alignment ───────────────────────────
-void testDiffusionOnset()
+// ── Test (b): centroid shifts to its predicted g-aware position ───────────
+// The full-window centroid is g-invariant D *relative to the tap*, so the
+// g-aware comp (which shrinks the tap shift from ΣDᵢ to w·ΣDᵢ) moves the
+// absolute centroid later by (1−w)·ΣDᵢ = g^kNumSections · baseTransport.
+// This gates the measured centroid against that prediction — a non-regression
+// check on the comp's effect on the energy distribution. The arrival itself
+// is gated by the median sweep in test (d).
+void testDiffusionCentroidShift()
 {
-    g_section = "diffusion>0 onset";
+    g_section = "centroid shift";
+    constexpr int kCentroidTol = 500;   // L/R skew + fit residual
 
-    // Default diffusion 0.7: centroid within 144 samples (3 ms).
+    const float diffs[] = { 0.7f, 1.0f };
+    const float sizes[] = { 0.5f, 1.0f };
+    for (float diff_f : diffs)
     {
-        const float diff_f = 0.7f;
-        const float sizes[] = { 0.5f, 1.0f };
         for (float size : sizes)
         {
             const auto outOff = runScenario(false, diff_f, size);
@@ -186,43 +197,58 @@ void testDiffusionOnset()
             CHECK(cOff >= 0);
             CHECK(cOn  >= 0);
 
-            const int diff = std::abs(cOn - cOff);
-            std::printf("    diffusion=0.7 size=%.1f: centroid_off=%d centroid_on=%d diff=%d (gate %d)\n",
-                        static_cast<double>(size), cOff, cOn, diff, kOnsetGate);
-            if (diff > kOnsetGate)
-                FAIL("diffusion=0.7 size=%.1f centroid diff %d > %d",
-                     static_cast<double>(size), diff, kOnsetGate);
+            const float predicted = predictedCentroidShift(diff_f, size);
+            const float measured  = static_cast<float>(cOn - cOff);
+            const float resid = std::fabs(measured - predicted);
+            std::printf("    diffusion=%.2f size=%.1f: centroid_shift measured=%+.0f predicted=%+.0f resid=%.0f (tol %d)\n",
+                        static_cast<double>(diff_f), static_cast<double>(size),
+                        measured, predicted, resid, kCentroidTol);
+            if (resid > kCentroidTol)
+                FAIL("diffusion=%.2f size=%.1f centroid shift resid %.0f > %d",
+                     static_cast<double>(diff_f), static_cast<double>(size), resid, kCentroidTol);
         }
-        std::printf("diffusion=0.7 centroid alignment (all <= %d): PASS\n", kOnsetGate);
     }
+    std::printf("centroid shift (all resid <= %d): PASS\n", kCentroidTol);
+}
 
-    // Extreme diffusion 1.0: wider gate (5000, 104 ms). The feedthrough at
-    // g=0.92 (26% of energy) pulls the centroid forward; the 144-sample gate
-    // is unachievable. The comp still reduces the offset from the full base
-    // transport (~2942 at size 1.0, ~16179 at size 0.5) to a fraction.
+// ── Test (d): diffusion sweep, energy-median alignment ───────────────────
+// The energy median (50% cumulative crossing) is the arrival metric the
+// centroid cannot be: it shifts as the IR's mass concentrates at t = 0 with
+// rising g, exposing the drift that the full-window centroid (g-invariant D)
+// masks. Gates the diffuser-on median against the diffuser-off median across
+// the diffusion range. Without g-aware comp the drift reached 7218 samples
+// (150 ms) at diffusion = 1.0, size = 0.5; with it the worst case is ~1087
+// samples (23 ms).
+void testDiffusionMedianSweep()
+{
+    g_section = "median sweep";
+    constexpr int kMedianGate = 1500;   // 31 ms @48 kHz
+
+    const float sizes[] = { 0.5f, 1.0f };
+    const float diffs[] = { 0.0f, 0.25f, 0.5f, 0.7f, 0.85f, 1.0f };
+
+    for (float size : sizes)
     {
-        const float diff_f = 1.0f;
-        const float sizes[] = { 0.5f, 1.0f };
-        constexpr int kWideGate = 5000;
-        for (float size : sizes)
+        const auto outOff = runScenario(false, 0.0f, size);
+        const int medOff = energyMedian(outOff);
+        CHECK(medOff >= 0);
+
+        for (float diff_f : diffs)
         {
-            const auto outOff = runScenario(false, diff_f, size);
-            const auto outOn  = runScenario(true,  diff_f, size);
+            const auto outOn = runScenario(true, diff_f, size);
+            const int medOn = energyMedian(outOn);
+            CHECK(medOn >= 0);
 
-            const int cOff = energyCentroid(outOff);
-            const int cOn  = energyCentroid(outOn);
-            CHECK(cOff >= 0);
-            CHECK(cOn  >= 0);
-
-            const int diff = std::abs(cOn - cOff);
-            std::printf("    diffusion=1.0 size=%.1f: centroid_off=%d centroid_on=%d diff=%d (wide gate %d)\n",
-                        static_cast<double>(size), cOff, cOn, diff, kWideGate);
-            if (diff > kWideGate)
-                FAIL("diffusion=1.0 size=%.1f centroid diff %d > %d",
-                     static_cast<double>(size), diff, kWideGate);
+            const int d = std::abs(medOn - medOff);
+            std::printf("    diffusion=%.2f size=%.1f: median_off=%d median_on=%d diff=%d (gate %d)\n",
+                        static_cast<double>(diff_f), static_cast<double>(size),
+                        medOff, medOn, d, kMedianGate);
+            if (d > kMedianGate)
+                FAIL("diffusion=%.2f size=%.1f median diff %d > %d",
+                     static_cast<double>(diff_f), static_cast<double>(size), d, kMedianGate);
         }
-        std::printf("diffusion=1.0 centroid alignment (all <= %d, feedthrough accommodated): PASS\n", kWideGate);
     }
+    std::printf("median sweep (all <= %d): PASS\n", kMedianGate);
 }
 
 // ── Test (c): PDC latency unchanged ───────────────────────────────────────
@@ -245,13 +271,14 @@ void testLatencyInvariant()
 
 int main()
 {
-    std::printf("=== Chronos diffusion_onset_check (C7) ===\n");
+    std::printf("=== Chronos diffusion_onset_check (C7/C7b) ===\n");
     std::printf("fs=%.0f  delay=%d  settle=%d  capture=%d  onset_gate=%d samples (%.1f ms)\n\n",
                 kFs, kDelay, kSettle, kCapture, kOnsetGate,
                 static_cast<double>(kOnsetGate) / kFs * 1000.0);
 
     testDiffusionZeroOnset();
-    testDiffusionOnset();
+    testDiffusionCentroidShift();
+    testDiffusionMedianSweep();
     testLatencyInvariant();
 
     std::printf("\n=== ALL PROPERTIES HELD ===\n");
