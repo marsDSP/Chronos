@@ -161,13 +161,17 @@ namespace MarsDSP::Delays {
             {
                 const int remaining = n - s;
 
-                // dMin = minimum read delay over the next Lc smoother steps.
-                // The delay smoother ramps linearly from dCur to dTgt, so
-                // min(dCur, dTgt) is the ramp minimum.
+                // dMin = minimum read delay over the next Lc smoother steps,
+                // across BOTH the loop tap and the output tap (C7). The output
+                // tap is shorter by outputTapOffset_, so it is the more
+                // restrictive one when outputTapOffset_ > 0.
                 const float dCur = delaySm_.getCurrentValue();
                 const float dTgt = delaySm_.getTargetValue();
-                const float dMin = std::max(kMinLoopDelay,
+                const float dMinLoop = std::max(kMinLoopDelay,
                     std::min(dCur, dTgt) - satLatency_);
+                const float dMinOut = std::max(kMinLoopDelay,
+                    std::min(dCur, dTgt) - satLatency_ - outputTapOffset_);
+                const float dMin = std::min(dMinLoop, dMinOut);
 
                 int Lc = static_cast<int>(std::floor(dMin)) - kChunkGuard;
                 Lc = std::clamp(Lc, 1, std::min(kMaxChunk, remaining));
@@ -260,6 +264,79 @@ namespace MarsDSP::Delays {
                 if (!hasR)
                     for (int i = 0; i < Lc; ++i) tapR[i] = tapL[i];
 
+                // C7: output-tap bulk read (for diffuser base-transport comp).
+                // The output tap is at max(kMinLoopDelay, d - satLatency_ -
+                // outputTapOffset_), shorter than the loop tap. When
+                // outputTapOffset_ == 0 the output tap == the loop tap, so skip
+                // the second read and point at tapL/tapR directly (pre-C7
+                // behavior, bit-exact).
+                alignas(16) float outTapL[kMaxChunk], outTapR[kMaxChunk];
+                const float* outLPtr;
+                const float* outRPtr;
+                if (outputTapOffset_ <= 0.0f)
+                {
+                    outLPtr = tapL;
+                    outRPtr = hasR ? tapR : tapL;
+                }
+                else if (settled)
+                {
+                    const float outReadDelay = std::max(kMinLoopDelay,
+                        dR[0] - satLatency_ - outputTapOffset_);
+                    const auto  iOut = static_cast<int>(outReadDelay);
+                    const float fOut = outReadDelay - static_cast<float>(iOut);
+                    const FracDelayTap::Coeffs4 kOut = FracDelayTap::lagrange3(fOut);
+                    const int baseOut = (writeIdx_ - iOut - 3) & mask;
+                    const int winLenOut = Lc + 6;
+                    const M128 cfOut = MM(set_ps)(kOut.c4, kOut.c3, kOut.c2, kOut.c1);
+
+                    const auto wOutL = BlockTapReader::acquireWindow(ringL_, baseOut, winLenOut, outTapWinL_.data());
+                    const float* winOutL = wOutL.ptr;
+                    for (int i = 0; i < Lc; ++i)
+                    {
+                        const M128 taps = MM(loadu_ps)(winOutL + i + 1);
+                        const M128 prod = MM(mul_ps)(taps, cfOut);
+                        const M128 sh1  = MM(add_ps)(prod, MM(movehl_ps)(prod, prod));
+                        const M128 sh2  = MM(add_ss)(sh1, MM(shuffle_ps)(sh1, sh1, MM_SHUFFLE(0, 0, 0, 1)));
+                        outTapL[i] = MM(cvtss_f32)(sh2);
+                    }
+                    if (hasR)
+                    {
+                        const auto wOutR = BlockTapReader::acquireWindow(ringR_, baseOut, winLenOut, outTapWinR_.data());
+                        const float* winOutR = wOutR.ptr;
+                        for (int i = 0; i < Lc; ++i)
+                        {
+                            const M128 taps = MM(loadu_ps)(winOutR + i + 1);
+                            const M128 prod = MM(mul_ps)(taps, cfOut);
+                            const M128 sh1  = MM(add_ps)(prod, MM(movehl_ps)(prod, prod));
+                            const M128 sh2  = MM(add_ss)(sh1, MM(shuffle_ps)(sh1, sh1, MM_SHUFFLE(0, 0, 0, 1)));
+                            outTapR[i] = MM(cvtss_f32)(sh2);
+                        }
+                        outLPtr = outTapL;
+                        outRPtr = outTapR;
+                    }
+                    else
+                    {
+                        for (int i = 0; i < Lc; ++i) outTapR[i] = outTapL[i];
+                        outLPtr = outTapL;
+                        outRPtr = outTapL;
+                    }
+                }
+                else
+                {
+                    for (int i = 0; i < Lc; ++i)
+                    {
+                        const float outReadDelay = std::max(kMinLoopDelay,
+                            dR[i] - satLatency_ - outputTapOffset_);
+                        outTapL[i] = FracDelayTap::read(ringL_, writeIdx_ + i, outReadDelay);
+                        if (hasR)
+                            outTapR[i] = FracDelayTap::read(ringR_, writeIdx_ + i, outReadDelay);
+                    }
+                    if (!hasR)
+                        for (int i = 0; i < Lc; ++i) outTapR[i] = outTapL[i];
+                    outLPtr = outTapL;
+                    outRPtr = hasR ? outTapR : outTapL;
+                }
+
                 // 3. Scalar recursive chain: damp → DC → cross (common), then
                 //    saturate with hoisted sat switch. vL[]/vR[] bridge the two
                 //    loops (stack arrays — storing a float to memory and reading
@@ -328,11 +405,12 @@ namespace MarsDSP::Delays {
                 }
                 writeIdx_ = (writeIdx_ + Lc) & mask;
 
-                // 5. Output: wet = taps.
+                // 5. Output: wet = OUTPUT taps (C7: compensated by
+                //    outputTapOffset_ so repeats land on the grid).
                 for (int i = 0; i < Lc; ++i)
                 {
-                    wetL[s + i] = tapL[i];
-                    if (hasR) wetR[s + i] = tapR[i];
+                    wetL[s + i] = outLPtr[i];
+                    if (hasR) wetR[s + i] = outRPtr[i];
                 }
 
                 s += Lc;
@@ -361,6 +439,20 @@ namespace MarsDSP::Delays {
 
         [[nodiscard]] static constexpr int latencySamples() noexcept { return 0; }
         [[nodiscard]] float getMaxDelay() const noexcept { return maxDelay_; }
+
+        // C7: set the output-tap offset (diffuser base-transport comp). The
+        // loop tap stays at d - satLatency_ (loop period exactly d); the OUTPUT
+        // tap (wet) is read at max(kMinLoopDelay, d - satLatency_ - offset),
+        // shorter by the diffuser's base transport so repeats land on the grid.
+        // When offset = 0 (diffuser off), the output tap == the loop tap
+        // (pre-C7 behavior, bit-exact). See ChronosEngine::process for the comp
+        // computation. Clamp: when offset > d - satLatency_ - kMinLoopDelay, the
+        // output tap clamps to kMinLoopDelay and repeats land late by the
+        // remainder — full comp is only possible when delay > baseTransport.
+        void setOutputTapOffset(float samples) noexcept
+        {
+            outputTapOffset_ = std::max(0.0f, samples);
+        }
 
     private:
         float clampDelay_(float d) const noexcept
@@ -416,6 +508,22 @@ namespace MarsDSP::Delays {
                 ? FracDelayTap::read(ringR_, writeIdx_, readDelay)
                 : tapL;
 
+            // C7: output tap (for diffuser base-transport comp). Read at a
+            // shorter delay before the write (same writeIdx_ as the loop tap).
+            // When outputTapOffset_ == 0, outTap == tap PER CHANNEL (pre-C7,
+            // bit-exact): the R fallback must be tapR (the R ring's tap), not
+            // outTapL — falling back to outTapL would output the L tap on the
+            // R channel whenever the chunked path and this helper disagree
+            // (caught by fb_parity at delay=12, stereo, decorrelated input).
+            const float outReadDelay = std::max(kMinLoopDelay,
+                d - satLatency_ - outputTapOffset_);
+            const float outTapL = (outputTapOffset_ > 0.0f)
+                ? FracDelayTap::read(ringL_, writeIdx_, outReadDelay) : tapL;
+            const float outTapR = (outputTapOffset_ > 0.0f)
+                ? (hasR ? FracDelayTap::read(ringR_, writeIdx_, outReadDelay)
+                        : outTapL)
+                : tapR;
+
             dampL_ += dampG_ * (tapL - dampL_);
             dampR_ += dampG_ * (tapR - dampR_);
 
@@ -447,8 +555,8 @@ namespace MarsDSP::Delays {
 
             writeIdx_ = (writeIdx_ + 1) & mask;
 
-            *wet = tapL;
-            if (hasR) *wetR = tapR;
+            *wet = outTapL;   // C7: output the compensated tap, not the loop tap
+            if (hasR) *wetR = outTapR;
         }
 
         Pow2RingBuffer ringL_, ringR_;
@@ -477,6 +585,13 @@ namespace MarsDSP::Delays {
         // the largest chunk: kMaxChunk + 6 taps ≤ kMaxChunk + kTail.
         alignas(16) std::array<float, static_cast<std::size_t>(kMaxChunk) + Pow2RingBuffer::kTail> tapWinL_{};
         alignas(16) std::array<float, static_cast<std::size_t>(kMaxChunk) + Pow2RingBuffer::kTail> tapWinR_{};
+        // C7: scratch for the settled OUTPUT-tap bulk-read window fallback.
+        alignas(16) std::array<float, static_cast<std::size_t>(kMaxChunk) + Pow2RingBuffer::kTail> outTapWinL_{};
+        alignas(16) std::array<float, static_cast<std::size_t>(kMaxChunk) + Pow2RingBuffer::kTail> outTapWinR_{};
+
+        // C7: output-tap offset (diffuser base-transport comp). 0 = output tap
+        // == loop tap (pre-C7 behavior).
+        float outputTapOffset_ = 0.0f;
     };
 }
 #endif

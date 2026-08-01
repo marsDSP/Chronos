@@ -35,6 +35,20 @@
 //   delay-automation ramp (sweep delay across blocks → mid-ramp smoother,
 //   crossing chunk boundaries) and a dampHz/crossFeed automation case.
 //
+// C7 output-tap section: setOutputTapOffset(offset) on BOTH instances (the
+// diffuser base-transport comp; the output tap reads the ring at
+// d − satLatency − offset while the loop tap stays at d − satLatency). Cells
+// are chosen to hit every output-tap path against processRef:
+//   * offset 37.5 at delay 480/4800: settled bulk read AND the per-sample
+//     walk (automation), Lc participates via dMinOut;
+//   * offset 37.5 at delay 12: dMinOut clamps Lc < 4 → scalar fallback WITH
+//     offset > 0 (per-sample FracDelayTap::read output tap);
+//   * offset 100 at delay 48: output tap clamps at kMinLoopDelay (repeats
+//     land late by the remainder — documented C7 clamp semantics);
+//   * offset 2930 at delay 4800: realistic diffuser base transport (size 0).
+// satOrder = 0 stays BIT-EXACT (the bulk read uses the identical mul +
+// horizontal-sum op order as FracDelayTap::read, as in the loop-tap path).
+//
 // Conventions (matching latency_null_check / chain_parity): plain main(), exit
 // code, printf, always-live CHECK/FAIL. Links SharedCode only; no JUCE.
 // ──────────────────────────────────────────────────────────────────────────
@@ -81,6 +95,7 @@ struct Cfg
     int   satOrder;
     int   block;
     bool  stereo;
+    float outOffset = 0.0f;   // C7: output-tap offset (0 = pre-C7 behavior)
 };
 
 // Per-1024-sample RMS of a buffer, in dB relative to a reference RMS.
@@ -108,6 +123,8 @@ void runOne(const Cfg& c, bool automateDelay, bool automateDampCross)
     p.satOrder     = c.satOrder;
     fast.resetParams(p);
     ref.resetParams(p);
+    fast.setOutputTapOffset(c.outOffset);   // C7: same offset on both, so the
+    ref.setOutputTapOffset(c.outOffset);    // comparison isolates structure
 
     const bool hasR = c.stereo;
     std::vector<float> inL(static_cast<std::size_t>(kTotal));
@@ -166,11 +183,11 @@ void runOne(const Cfg& c, bool automateDelay, bool automateDampCross)
         for (int i = 0; i < kTotal; ++i)
         {
             const auto u = static_cast<std::size_t>(i);
-            if (fL[u] != rL[u]) { ok = false; FAIL("BIT-EXACT delay=%d fb=%.2f cross=%.2f sat=%d blk=%d ch=%d i=%d L: %g != %g",
-                     c.delay, c.feedback, c.cross, c.satOrder, c.block, c.stereo?2:1, i,
+            if (fL[u] != rL[u]) { ok = false; FAIL("BIT-EXACT delay=%d fb=%.2f cross=%.2f sat=%d blk=%d ch=%d off=%.1f i=%d L: %g != %g",
+                     c.delay, c.feedback, c.cross, c.satOrder, c.block, c.stereo?2:1, c.outOffset, i,
                      static_cast<double>(fL[u]), static_cast<double>(rL[u])); }
-            if (hasR && fR[u] != rR[u]) { ok = false; FAIL("BIT-EXACT delay=%d fb=%.2f cross=%.2f sat=%d blk=%d ch=%d i=%d R: %g != %g",
-                     c.delay, c.feedback, c.cross, c.satOrder, c.block, c.stereo?2:1, i,
+            if (hasR && fR[u] != rR[u]) { ok = false; FAIL("BIT-EXACT delay=%d fb=%.2f cross=%.2f sat=%d blk=%d ch=%d off=%.1f i=%d R: %g != %g",
+                     c.delay, c.feedback, c.cross, c.satOrder, c.block, c.stereo?2:1, c.outOffset, i,
                      static_cast<double>(fR[u]), static_cast<double>(rR[u])); }
         }
         if (ok) ++g_bitExactOk;
@@ -269,8 +286,50 @@ int main()
     for (int blk : { 64, 256, 512 })
     for (bool stereo : stereos)
     {
-        runOne({ 480, 0.95f, 0.0f, sat, blk, stereo }, false, true);
+        runOne({ 480, 0.95f, 0.0f, sat, blk, stereo, 0.0f }, false, true);
         ++configs;
+    }
+
+    // C7 output-tap offset cells (see header). sat 0 bit-exact + sat 2 tol.
+    g_section = "output-tap";
+    for (int sat : { 0, 2 })
+    {
+        // settled bulk read + moving walk, Lc via dMinOut.
+        for (float fbk : { 0.5f, 0.95f })
+        for (int blk : { 17, 64, 256 })
+        for (bool stereo : stereos)
+        {
+            runOne({ 480, fbk, 0.37f, sat, blk, stereo, 37.5f }, false, false);
+            ++configs;
+        }
+        // scalar fallback WITH offset (dMinOut clamps Lc < 4).
+        for (int blk : { 17, 64 })
+        for (bool stereo : stereos)
+        {
+            runOne({ 12, 0.5f, 0.37f, sat, blk, stereo, 37.5f }, false, false);
+            ++configs;
+        }
+        // output tap clamped at kMinLoopDelay (offset > delay − margin).
+        for (int blk : { 17, 64 })
+        for (bool stereo : stereos)
+        {
+            runOne({ 48, 0.5f, 0.37f, sat, blk, stereo, 100.0f }, false, false);
+            ++configs;
+        }
+        // realistic diffuser base transport (size 0 → ~2930 samples).
+        for (int blk : { 64, 256 })
+        for (bool stereo : stereos)
+        {
+            runOne({ 4800, 0.95f, 0.37f, sat, blk, stereo, 2930.0f }, false, false);
+            ++configs;
+        }
+        // delay automation with a live output-tap offset (moving walk).
+        for (int blk : { 64, 256 })
+        for (bool stereo : stereos)
+        {
+            runOne({ 480, 0.95f, 0.37f, sat, blk, stereo, 37.5f }, true, false);
+            ++configs;
+        }
     }
 
     std::printf("matrix (%ld configs):\n", configs);

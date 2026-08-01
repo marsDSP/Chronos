@@ -213,6 +213,10 @@ namespace MarsDSP::Diffusion {
         [[nodiscard]] int sectionLenL(int i) const noexcept { return secL_[static_cast<std::size_t>(i)].len; }
         [[nodiscard]] int sectionLenR(int i) const noexcept { return secR_[static_cast<std::size_t>(i)].len; }
 
+        // C7: the size smoother's current (smoothed) value. ChronosEngine uses
+        // this to compute the base-transport compensation block-rate.
+        [[nodiscard]] float getSizeCurrent() const noexcept { return sizeSm_.getCurrentValue(); }
+
     private:
         static constexpr double kSpeedOfSoundMps = 343.0;
         static constexpr int    kModHeadroom     = 64;

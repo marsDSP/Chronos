@@ -186,8 +186,21 @@ namespace MarsDSP {
                 const int chunk = std::min(wetBufCapacity_, numSamples - offset);
 
                 // ── 1. Wet generation (block-rate) ─────────────────────────
+                // C7: diffuser base-transport compensation. comp is block-rate,
+                // from the diffuser's current (smoothed) size, INDEPENDENT of g
+                // (a g-dependent comp would pitch-warp the tap under diffusion
+                // automation). When the diffuser is disabled, comp = 0. The
+                // non-feedback path subtracts comp from the delay request (the
+                // 20 ms position smoother turns enable-edge and size-driven comp
+                // changes into glides). The feedback path applies comp to a
+                // separate output tap (the loop period stays exactly d).
+                const float comp = enableDiffuser_
+                    ? diffuser_.baseTransportSamples(diffuser_.getSizeCurrent())
+                    : 0.0f;
+
                 if (feedback_ > 0.0f)
                 {
+                    fbDelay_.setOutputTapOffset(comp);
                     fbDelay_.process(data0 + offset,
                                      hasR ? data1 + offset : nullptr,
                                      wetBufL_.data(),
@@ -196,11 +209,12 @@ namespace MarsDSP {
                 }
                 else
                 {
+                    const float compDelay = std::max(0.0f, delaySamples_ - comp);
                     delayLine_.process(data0 + offset,
                                        hasR ? data1 + offset : nullptr,
                                        wetBufL_.data(),
                                        hasR ? wetBufR_.data() : nullptr,
-                                       chunk, delaySamples_, delaySamples_);
+                                       chunk, compDelay, compDelay);
                 }
 
 
