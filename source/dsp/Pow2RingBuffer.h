@@ -36,13 +36,6 @@ namespace MarsDSP::Delays {
             clear();
         }
 
-        // C9b: carve the storage from a caller-supplied arena instead of
-        // owning it (the owning overload stays — harnesses construct rings
-        // standalone and must not need an arena). The arena must be sized by
-        // the caller (see arenaFloatsFor); exhaustion is a prepare-time
-        // programming error (assert). Releases any owned storage. On
-        // re-prepare the caller rewinds the arena (clear/reset) first, or the
-        // old extents leak arena space.
         void prepare(int minimumCapacity, Memory::BumpArena& arena) noexcept {
             assert(minimumCapacity > 0);
             const auto rounded = std::bit_ceil(static_cast<unsigned int>(minimumCapacity));
@@ -61,11 +54,6 @@ namespace MarsDSP::Delays {
             clear();
         }
 
-        // floats an arena carve takes for prepare(minimumCapacity, arena):
-        // bit_ceil(minimumCapacity) + kTail, padded to a 16-float (64-byte)
-        // multiple so consecutive carves stay 64-byte aligned and component
-        // sums (SimdDelayLine/FeedbackDelay/Diffuser::ringStorageFloats) add
-        // exactly with no alignment slop.
         static constexpr std::size_t arenaFloatsFor(int minimumCapacity) noexcept
         {
             const auto rounded = std::bit_ceil(static_cast<unsigned int>(minimumCapacity));
@@ -116,9 +104,6 @@ namespace MarsDSP::Delays {
         }
 
         // ---- copy / move ----
-        // Move nulls the source's data_ (a unique_ptr move already nulls the
-        // source's storage_): a moved-from ring aliases nothing, matching the
-        // BumpArena move contract.
         Pow2RingBuffer() noexcept = default;
         Pow2RingBuffer(const Pow2RingBuffer &) = delete;
         Pow2RingBuffer &operator=(const Pow2RingBuffer &) = delete;

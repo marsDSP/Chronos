@@ -33,24 +33,18 @@ namespace MarsDSP::Delays
             prepareImpl_(sampleRate, maxBlockSize, maxDelayMs, nullptr);
         }
 
-        // C9b: carve both rings from the caller's arena (sized via
-        // ringStorageFloats) instead of owning them.
         void prepare(double sampleRate, int maxBlockSize, float maxDelayMs,
                      Memory::BumpArena& arena) noexcept
         {
             prepareImpl_(sampleRate, maxBlockSize, maxDelayMs, &arena);
         }
 
-        // the contractual (pre-rounding) max delay prepare() computes.
         static int maxDelaySamplesFor(double sampleRate, float maxDelayMs) noexcept
         {
             const auto fs = sampleRate > 0.0 ? sampleRate : 48000.0;
             return static_cast<int>(std::ceil(static_cast<double>(maxDelayMs) * fs / 1000.0));
         }
 
-        // floats an arena must supply for both rings: identical arithmetic
-        // to prepareImpl_ (token-identical maxDelaySamples/capacity chain),
-        // so the carve fits exactly.
         static std::size_t ringStorageFloats(double sampleRate, int maxBlockSize,
                                              float maxDelayMs) noexcept
         {

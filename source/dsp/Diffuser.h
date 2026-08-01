@@ -31,19 +31,6 @@ namespace MarsDSP::Diffusion {
         static constexpr int   kModSectionB    = 5;
         static constexpr float kDetuneRatio    = 1.317f;
 
-        // Acoustic path lengths in meters. Short-smear diffusion territory
-        // (Dattorro/Schroeder input diffusion): 0.8–4.5 m ≈ 2.4–13 ms per
-        // section at 48 kHz, total series delay ≈ 61 ms at size 0 (full
-        // length) down to ~7 ms at size 1 (90% cut, floor-clamped). The
-        // original tables were 10× longer (8–45 m, 61–613 ms total), which
-        // smeared the repeat across a ±300 ms window no tap compensation
-        // could hide — the audible arrival drifted with both size and g. At
-        // this scale the whole smear is perceptually part of the repeat;
-        // the comp (C7c, transportSamples below) anchors the cascade's
-        // energy centroid — exactly baseTransportSamples at every g — so
-        // repeats stay centroid-locked to the grid at all settings, and the
-        // comp clamp (delay < transport) is only reachable below ~65 ms
-        // delay times.
         static constexpr std::array<float, kNumSections> kPathMetersL{
             4.54125f, 3.93375f, 3.19125f, 2.92875f, 2.32875f, 2.01000f, 1.18875f, 0.82875f };
         static constexpr std::array<float, kNumSections> kPathMetersR{
@@ -54,16 +41,11 @@ namespace MarsDSP::Diffusion {
             prepareImpl_(sampleRate, nullptr);
         }
 
-        // C9b: carve all 16 section rings from the caller's arena (sized via
-        // ringStorageFloats) instead of owning them.
         void prepare(double sampleRate, Memory::BumpArena& arena) noexcept
         {
             prepareImpl_(sampleRate, &arena);
         }
 
-        // floats an arena must supply for all 16 rings: the section lengths
-        // come from the same computeSectionLens prepareImpl_ uses, so the
-        // carve fits exactly.
         static std::size_t ringStorageFloats(double sampleRate) noexcept
         {
             int lenL[kNumSections], lenR[kNumSections];
@@ -182,30 +164,12 @@ namespace MarsDSP::Diffusion {
 
         [[nodiscard]] static constexpr int latencySamples() noexcept { return 0; }
 
-        // base transport — the total delay the 8-section cascade carries
-        // at a given size, EXCLUDING modulation (modulation is a per-sample
-        // perturbation around this base, not part of the transport). This is
-        // the quantity C7c absorbs into the tap position so repeats stay on
-        // the tempo grid (see transportSamples: it is the exact energy
-        // centroid of the cascade IR at every g). The per-section arithmetic
-        // is token-identical to the settled/unmodulated `eff` in chain_
-        // (m==0 branch) and chunk_ (fast path): nearbyintf then clamp to
-        // [kMinDelay, len]. At diffusion = 0 (g = 0) each section is a pure
-        // D-sample delay, so the base transport is the exact series delay;
-        // the compensation is sample-exact there.
-        //
-        // L and R banks differ (~3.8 ms skew at size 0, 48 kHz) because the
-        // prime-snapped path lengths differ — intentional decorrelation.
-        // baseTransportSamples returns the MEAN of L and R, which preserves the
-        // skew (mean-compensation moves the image center, not the L-R offset).
         [[nodiscard]] float baseTransportSamples(float size01) const noexcept
         {
             const auto lr = baseTransportSamplesLR(size01);
             return 0.5f * (lr[0] + lr[1]);
         }
 
-        // Per-bank {L, R} base transport. Each is Σᵢ effᵢ(size) over the 8
-        // sections of that bank.
         [[nodiscard]] std::array<float, 2> baseTransportSamplesLR(float size01) const noexcept
         {
             const float s = std::clamp(size01, 0.0f, 1.0f);
@@ -225,8 +189,6 @@ namespace MarsDSP::Diffusion {
             return { sumBank(secL_), sumBank(secR_) };
         }
 
-        // section length accessors (for harness recompute of base
-        // transport). Returns the prime-snapped length of section i.
         [[nodiscard]] int sectionLenL(int i) const noexcept { return secL_[static_cast<std::size_t>(i)].len; }
         [[nodiscard]] int sectionLenR(int i) const noexcept { return secR_[static_cast<std::size_t>(i)].len; }
 
@@ -234,27 +196,11 @@ namespace MarsDSP::Diffusion {
 
         [[nodiscard]] float getCoefCurrent() const noexcept { return coefSm_.getCurrentValue(); }
 
-        // C7c: per-pass transport for the in-loop/tap compensation. The
-        // 8-section cascade's ENERGY centroid is exactly baseTransportSamples
-        // at every g (each section's energy centroid is D exactly — the
-        // allpass average group delay is g-invariant, and the per-section
-        // sign alternation below changes phases, not energies). Anchoring
-        // the comp to the exact centroid (rather than the old w = 1-g^8
-        // energy-MEDIAN estimate) is what makes the loop period exact per
-        // pass at every diffusion setting: repeat n's centroid lands on
-        // n*delay for all g, while the blob widens ~sqrt(n) (the wash).
         [[nodiscard]] float transportSamples() const noexcept
         {
             return baseTransportSamples(getSizeCurrent());
         }
 
-        // Per-section Schroeder coefficient sign (signalsmith/Dattorro
-        // polarity-flip port): alternating section signs break up the
-        // regular phase reinforcement of the cascade (metallic edge) at
-        // zero cost. The sign changes each section's phase response but
-        // NOT its energy distribution (h -> ±h per arrival), so |H| = 1,
-        // stability (|g_i| < 1), and the D-exact energy centroid all hold
-        // — the comp above is unaffected.
         static constexpr float sectionSign(int i) noexcept
         {
             return (i & 1) != 0 ? -1.0f : 1.0f;

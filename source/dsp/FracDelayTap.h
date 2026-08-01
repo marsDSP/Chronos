@@ -14,13 +14,6 @@ namespace MarsDSP::Delays {
 
     struct FracDelayTap
     {
-        // --------------------------------------------------------------
-        //  Closed-form Lagrange3rd coefficients over support {1,2,3,4} in
-        //  the e-domain (e = 3 - f), matching makeCoeffs' basis exactly up
-        //  to div-vs-mul-by-reciprocal rounding:
-        //      den(1) = (1-2)(1-3)(1-4) = -6      den(2) = +2
-        //      den(3) = -2                        den(4) = +6
-        // --------------------------------------------------------------
         struct Coeffs4 { float c1, c2, c3, c4; };
 
         [[nodiscard]] static Coeffs4 lagrange3(float f) noexcept
@@ -40,10 +33,6 @@ namespace MarsDSP::Delays {
                      e12 * e3 *  kInv6 };
         }
 
-        // --------------------------------------------------------------
-        //  Hot-path fractional read. `writeIdx` is where the NEXT sample
-        //  will be written.
-        // --------------------------------------------------------------
         [[nodiscard]] static float read(const Pow2RingBuffer& rb,
                                         int writeIdx,
                                         float delaySamples) noexcept
@@ -58,9 +47,6 @@ namespace MarsDSP::Delays {
 
             const Coeffs4 k = lagrange3(f);
 
-            // 6-float window like SimdDelayLine (winLen 6 <= kTail keeps the
-            // mirrored fast path almost always contiguous); taps live at
-            // window[1..4].
             const float* w = rb.windowPtr(base, 6);
             float scratch[6];
             if (w == nullptr)
@@ -69,7 +55,6 @@ namespace MarsDSP::Delays {
                 w = scratch;
             }
 
-            // 4-tap dot: one unaligned load, one multiply, log2 horizontal sum.
             const M128 taps = MM(loadu_ps)(w + 1);
             const M128 cf   = MM(set_ps)(k.c4, k.c3, k.c2, k.c1);
             const M128 prod = MM(mul_ps)(taps, cf);
@@ -78,9 +63,6 @@ namespace MarsDSP::Delays {
             return MM(cvtss_f32)(sh2);
         }
 
-        // --------------------------------------------------------------
-        //  Reference twin. // reference only -- do not optimize, do not delete
-        // --------------------------------------------------------------
         [[nodiscard]] static float readRef(const Pow2RingBuffer& rb,
                                            int writeIdx,
                                            float delaySamples) noexcept

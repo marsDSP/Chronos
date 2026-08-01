@@ -8,8 +8,6 @@ ChronosProcessor::ChronosProcessor() : AudioProcessor(BusesProperties()
     .withOutput("Output", AudioChannelSet::stereo(), true)
 )
 {
-    // Seed the engine's dither RNG from random_device (matching the old
-    // constructor's xorshift seeding, now owned by the engine).
     std::random_device rd;
     std::uniform_int_distribution seedDist{16386u, UINT32_MAX};
     engine.setDitherSeeds(seedDist(rd), seedDist(rd));

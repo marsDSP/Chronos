@@ -23,6 +23,24 @@
 #include <cstring>
 #include <vector>
 
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif
+
+// Portable compiler barrier and noinline. The GCC/clang asm clobber becomes
+// _ReadWriteBarrier on MSVC. The noinline keeps the canary frame and the
+// process frame distinct so process reuses the canary's freed stack space.
+#if defined(__clang__) || defined(__GNUC__)
+#define CHRONOS_COMPILER_BARRIER() asm volatile("" ::: "memory")
+#define CHRONOS_NOINLINE __attribute__((noinline))
+#elif defined(_MSC_VER)
+#define CHRONOS_COMPILER_BARRIER() _ReadWriteBarrier()
+#define CHRONOS_NOINLINE __declspec(noinline)
+#else
+#define CHRONOS_COMPILER_BARRIER() (void)0
+#define CHRONOS_NOINLINE
+#endif
+
 namespace {
 
 constexpr double kFs = 48000.0;
@@ -39,23 +57,19 @@ std::uintptr_t g_canaryHigh = 0;
 // Paint the canary in a child frame. The frame holds a 256 kB array. When the
 // function returns, the stack pointer moves back up and the array space is
 // free for the next child frame to reuse.
-#if defined(__clang__) || defined(__GNUC__)
-__attribute__((noinline))
-#endif
+CHRONOS_NOINLINE
 void paintCanaryFrame_() noexcept
 {
     unsigned char canary[static_cast<std::size_t>(kCanaryBytes)];
     std::memset(canary, 0xA5, static_cast<std::size_t>(kCanaryBytes));
     g_canaryLow = reinterpret_cast<std::uintptr_t>(&canary[0]);
     g_canaryHigh = reinterpret_cast<std::uintptr_t>(&canary[0]) + static_cast<std::uintptr_t>(kCanaryBytes);
-    asm volatile("" ::: "memory");
+    CHRONOS_COMPILER_BARRIER();
 }
 
 // Call process in a child frame. This frame reuses the canary stack space, so
 // the process call chain writes over the 0xA5 pattern from the top down.
-#if defined(__clang__) || defined(__GNUC__)
-__attribute__((noinline))
-#endif
+CHRONOS_NOINLINE
 void processFrame_(MarsDSP::ChronosEngine& eng, float* ioL, float* ioR, int n) noexcept
 {
     float* io[2] = { ioL, ioR };

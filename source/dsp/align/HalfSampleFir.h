@@ -40,24 +40,14 @@ namespace MarsDSP::Align {
 
         void reset() noexcept { z_.fill(0.0f); w_ = 0; }
         float process(float x) noexcept {
-            // Circular buffer: write newest, advance write index.
             z_[w_] = x;
             w_ = (w_ + 1) & kMask;
-            // SIMD folded dot product.
-            // Scalar: acc += h[j] * (newer[j] + older[j])
-            //   newer[j] = z[(w-1-j+N)&mask]  (j-th newest)
-            //   older[j] = z[(w+j)&mask]       (j-th oldest)
-            // SIMD: group j=0..3 and j=4..7. Each group: 4 FMADDs.
-            // The pair sums go into aligned arrays, then FMADD with
-            // the corresponding 4 coefficients, then horizontal add.
+
             alignas(16) float pairs[8];
             for (int j = 0; j < 8; ++j)
                 pairs[j] = z_[(w_ - 1 - j + kHalfSampleTaps) & kMask]
                          + z_[(w_ + j) & kMask];
 
-            // Scalar computation (correct, used as reference)
-            // V3 SIMD: use loadu_ps for coefficients (constexpr array may
-            // not be 16-byte aligned). FMADD: coeff * pair + acc.
             const M128 vPairs0 = MM(loadu_ps)(pairs);
             const M128 vCoeff0 = MM(loadu_ps)(kHalfSampleCoeffs.data());
             M128 vAcc = FMADD(vCoeff0, vPairs0, MM(setzero_ps)());
@@ -66,7 +56,6 @@ namespace MarsDSP::Align {
             const M128 vCoeff1 = MM(loadu_ps)(kHalfSampleCoeffs.data() + 4);
             vAcc = FMADD(vCoeff1, vPairs1, vAcc);
 
-            // Horizontal add: sum all 4 lanes into lane 0
             const M128 vSwap = MM(shuffle_ps)(vAcc, vAcc, 0x4E); // swap halves
             const M128 vSum0 = MM(add_ps)(vAcc, vSwap);           // [a0+a2, a1+a3, ...]
             const M128 vSwap2 = MM(shuffle_ps)(vSum0, vSum0, 0xB1); // swap pairs

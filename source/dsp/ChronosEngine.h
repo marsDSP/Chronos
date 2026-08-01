@@ -47,12 +47,6 @@ namespace MarsDSP {
             float crossFeed      = 0.0f;   // 0 straight, 1 full ping-pong
             float loopDrive      = 1.0f;   // linear gain into the loop tanh
             int   loopSatOrder   = 2;      // 0 hard, 1 ADAA1, 2 ADAA2
-            // C7c: diffuser placement is topology-dependent: with feedback > 0
-            // it lives INSIDE the FeedbackDelay loop (repeat n = n passes,
-            // progressive wash, loop tap compensated by the exact energy
-            // centroid baseTransport); with feedback == 0 it is a one-pass
-            // post-stage on the SimdDelayLine tap (comp = same baseTransport,
-            // so a single repeat sounds identical across the boundary).
             float diffusion      = 0.7f;   // 0..1 -> allpass coeff 0..0.92
             float diffuserSize   = 0.5f;   // 0..1 (0 = full path lengths)
             float diffModDepth   = 16.0f;  // samples, 0..62
@@ -74,22 +68,9 @@ namespace MarsDSP {
             const auto cap = static_cast<std::size_t>(wetBufCapacity_);
             const std::size_t strideFloats = (cap + 15u) & ~static_cast<std::size_t>(15u);
 
-            // C9/C9b: one 64-byte-aligned BumpArena backs ALL engine storage
-            // — the 20 rings (delay 2, feedback 2, diffuser 16) and the 17
-            // scratch spans — so the whole DSP layer is one allocation with
-            // one get_total_num_bytes() (C11's memory-map figure). Sizes are
-            // exact by construction: every ring carve is 64-aligned and
-            // padded to a 16-float multiple (Pow2RingBuffer::arenaFloatsFor)
-            // and the scratch stride is a 16-float multiple, so the
-            // component sums add exactly with no alignment slop. Spans keep
-            // their logical size cap, so every loop body stays textually
-            // identical; the scratch logical region stays zero-initialized
-            // (padding unread).
             const int maxDelaySamp =
                 Delays::SimdDelayLine::maxDelaySamplesFor(sampleRate, 5000.0f);
-            // FeedbackDelay::ringStorageFloats includes its in-loop diffuser's
-            // 16 rings; the engine's own post diffuser (non-feedback path) is
-            // the second Diffuser term.
+
             const std::size_t ringFloats =
                   Delays::SimdDelayLine::ringStorageFloats(sampleRate, wetBufCapacity_, 5000.0f)
                 + Delays::FeedbackDelay::ringStorageFloats(sampleRate, wetBufCapacity_, maxDelaySamp)
@@ -224,9 +205,6 @@ namespace MarsDSP {
 
                 if (feedback_ > 0.0f)
                 {
-                    // C7c: the diffuser lives INSIDE the loop (FeedbackDelay
-                    // owns it, including the tap compensation and the toggle
-                    // fade). Nothing to do at this level.
                     fbDelay_.process(data0 + offset,
                                      hasR ? data1 + offset : nullptr,
                                      wetBufL_.data(),
@@ -235,11 +213,6 @@ namespace MarsDSP {
                 }
                 else
                 {
-                    // Non-feedback path: one-pass post diffuser on the
-                    // SimdDelayLine tap, compensated by the exact energy
-                    // centroid (baseTransport — g-invariant), so a single
-                    // repeat is centered on the grid exactly like repeat 1
-                    // of the feedback path.
                     const float comp = enableDiffuser_
                         ? diffuser_.transportSamples()
                         : 0.0f;
@@ -253,7 +226,6 @@ namespace MarsDSP {
                     stepDiffuser_(chunk, hasR);
                 }
 
-                // bits is block-rate int, no smoother. lsb is computed once per block
                 const float blockLsb = std::ldexp(1.0f, 1 - smoothedBits_);
                 for (int s = 0; s < chunk; ++s)
                 {
@@ -274,15 +246,6 @@ namespace MarsDSP {
                 alignL_.setMode(adaaOrder_);
                 alignR_.setMode(adaaOrder_);
 
-                // ── 5+6. Align dry + ADAA + align wet (C10: fused) ──────
-                // Two independent per-sample recursions over the same chunk
-                // (dry: SaturatorAlign::processDry; wet: ADAA + processWet)
-                // fused into one loop — halves loop overhead and the live
-                // scratch streams. The two paths share no state, so each
-                // path's op order is unchanged and the fusion is bit-exact
-                // (chain_parity). The bypassDryIn capture stays in this
-                // early loop: stage 9b needs PRE-crossfade input, and stage
-                // 8 overwrites data0/data1 in place.
                 for (int s = 0; s < chunk; ++s)
                 {
                     const auto u = static_cast<std::size_t>(s);
@@ -389,16 +352,6 @@ namespace MarsDSP {
                     }
                 }
 
-                // ── 9b. Bypass blend + gain + TPDF dither + quant ───────
-                // C10: stage 9a is folded in as a per-lane scalar pre-step
-                // (the bypass smoother and the ShortDelay are per-sample
-                // stateful — they cannot vectorize across time). The blend
-                // values are computed in the same order with the same ops as
-                // the old 9a loop, so the fusion is bit-exact; the blendL_/
-                // blendR_ scratch spans are gone. The smoother advances ONCE
-                // per sample (shared by L and R, as before).
-                // lsb is block-constant. Rounding: emulate
-                // round-half-away-from-zero via trunc(x + copysign(0.5, x)).
                 const M128 vLsb = MM(set1_ps)(blockLsb);
                 const M128 vInvLsb = MM(set1_ps)(1.0f / blockLsb);
                 const M128 vHalf = MM(set1_ps)(0.5f);
@@ -483,7 +436,6 @@ namespace MarsDSP {
             return Align::SaturatorAlign::kBudget;
         }
 
-        // C5: diffuser toggle crossfade length in samples (~10 ms @48 kHz).
         static constexpr int kDiffuserFadeSamples = 480;
 
         [[nodiscard]] int getWetBufCapacity() const noexcept { return wetBufCapacity_; }
@@ -552,15 +504,6 @@ namespace MarsDSP {
             diffuser_.setModRateHz(p.diffModRateHz);
         }
 
-        // diffuser enable-toggle state machine. Off = bypassed (wet stays
-        // undiffused, smoothers frozen). On = diffuser runs in place. FadingIn
-        // / FadingOut = a per-sample linear crossfade between the undiffused
-        // and diffused wet over kDiffuserFadeSamples, carried across chunks and
-        // blocks via diffFade_ (0 = undiffused, 1 = diffused). On a rising edge
-        // (Off -> on), prime() clears the rings first so no stale audio
-        // replays. Mid-fade reversal (re-toggle during a fade) just flips the
-        // fade direction without re-priming (the rings are already warm). RT-
-        // safe: no allocation (undiffWetL_/R_ sized in prepare), bounded loops.
         enum class DiffuserState { Off, FadingIn, On, FadingOut };
 
         void stepDiffuser_(int chunk, bool hasR) noexcept
@@ -597,15 +540,12 @@ namespace MarsDSP {
                 return;
             }
 
-            // FadingIn / FadingOut: copy the undiffused wet, run the diffuser
-            // in place (wetBuf -> diffused), then per-sample blend
-            //   out = undiff*(1-a) + diff*a,  a = diffFade_
-            // advancing a by inc per sample. FadingIn: a 0->1. FadingOut: a 1->0.
             std::memcpy(undiffWetL_.data(), wetBufL_.data(),
                         static_cast<std::size_t>(chunk) * sizeof(float));
             if (hasR)
                 std::memcpy(undiffWetR_.data(), wetBufR_.data(),
                             static_cast<std::size_t>(chunk) * sizeof(float));
+
             diffuser_.processBlock(wetBufL_.data(),
                                    hasR ? wetBufR_.data() : nullptr, chunk);
 
@@ -625,16 +565,12 @@ namespace MarsDSP {
                 {
                     diffFade_ = 1.0f;
                     diffState_ = DiffuserState::On;
-                    // remaining samples: a=1 -> out=diffused (wetBuf already
-                    // holds the diffused signal from processBlock above).
                     break;
                 }
                 if (!fadingIn && diffFade_ <= 0.0f)
                 {
                     diffFade_ = 0.0f;
                     diffState_ = DiffuserState::Off;
-                    // remaining samples: a=0 -> out=undiffused (wetBuf holds
-                    // the diffused signal, so restore from the pre-diffuser copy).
                     for (int t = s + 1; t < chunk; ++t)
                     {
                         const auto ut = static_cast<std::size_t>(t);

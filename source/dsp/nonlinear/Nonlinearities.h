@@ -7,20 +7,13 @@
 #include "math/TanhAntiderivatives.h"
 
 namespace MarsDSP::Nonlinear {
-    // kLn2 is part of the public interface (adaa2_check.cpp uses it for errBound).
     constexpr double kLn2 = 0.6931471805599453;
 
     struct TanhNL
     {
         static constexpr const char *name = "tanh";
-
         static double f(double x) noexcept { return std::tanh(x); }
-
-        // F1 = ln cosh(x).  Three-region minimax, no dilogarithm.
-        // See source/math/TanhAntiderivatives.h.
         static double F1(double x) noexcept { return Math::f1Tanh(x); }
-
-        // F2 = integral_0^x ln cosh(u) du.  F2(0) == 0.0 exactly.
         static double F2(double x) noexcept { return Math::f2Tanh(x); }
     };
 
