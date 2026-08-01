@@ -32,6 +32,7 @@ Run:  ./.venv/bin/python scripts/python/diffusion_ir_charts.py
 """
 
 import argparse
+import gzip
 from pathlib import Path
 
 import matplotlib
@@ -47,8 +48,17 @@ SIZES = [5, 0]                     # size * 10 (file naming)
 GATE_SYNC_SAMPLES = 32.0           # diffuser_loop_check aggregate gate
 
 
+def load_csv(path: Path) -> np.ndarray:
+    # Read a CSV, decompressing .csv.gz transparently. The frozen before-set is
+    # committed gzip-compressed; the after-set is plain CSV from the probe.
+    gz = path.with_suffix(".csv.gz")
+    if gz.exists():
+        return np.loadtxt(gzip.open(gz, "rt"))
+    return np.loadtxt(path)
+
+
 def load(d: Path, diff: int, size: int) -> np.ndarray:
-    return np.loadtxt(d / f"d{diff:03d}_s{size}.csv")
+    return load_csv(d / f"d{diff:03d}_s{size}.csv")
 
 
 def grid_one(ref: np.ndarray) -> int:
@@ -96,7 +106,7 @@ def main():
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
-    refs = {tag: np.loadtxt(d / "ref_off.csv") for tag, d in (("before", args.before), ("after", args.after))}
+    refs = {tag: load_csv(d / "ref_off.csv") for tag, d in (("before", args.before), ("after", args.after))}
     g1 = grid_one(refs["after"])
 
     # ── 1. overview figures ──────────────────────────────────────────────
@@ -146,7 +156,7 @@ def main():
     for ax, size in zip(axes, SIZES):
         rows = []
         for tag, d in (("before", args.before), ("after", args.after)):
-            ref = np.loadtxt(d / "ref_off.csv")
+            ref = load_csv(d / "ref_off.csv")
             c0 = aggregate_centroid(ref, K_SETTLE)
             rows.append([aggregate_centroid(load(d, diff, size), K_SETTLE) - c0
                          for diff in DIFFS])

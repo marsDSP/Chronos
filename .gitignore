@@ -8,7 +8,8 @@ build-fft-tests/
 build-tests/
 build-bench/
 
-# Generated SVF chart-data CSVs (PNG charts in tests/charts are kept)
+# Charts are generated on CI (diffusion_ir_charts.py) and uploaded as artifacts.
+tests/charts/
 charts_data/
 
 # macOS

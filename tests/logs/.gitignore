@@ -5,3 +5,6 @@
 !baseline/**
 !post-*/
 !post-*/**
+!diffusion_ir/
+!diffusion_ir/before/
+!diffusion_ir/before/**

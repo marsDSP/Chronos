@@ -171,6 +171,40 @@ if(BUILD_TEST_HARNESSES)
         target_compile_options(golden_render_check PRIVATE "-mfma")
     endif()
 
+    # Real-time safety harnesses. rt_alloc_check overrides the global
+    # allocation functions and arms them around process only. rt_stack_check
+    # paints a 256 kB stack canary and measures the high-water mark. Forced
+    # -O2 and FMA so the SIMD kernels match the plugin build.
+    add_executable(rt_alloc_check harnesses/rt/rt_alloc_check.cpp)
+    target_link_libraries(rt_alloc_check PRIVATE SharedCode)
+    if(MSVC)
+        target_compile_options(rt_alloc_check PRIVATE /O2)
+    else()
+        target_compile_options(rt_alloc_check PRIVATE -O2)
+    endif()
+    if(APPLE)
+        target_compile_options(rt_alloc_check PRIVATE "-Xarch_x86_64" "-mfma")
+    elseif(MSVC)
+        target_compile_options(rt_alloc_check PRIVATE "/arch:AVX2")
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64|AMD64)")
+        target_compile_options(rt_alloc_check PRIVATE "-mfma")
+    endif()
+
+    add_executable(rt_stack_check harnesses/rt/rt_stack_check.cpp)
+    target_link_libraries(rt_stack_check PRIVATE SharedCode)
+    if(MSVC)
+        target_compile_options(rt_stack_check PRIVATE /O2)
+    else()
+        target_compile_options(rt_stack_check PRIVATE -O2)
+    endif()
+    if(APPLE)
+        target_compile_options(rt_stack_check PRIVATE "-Xarch_x86_64" "-mfma")
+    elseif(MSVC)
+        target_compile_options(rt_stack_check PRIVATE "/arch:AVX2")
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64|AMD64)")
+        target_compile_options(rt_stack_check PRIVATE "-mfma")
+    endif()
+
     add_executable(delay_line_bench harnesses/perf/delay_line_bench.cpp)
     target_link_libraries(delay_line_bench PRIVATE SharedCode juce::juce_dsp)
     if(MSVC)
@@ -232,7 +266,7 @@ if(BUILD_TEST_HARNESSES)
     endif()
 
     # ── CTest registration ──────────────────────────────────────────────
-    # 21 correctness harnesses: exit 0 = pass. The 6 benchmarks (tan_bench,
+    # 23 correctness harnesses: exit 0 = pass. The 6 benchmarks (tan_bench,
     # adaa_bench, delay_line_bench, chain_bench, fb_bench, diffuser_bench) are
     # labeled "bench" so
     # `ctest -LE bench` excludes them. they report numbers rather than pass/fail
@@ -266,6 +300,8 @@ if(BUILD_TEST_HARNESSES)
     add_test(NAME simd_delay_parity      COMMAND simd_delay_parity)
     add_test(NAME diffuser_parity        COMMAND diffuser_parity)
     add_test(NAME golden_render_check    COMMAND golden_render_check)
+    add_test(NAME rt_alloc_check         COMMAND rt_alloc_check)
+    add_test(NAME rt_stack_check         COMMAND rt_stack_check)
 
     # The 6 benchmarks are registered as tests but labeled "bench" so
     # `ctest -LE bench` excludes them. They report numbers, not pass/fail

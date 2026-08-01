@@ -1,4 +1,4 @@
-a# Chronos golden render hashes (FNV-1a 64 over interleaved stereo float output)
+# Chronos golden render hashes (FNV-1a 64 over interleaved stereo float output)
 # fs=48000 block=512 stereo bits=32 gain=0dB dither=0x12345678/0x9abcdef0
 # columns: config,input,hash,peakDbFs,rmsDbFs,decayToMinus30Ms
 1,imp,0x8a57fc158dce7485,-8.864,-62.565,500.229
