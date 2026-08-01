@@ -48,6 +48,7 @@
 // Run:   ./build/tests/chain_bench [--csv tests/logs/<arch>/chain_bench.csv]
 // ──────────────────────────────────────────────────────────────────────────
 
+#include "dsp/ChronosEngine.h"
 #include "dsp/SimdDelayLine.h"
 #include "dsp/StateVariable.h"
 #include "dsp/nonlinear/ADAA1.h"
@@ -591,6 +592,58 @@ struct FullChain
     }
 };
 
+// ── Real engine row: ChronosEngine::process end-to-end ───────────────────
+// chain_bench's FullChain hand-assembly is a single fused per-sample loop —
+// it does NOT model the engine's stage-split block structure (scratch spans
+// between block loops). C10 (loop fusion inside the engine) is therefore
+// invisible to the FullChain number; this row times the real engine so
+// engine-structure changes have a measurement vehicle. Parameters mirror
+// the FullChain config (feedback 0, diffuser off, fixed dither seeds); the
+// input memcpy sits inside the timed rep, matching FullChain::run.
+double benchEngine(const Cfg& c, const Bufs& b, float driveLin, float gainLin,
+                   double& sink)
+{
+    MarsDSP::ChronosEngine eng;
+    eng.prepare(kFs, c.block, c.ch);
+    eng.setDitherSeeds(0x12345678u, 0x9abcdef0u);
+
+    MarsDSP::ChronosEngine::Params ep{};
+    ep.delaySamples = kDelaySamples;
+    ep.driveLin     = driveLin;
+    ep.mix          = c.mix;
+    ep.gainLin      = gainLin;
+    ep.hpfHz        = static_cast<float>(kHpfHz);
+    ep.lpfHz        = static_cast<float>(kLpfHz);
+    ep.bits         = kBits;
+    ep.adaaOrder    = c.mode;
+    ep.interp       = kInterp;
+    eng.resetParams(ep);
+
+    std::vector<float> eL(static_cast<std::size_t>(kSamples));
+    std::vector<float> eR(static_cast<std::size_t>(kSamples));
+
+    double best  = std::numeric_limits<double>::infinity();
+    double total = 0.0;
+    for (int r = 0; r < kReps; ++r)
+    {
+        const auto t0 = Clock::now();
+        std::memcpy(eL.data(), b.inL.data(), sizeof(float) * static_cast<std::size_t>(kSamples));
+        if (c.ch > 1)
+            std::memcpy(eR.data(), b.inR.data(), sizeof(float) * static_cast<std::size_t>(kSamples));
+        for (int off = 0; off < kSamples; off += c.block)
+        {
+            float* io[2] = { eL.data() + off,
+                             c.ch > 1 ? eR.data() + off : nullptr };
+            eng.process(io, c.ch, c.block);
+        }
+        const auto t1 = Clock::now();
+        total += eL[static_cast<std::size_t>(kSamples / 2)];
+        best = std::min(best, std::chrono::duration<double, std::nano>(t1 - t0).count());
+    }
+    sink += total;
+    return best / static_cast<double>(kSamples);
+}
+
 // ── Output ────────────────────────────────────────────────────────────────
 constexpr int kNumStages = 8;
 constexpr const char* kStageNames[kNumStages] =
@@ -636,10 +689,10 @@ int main(int argc, char** argv)
     std::printf("Isolated stages stream recorded inputs from L3; the fused chain is\n");
     std::printf("cache-resident, so stages-sum overestimates full-chain. Informational only.\n\n");
 
-    std::printf("%4s %4s %4s %3s | %8s %8s %8s %8s %8s %8s %8s %8s | %8s %8s\n",
+    std::printf("%4s %4s %4s %3s | %8s %8s %8s %8s %8s %8s %8s %8s | %8s %8s %8s\n",
                 "mode", "mix", "blk", "ch",
                 "delay", "drive", "adaa", "align", "svf-hp", "svf-lp", "xfade", "tail",
-                "sum", "full");
+                "sum", "full", "engine");
 
     const int   modes[3]  = { 0, 1, 2 };
     const float mixes[3]  = { 0.0f, 50.0f, 100.0f };
@@ -724,11 +777,12 @@ int main(int argc, char** argv)
             sink += total;
             nsFull = best / static_cast<double>(kSamples);
         }
+        const double nsEngine = benchEngine(c, b, driveLin, gainLin, sink);
         grandSink += sink;
 
-        std::printf("%4d %4.0f %4d %3d | %8.3f %8.3f %8.3f %8.3f %8.3f %8.3f %8.3f %8.3f | %8.3f %8.3f\n",
+        std::printf("%4d %4.0f %4d %3d | %8.3f %8.3f %8.3f %8.3f %8.3f %8.3f %8.3f %8.3f | %8.3f %8.3f %8.3f\n",
                     mode, static_cast<double>(mix), block, ch,
-                    ns[0], ns[1], ns[2], ns[3], ns[4], ns[5], ns[6], ns[7], sum, nsFull);
+                    ns[0], ns[1], ns[2], ns[3], ns[4], ns[5], ns[6], ns[7], sum, nsFull, nsEngine);
 
         for (int st = 0; st < kNumStages; ++st)
         {
@@ -740,7 +794,7 @@ int main(int argc, char** argv)
             csv += kStageNames[st]; csv += ",";
             csv += std::to_string(ns[st]); csv += "\n";
         }
-        for (const char* extra : { "stages-sum", "full-chain" })
+        for (const char* extra : { "stages-sum", "full-chain", "engine" })
         {
             csv += archName(); csv += ",";
             csv += std::to_string(mode); csv += ",";
@@ -748,7 +802,9 @@ int main(int argc, char** argv)
             csv += std::to_string(block); csv += ",";
             csv += std::to_string(ch); csv += ",";
             csv += extra; csv += ",";
-            csv += std::to_string(extra[0] == 's' ? sum : nsFull); csv += "\n";
+            csv += std::to_string(extra[0] == 's' ? sum
+                                : extra[0] == 'f' ? nsFull : nsEngine);
+            csv += "\n";
         }
     }
 
