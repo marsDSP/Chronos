@@ -4,10 +4,10 @@
 // ChronosEngine diffuser crossfade state machine exists to preserve:
 //
 // (a) No stale replay: when the diffuser is bypassed, its 16 rings hold up to
-//     ~611 ms of frozen audio. Re-enabling must NOT replay that stale audio.
+//     ~61 ms of frozen audio. Re-enabling must NOT replay that stale audio.
 //     prime() clears the rings on a rising edge, and a wet-path crossfade
 //     blends undiffused → diffused over ~10 ms. Feed tone A with the diffuser
-//     on, disable, feed tone B for > 700 ms (> the ring depth), re-enable, and
+//     on, disable, feed tone B for > 700 ms (≫ the ring depth), re-enable, and
 //     measure energy at tone A's frequency in the output after re-enable.
 //
 //     The gate is RELATIVE, not absolute: the Schroeder allpass diffuser is

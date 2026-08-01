@@ -31,11 +31,23 @@ namespace MarsDSP::Diffusion {
         static constexpr int   kModSectionB    = 5;
         static constexpr float kDetuneRatio    = 1.317f;
 
-        // Acoustic path lengths in meters
+        // Acoustic path lengths in meters. Short-smear diffusion territory
+        // (Dattorro/Schroeder input diffusion): 0.8–4.5 m ≈ 2.4–13 ms per
+        // section at 48 kHz, total series delay ≈ 61 ms at size 0 (full
+        // length) down to ~7 ms at size 1 (90% cut, floor-clamped). The
+        // original tables were 10× longer (8–45 m, 61–613 ms total), which
+        // smeared the repeat across a ±300 ms window no tap compensation
+        // could hide — the audible arrival drifted with both size and g. At
+        // this scale the whole smear is perceptually part of the repeat;
+        // the comp (C7c, transportSamples below) anchors the cascade's
+        // energy centroid — exactly baseTransportSamples at every g — so
+        // repeats stay centroid-locked to the grid at all settings, and the
+        // comp clamp (delay < transport) is only reachable below ~65 ms
+        // delay times.
         static constexpr std::array<float, kNumSections> kPathMetersL{
-            45.4125f, 39.3375f, 31.9125f, 29.2875f, 23.2875f, 20.1000f, 11.8875f, 8.2875f };
+            4.54125f, 3.93375f, 3.19125f, 2.92875f, 2.32875f, 2.01000f, 1.18875f, 0.82875f };
         static constexpr std::array<float, kNumSections> kPathMetersR{
-            45.3000f, 39.2625f, 31.8375f, 29.1375f, 23.3625f, 19.9875f, 13.9125f, 7.9500f };
+            4.53000f, 3.92625f, 3.18375f, 2.91375f, 2.33625f, 1.99875f, 1.39125f, 0.79500f };
 
         void prepare(double sampleRate) noexcept
         {
@@ -173,12 +185,14 @@ namespace MarsDSP::Diffusion {
         // base transport — the total delay the 8-section cascade carries
         // at a given size, EXCLUDING modulation (modulation is a per-sample
         // perturbation around this base, not part of the transport). This is
-        // the quantity C7 absorbs into the tap position so repeats stay on the
-        // tempo grid. The per-section arithmetic is token-identical to the
-        // settled/unmodulated `eff` in chain_ (m==0 branch) and chunk_ (fast
-        // path): nearbyintf then clamp to [kMinDelay, len]. At diffusion = 0
-        // (g = 0) each section is a pure D-sample delay, so the base transport
-        // is the exact series delay; C7's compensation is sample-exact there.
+        // the quantity C7c absorbs into the tap position so repeats stay on
+        // the tempo grid (see transportSamples: it is the exact energy
+        // centroid of the cascade IR at every g). The per-section arithmetic
+        // is token-identical to the settled/unmodulated `eff` in chain_
+        // (m==0 branch) and chunk_ (fast path): nearbyintf then clamp to
+        // [kMinDelay, len]. At diffusion = 0 (g = 0) each section is a pure
+        // D-sample delay, so the base transport is the exact series delay;
+        // the compensation is sample-exact there.
         //
         // L and R banks differ (~3.8 ms skew at size 0, 48 kHz) because the
         // prime-snapped path lengths differ — intentional decorrelation.
@@ -220,13 +234,30 @@ namespace MarsDSP::Diffusion {
 
         [[nodiscard]] float getCoefCurrent() const noexcept { return coefSm_.getCurrentValue(); }
 
+        // C7c: per-pass transport for the in-loop/tap compensation. The
+        // 8-section cascade's ENERGY centroid is exactly baseTransportSamples
+        // at every g (each section's energy centroid is D exactly — the
+        // allpass average group delay is g-invariant, and the per-section
+        // sign alternation below changes phases, not energies). Anchoring
+        // the comp to the exact centroid (rather than the old w = 1-g^8
+        // energy-MEDIAN estimate) is what makes the loop period exact per
+        // pass at every diffusion setting: repeat n's centroid lands on
+        // n*delay for all g, while the blob widens ~sqrt(n) (the wash).
         [[nodiscard]] float transportSamples() const noexcept
         {
-            const float g = std::clamp(coefSm_.getCurrentValue(), 0.0f, kMaxCoefficient);
-            float gN = 1.0f;                    // g^kNumSections (constexpr loop)
-            for (int i = 0; i < kNumSections; ++i) gN *= g;
-            const float w = 1.0f - gN;          // fraction that travels (not feedthrough)
-            return w * baseTransportSamples(getSizeCurrent());
+            return baseTransportSamples(getSizeCurrent());
+        }
+
+        // Per-section Schroeder coefficient sign (signalsmith/Dattorro
+        // polarity-flip port): alternating section signs break up the
+        // regular phase reinforcement of the cascade (metallic edge) at
+        // zero cost. The sign changes each section's phase response but
+        // NOT its energy distribution (h -> ±h per arrival), so |H| = 1,
+        // stability (|g_i| < 1), and the D-exact energy centroid all hold
+        // — the comp above is unaffected.
+        static constexpr float sectionSign(int i) noexcept
+        {
+            return (i & 1) != 0 ? -1.0f : 1.0f;
         }
 
     private:
@@ -327,6 +358,7 @@ namespace MarsDSP::Diffusion {
                 const int   mask = sec.ring.mask();
                 const float lenF = static_cast<float>(sec.len);
                 const bool  isMod = (i == kModSectionA || i == kModSectionB);
+                const float sgn = sectionSign(i);
 
                 if (settled && !isMod)
                 {
@@ -343,11 +375,12 @@ namespace MarsDSP::Diffusion {
                         d = rd_.data();
                     }
 
+                    const M128 sgnv = MM(set1_ps)(sgn);
                     const int mv = m & ~3;
                     for (int j = 0; j < mv; j += 4)
                     {
                         const M128 dv = MM(loadu_ps)(d + j);
-                        const M128 gv = MM(load_ps)(gRamp_.data() + j);
+                        const M128 gv = MM(mul_ps)(sgnv, MM(load_ps)(gRamp_.data() + j));
                         const M128 xv = MM(load_ps)(tmp_.data() + j);
                         const M128 vv = MM(sub_ps)(xv, MM(mul_ps)(gv, dv));
                         const M128 yv = MM(add_ps)(dv, MM(mul_ps)(gv, vv));
@@ -357,7 +390,7 @@ namespace MarsDSP::Diffusion {
                     for (int j = mv; j < m; ++j)
                     {
                         const float dj = d[j];
-                        const float gj = gRamp_[static_cast<std::size_t>(j)];
+                        const float gj = sgn * gRamp_[static_cast<std::size_t>(j)];
                         const float vj = tmp_[static_cast<std::size_t>(j)] - gj * dj;
                         wr_[static_cast<std::size_t>(j)] = vj;
                         tmp_[static_cast<std::size_t>(j)] = dj + gj * vj;
@@ -375,7 +408,7 @@ namespace MarsDSP::Diffusion {
                     // ---- exact path: per-sample fractional read ----
                     for (int j = 0; j < m; ++j)
                     {
-                        const float gj = gRamp_[static_cast<std::size_t>(j)];
+                        const float gj = sgn * gRamp_[static_cast<std::size_t>(j)];
                         float eff = lenF * (1.0f - kMaxSizeCut * sizeRamp_[static_cast<std::size_t>(j)]);
                         const float mm = (i == kModSectionA) ? modA[j]
                                        : (i == kModSectionB) ? modB[j]
@@ -419,10 +452,11 @@ namespace MarsDSP::Diffusion {
                 eff = std::clamp(eff, kMinDelay, lenF);
 
                 // canonical Schroeder: v = x - g*d ; y = d + g*v ; write v.
+                const float gs = sectionSign(i) * g;
                 const float d = Delays::FracDelayTap::read(sec.ring, sec.w, eff);
-                float v = x - g * d;
+                float v = x - gs * d;
                 if (!std::isfinite(v)) v = 0.0f; // scrub before it recirculates
-                const float y = d + g * v;
+                const float y = d + gs * v;
 
                 sec.ring.writeBlock(&v, sec.w, 1);
                 sec.ring.refreshMirror(sec.w, 1);

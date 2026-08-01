@@ -126,10 +126,11 @@ void runOne(const Cfg& c)
     }
 }
 
-// ── C6: base-transport unit check ─────────────────────────────────────────
+// ── C6: base-transport unit check ─────────────────────────────────────
 // Verify baseTransportSamples / baseTransportSamplesLR match an inline
 // recomputation of the same per-section eff expression, and sanity-check the
-// measured transport table (size 0 ≈ 611 ms, size 1 → 8×kMinDelay = 256).
+// measured transport table (size 0 ≈ 61 ms; size 1 → ~10% of that, with the
+// shortest sections floor-clamped at kMinDelay).
 void testBaseTransport()
 {
     g_section = "base-transport";
@@ -180,21 +181,23 @@ void testBaseTransport()
                     (double)mean);
     }
 
-    // Sanity: size 0 transport ≈ 611 ms (L) / 615 ms (R) at 48 kHz (the plan's
-    // measured ΣL = 29326, ΣR = 29508 — prime-snapped, so within a few samples).
+    // Sanity: size 0 transport ≈ 61 ms at 48 kHz (short-smear tables: Σlen ≈
+    // 2930 samples per bank, prime-snapped, so within a few samples). Bounds
+    // bracket the intended scale — a regression to the old 10× tables
+    // (≈ 29400) fails the upper bound.
     {
         const auto lr0 = d.baseTransportSamplesLR(0.0f);
-        CHECK(lr0[0] > 28000.0f);   // ~583 ms lower bound (prime snap slack)
-        CHECK(lr0[1] > 28000.0f);
-        std::printf("    size=0 sanity: L=%.0f R=%.0f (both > 28000): PASS\n",
+        CHECK(lr0[0] > 2800.0f && lr0[0] < 3100.0f);
+        CHECK(lr0[1] > 2800.0f && lr0[1] < 3100.0f);
+        std::printf("    size=0 sanity: L=%.0f R=%.0f (both in (2800, 3100)): PASS\n",
                     (double)lr0[0], (double)lr0[1]);
     }
 
-    // Sanity: size 1 → eff = len*(1-0.9*1) = len*0.1 per section. At 48 kHz
-    // all section lengths are > 320, so len*0.1 > kMinDelay=32 and no section
-    // clamps to the minimum — the transport is ~10% of size=0, not 8×kMinDelay.
-    // The recompute loop above already verified the exact value; monotonicity
-    // (below) verifies it is the minimum across the grid.
+    // Sanity: size 1 → eff = len*(1-0.9*1) = len*0.1 per section, floor-
+    // clamped at kMinDelay=32 — the three shortest sections (len < 320)
+    // clamp, so the transport is a bit above 10% of size=0. The recompute
+    // loop above already verified the exact value; monotonicity (below)
+    // verifies it is the minimum across the grid.
     {
         const auto lr0 = d.baseTransportSamplesLR(0.0f);
         const auto lr1 = d.baseTransportSamplesLR(1.0f);

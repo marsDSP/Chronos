@@ -4,6 +4,7 @@
 #define CHRONOS_FEEDBACK_DELAY_H
 
 #include "BlockTapReader.h"
+#include "Diffuser.h"
 #include "FracDelayTap.h"
 #include "LinearSmoother.h"
 #include "Pow2RingBuffer.h"
@@ -35,7 +36,18 @@ namespace MarsDSP::Delays {
             float dampHz       = 6000.0f; // one-pole lowpass in the loop
             float crossFeed    = 0.0f;    // 0 straight, 1 full ping-pong
             float loopDrive    = 1.0f;    // how hard repeats lean on the tanh ceiling
-            int   satOrder     = 2;       // 0 = hard bypass sat, 1 = ADAA1, 2 = ADAA2
+            int   satOrder     = 2;       // 0 hard, 1 ADAA1, 2 ADAA2
+            // C7c: in-loop diffuser. The loop tap stream passes through the
+            // diffuser before the recursion (and the output), so repeat n has
+            // n diffusion passes (progressive wash). The loop tap is read at
+            // d - satLatency_ - fade*baseTransport, where baseTransport is
+            // the cascade's exact energy centroid at every g — so the loop
+            // period stays exactly d per pass at all diffusion settings.
+            bool  enableDiffuser = false;
+            float diffusion      = 0.7f;  // 0..1 -> allpass coeff 0..0.92
+            float diffuserSize   = 0.5f;  // 0..1 (0 = full path lengths)
+            float diffModDepth   = 16.0f; // samples, 0..62
+            float diffModRateHz  = 0.5f;  // 0..8
         };
 
         // Callers must pass the contractual max delay, not a pow2 capacity.
@@ -60,13 +72,16 @@ namespace MarsDSP::Delays {
             prepareImpl_(sampleRate, maxBlockSize, maxDelaySamples, &arena);
         }
 
-        // floats an arena must supply for both rings: token-identical
-        // minCap arithmetic to prepareImpl_, so the carve fits exactly.
-        static std::size_t ringStorageFloats(int maxBlockSize, int maxDelaySamples) noexcept
+        // floats an arena must supply for both rings plus the in-loop
+        // diffuser's 16 section rings: token-identical minCap arithmetic to
+        // prepareImpl_, so the carve fits exactly.
+        static std::size_t ringStorageFloats(double sampleRate, int maxBlockSize,
+                                             int maxDelaySamples) noexcept
         {
             const int minCap = maxDelaySamples + maxBlockSize
                              + Pow2RingBuffer::kTail + 8;
-            return 2 * Pow2RingBuffer::arenaFloatsFor(minCap);
+            return 2 * Pow2RingBuffer::arenaFloatsFor(minCap)
+                 + Diffusion::Diffuser::ringStorageFloats(sampleRate);
         }
 
         void reset() noexcept
@@ -78,6 +93,10 @@ namespace MarsDSP::Delays {
             adaa2L_.reset(); adaa2R_.reset();
             dampL_ = dampR_ = 0.0f;
             dcXL_ = dcXR_ = dcYL_ = dcYR_ = 0.0f;
+            diffuser_.reset();
+            enableDiffuser_ = false;
+            diffState_ = DiffuserState::Off;
+            diffFade_ = 0.0f;
             firstBlock_ = true;
         }
 
@@ -88,6 +107,11 @@ namespace MarsDSP::Delays {
             fbSm_.setCurrentAndTargetValue(std::clamp(p.feedback, 0.0f, kMaxFeedback));
             crossSm_.setCurrentAndTargetValue(std::clamp(p.crossFeed, 0.0f, 1.0f));
             driveSm_.setCurrentAndTargetValue(std::clamp(p.loopDrive, 0.1f, 16.0f));
+            applyDiffuserParams_(p);
+            diffuser_.prime();   // snap smoothers to the targets just set, clear rings
+            enableDiffuser_ = p.enableDiffuser;
+            diffState_ = enableDiffuser_ ? DiffuserState::On : DiffuserState::Off;
+            diffFade_ = enableDiffuser_ ? 1.0f : 0.0f;
             firstBlock_ = false;
         }
 
@@ -99,6 +123,8 @@ namespace MarsDSP::Delays {
             fbSm_.setTargetValue(std::clamp(p.feedback, 0.0f, kMaxFeedback));
             crossSm_.setTargetValue(std::clamp(p.crossFeed, 0.0f, 1.0f));
             driveSm_.setTargetValue(std::clamp(p.loopDrive, 0.1f, 16.0f));
+            applyDiffuserParams_(p);
+            enableDiffuser_ = p.enableDiffuser;
         }
 
         // ──────────────────────────────────────────────────────────────────
@@ -158,22 +184,30 @@ namespace MarsDSP::Delays {
             const bool hasR = (inR != nullptr && wetR != nullptr);
             const int  mask = ringL_.mask();
 
+            diffuserTransition_();   // block-rate enable edge (primes on rising)
+
             int s = 0;
             while (s < n)
             {
                 const int remaining = n - s;
 
-                // dMin = minimum read delay over the next Lc smoother steps,
-                // across BOTH the loop tap and the output tap (C7). The output
-                // tap is shorter by outputTapOffset_, so it is the more
-                // restrictive one when outputTapOffset_ > 0.
+                // C7c: in-loop diffuser offset. The loop tap is read at
+                // d - satLatency_ - fade*baseT, where baseT is the cascade's
+                // exact energy centroid (g-invariant), so the loop period
+                // stays exactly d per pass at all diffusion settings. The
+                // guard uses the state at sub-chunk start (conservative
+                // during fades: the full baseT is subtracted even though the
+                // fade ramps up through the sub-chunk).
+                const float baseT = (diffState_ != DiffuserState::Off)
+                    ? diffuser_.transportSamples() : 0.0f;
+
+                // dMin = minimum read delay over the next Lc smoother steps.
+                // The loop tap itself is the most restrictive read (it carries
+                // the diffuser offset).
                 const float dCur = delaySm_.getCurrentValue();
                 const float dTgt = delaySm_.getTargetValue();
-                const float dMinLoop = std::max(kMinLoopDelay,
-                    std::min(dCur, dTgt) - satLatency_);
-                const float dMinOut = std::max(kMinLoopDelay,
-                    std::min(dCur, dTgt) - satLatency_ - outputTapOffset_);
-                const float dMin = std::min(dMinLoop, dMinOut);
+                const float dMin = std::max(kMinLoopDelay,
+                    std::min(dCur, dTgt) - satLatency_ - baseT);
 
                 int Lc = static_cast<int>(std::floor(dMin)) - kChunkGuard;
                 Lc = std::clamp(Lc, 1, std::min(kMaxChunk, remaining));
@@ -181,41 +215,52 @@ namespace MarsDSP::Delays {
                 if (Lc < 4)
                 {
                     // Per-sample scalar path (same code as processRef's body).
+                    const bool runDiff = (diffState_ != DiffuserState::Off);
                     for (int i = 0; i < Lc; ++i)
                     {
                         const float d     = delaySm_.getNextValue();
                         const float g     = fbSm_.getNextValue();
                         const float cross = crossSm_.getNextValue();
                         const float drive = driveSm_.getNextValue();
+                        const float fade  = fadeStep_();
                         processSampleScalar_(inL + s + i, hasR ? inR + s + i : nullptr,
                                              wetL + s + i, hasR ? wetR + s + i : nullptr,
-                                             d, g, cross, drive, hasR, mask);
+                                             d, g, cross, drive, hasR, mask,
+                                             fade, runDiff ? baseT : 0.0f);
                     }
                     s += Lc;
                     continue;
                 }
 
-                // 1. Advance smoothers into stack ramps.
+                // 1. Advance smoothers into stack ramps. The diffuser fade is
+                //    advanced here too (one step per sample, shared L/R).
                 alignas(16) float dR[kMaxChunk], gR[kMaxChunk],
-                                 crossR[kMaxChunk], driveR[kMaxChunk];
+                                 crossR[kMaxChunk], driveR[kMaxChunk], fadeR[kMaxChunk];
+                const bool wasRunning = (diffState_ != DiffuserState::Off);
                 for (int i = 0; i < Lc; ++i)
                 {
                     dR[i]     = delaySm_.getNextValue();
                     gR[i]     = fbSm_.getNextValue();
                     crossR[i] = crossSm_.getNextValue();
                     driveR[i] = driveSm_.getNextValue();
+                    fadeR[i]  = fadeStep_();
                 }
+                // Run the diffuser for this sub-chunk if it was running at the
+                // start OR is still running now (a fade may finish mid-chunk;
+                // the leading samples still need diffused values to blend).
+                const bool runDiff = wasRunning || (diffState_ != DiffuserState::Off);
 
-                // 2. Bulk tap read.
+                // 2. Bulk tap read (at d - satLatency_ - fade*baseT).
                 alignas(16) float tapL[kMaxChunk], tapR[kMaxChunk];
-                const bool settled = (dR[0] == dR[Lc - 1]);
+                const bool settled = (dR[0] == dR[Lc - 1]) && (fadeR[0] == fadeR[Lc - 1]);
 
                 if (settled)
                 {
                     // Hoist window + coefficients; per-sample dot from the
                     // hoisted window (same mul + horizontal-sum op order as
                     // FracDelayTap::read → bit-exact at satOrder = 0).
-                    const float readDelay = std::max(kMinLoopDelay, dR[0] - satLatency_);
+                    const float readDelay = std::max(kMinLoopDelay,
+                        dR[0] - satLatency_ - fadeR[0] * baseT);
                     const auto  iInt = static_cast<int>(readDelay);
                     const float f = readDelay - static_cast<float>(iInt);
                     const FracDelayTap::Coeffs4 k = FracDelayTap::lagrange3(f);
@@ -253,7 +298,8 @@ namespace MarsDSP::Delays {
                     // Per-sample FracDelayTap::read (the base varies per sample).
                     for (int i = 0; i < Lc; ++i)
                     {
-                        const float readDelay = std::max(kMinLoopDelay, dR[i] - satLatency_);
+                        const float readDelay = std::max(kMinLoopDelay,
+                            dR[i] - satLatency_ - fadeR[i] * baseT);
                         tapL[i] = FracDelayTap::read(ringL_, writeIdx_ + i, readDelay);
                         if (hasR)
                             tapR[i] = FracDelayTap::read(ringR_, writeIdx_ + i, readDelay);
@@ -266,77 +312,30 @@ namespace MarsDSP::Delays {
                 if (!hasR)
                     for (int i = 0; i < Lc; ++i) tapR[i] = tapL[i];
 
-                // C7: output-tap bulk read (for diffuser base-transport comp).
-                // The output tap is at max(kMinLoopDelay, d - satLatency_ -
-                // outputTapOffset_), shorter than the loop tap. When
-                // outputTapOffset_ == 0 the output tap == the loop tap, so skip
-                // the second read and point at tapL/tapR directly (pre-C7
-                // behavior, bit-exact).
-                alignas(16) float outTapL[kMaxChunk], outTapR[kMaxChunk];
-                const float* outLPtr;
-                const float* outRPtr;
-                if (outputTapOffset_ <= 0.0f)
+                // 2b. C7c: in-loop diffuser pass + toggle blend. The tap stream
+                //     passes through the diffuser BEFORE the recursion (and
+                //     the output), so repeat n gets n diffusion passes — the
+                //     progressive wash. The blend out = raw*(1-a) + diff*a
+                //     shares the fade with the tap offset (fade*baseT above):
+                //     the blend's energy centroid is fade*baseT exactly, so
+                //     the comp stays exact throughout the fade. Scalar on
+                //     purpose: identical op order to processSampleScalar_
+                //     (bit-exact, no FMA-contraction ambiguity).
+                if (runDiff)
                 {
-                    outLPtr = tapL;
-                    outRPtr = hasR ? tapR : tapL;
-                }
-                else if (settled)
-                {
-                    const float outReadDelay = std::max(kMinLoopDelay,
-                        dR[0] - satLatency_ - outputTapOffset_);
-                    const auto  iOut = static_cast<int>(outReadDelay);
-                    const float fOut = outReadDelay - static_cast<float>(iOut);
-                    const FracDelayTap::Coeffs4 kOut = FracDelayTap::lagrange3(fOut);
-                    const int baseOut = (writeIdx_ - iOut - 3) & mask;
-                    const int winLenOut = Lc + 6;
-                    const M128 cfOut = MM(set_ps)(kOut.c4, kOut.c3, kOut.c2, kOut.c1);
-
-                    const auto wOutL = BlockTapReader::acquireWindow(ringL_, baseOut, winLenOut, outTapWinL_.data());
-                    const float* winOutL = wOutL.ptr;
+                    alignas(16) float rawL[kMaxChunk], rawR[kMaxChunk];
+                    std::memcpy(rawL, tapL, static_cast<std::size_t>(Lc) * sizeof(float));
+                    std::memcpy(rawR, tapR, static_cast<std::size_t>(Lc) * sizeof(float));
+                    diffuser_.processBlock(tapL, hasR ? tapR : nullptr, Lc);
                     for (int i = 0; i < Lc; ++i)
                     {
-                        const M128 taps = MM(loadu_ps)(winOutL + i + 1);
-                        const M128 prod = MM(mul_ps)(taps, cfOut);
-                        const M128 sh1  = MM(add_ps)(prod, MM(movehl_ps)(prod, prod));
-                        const M128 sh2  = MM(add_ss)(sh1, MM(shuffle_ps)(sh1, sh1, MM_SHUFFLE(0, 0, 0, 1)));
-                        outTapL[i] = MM(cvtss_f32)(sh2);
-                    }
-                    if (hasR)
-                    {
-                        const auto wOutR = BlockTapReader::acquireWindow(ringR_, baseOut, winLenOut, outTapWinR_.data());
-                        const float* winOutR = wOutR.ptr;
-                        for (int i = 0; i < Lc; ++i)
-                        {
-                            const M128 taps = MM(loadu_ps)(winOutR + i + 1);
-                            const M128 prod = MM(mul_ps)(taps, cfOut);
-                            const M128 sh1  = MM(add_ps)(prod, MM(movehl_ps)(prod, prod));
-                            const M128 sh2  = MM(add_ss)(sh1, MM(shuffle_ps)(sh1, sh1, MM_SHUFFLE(0, 0, 0, 1)));
-                            outTapR[i] = MM(cvtss_f32)(sh2);
-                        }
-                        outLPtr = outTapL;
-                        outRPtr = outTapR;
-                    }
-                    else
-                    {
-                        for (int i = 0; i < Lc; ++i) outTapR[i] = outTapL[i];
-                        outLPtr = outTapL;
-                        outRPtr = outTapL;
-                    }
-                }
-                else
-                {
-                    for (int i = 0; i < Lc; ++i)
-                    {
-                        const float outReadDelay = std::max(kMinLoopDelay,
-                            dR[i] - satLatency_ - outputTapOffset_);
-                        outTapL[i] = FracDelayTap::read(ringL_, writeIdx_ + i, outReadDelay);
+                        const float a = fadeR[i];
+                        tapL[i] = rawL[i] * (1.0f - a) + tapL[i] * a;
                         if (hasR)
-                            outTapR[i] = FracDelayTap::read(ringR_, writeIdx_ + i, outReadDelay);
+                            tapR[i] = rawR[i] * (1.0f - a) + tapR[i] * a;
+                        else
+                            tapR[i] = tapL[i];   // mono: mirror the blended L
                     }
-                    if (!hasR)
-                        for (int i = 0; i < Lc; ++i) outTapR[i] = outTapL[i];
-                    outLPtr = outTapL;
-                    outRPtr = hasR ? outTapR : outTapL;
                 }
 
                 // 3. Scalar recursive chain: damp → DC → cross (common), then
@@ -407,12 +406,13 @@ namespace MarsDSP::Delays {
                 }
                 writeIdx_ = (writeIdx_ + Lc) & mask;
 
-                // 5. Output: wet = OUTPUT taps (C7: compensated by
-                //    outputTapOffset_ so repeats land on the grid).
+                // 5. Output: wet = the (diffused, blended) loop-tap stream.
+                //    When the diffuser is off this is the raw loop tap —
+                //    pre-C7c behavior, bit-exact.
                 for (int i = 0; i < Lc; ++i)
                 {
-                    wetL[s + i] = outLPtr[i];
-                    if (hasR) wetR[s + i] = outRPtr[i];
+                    wetL[s + i] = tapL[i];
+                    if (hasR) wetR[s + i] = tapR[i];
                 }
 
                 s += Lc;
@@ -427,36 +427,88 @@ namespace MarsDSP::Delays {
             const bool hasR = (inR != nullptr && wetR != nullptr);
             const int  mask = ringL_.mask();
 
+            diffuserTransition_();
+
             for (int s = 0; s < n; ++s)
             {
+                const float baseT = (diffState_ != DiffuserState::Off)
+                    ? diffuser_.transportSamples() : 0.0f;
                 const float d     = delaySm_.getNextValue();
                 const float g     = fbSm_.getNextValue();
                 const float cross = crossSm_.getNextValue();
                 const float drive = driveSm_.getNextValue();
+                const float fade  = fadeStep_();
                 processSampleScalar_(inL + s, hasR ? inR + s : nullptr,
                                      wetL + s, hasR ? wetR + s : nullptr,
-                                     d, g, cross, drive, hasR, mask);
+                                     d, g, cross, drive, hasR, mask, fade, baseT);
             }
         }
 
         [[nodiscard]] static constexpr int latencySamples() noexcept { return 0; }
         [[nodiscard]] float getMaxDelay() const noexcept { return maxDelay_; }
 
-        // C7: set the output-tap offset (diffuser base-transport comp). The
-        // loop tap stays at d - satLatency_ (loop period exactly d); the OUTPUT
-        // tap (wet) is read at max(kMinLoopDelay, d - satLatency_ - offset),
-        // shorter by the diffuser's base transport so repeats land on the grid.
-        // When offset = 0 (diffuser off), the output tap == the loop tap
-        // (pre-C7 behavior, bit-exact). See ChronosEngine::process for the comp
-        // computation. Clamp: when offset > d - satLatency_ - kMinLoopDelay, the
-        // output tap clamps to kMinLoopDelay and repeats land late by the
-        // remainder — full comp is only possible when delay > baseTransport.
-        void setOutputTapOffset(float samples) noexcept
+    private:
+        // C7c: diffuser enable-toggle state machine (same semantics the
+        // engine-level machine had, but the fade now lives INSIDE the loop:
+        // one variable drives both the tap-stream blend and the loop-tap
+        // offset fade*baseT, which stays comp-exact throughout the fade).
+        enum class DiffuserState { Off, FadingIn, On, FadingOut };
+        static constexpr int   kDiffuserFadeSamples = 480;  // ~10 ms @48 kHz
+        static constexpr float kDiffuserFadeInc =
+            1.0f / static_cast<float>(kDiffuserFadeSamples);
+
+        void diffuserTransition_() noexcept
         {
-            outputTapOffset_ = std::max(0.0f, samples);
+            const bool wantOn = enableDiffuser_;
+            if (wantOn && diffState_ == DiffuserState::Off)
+            {
+                diffuser_.prime();   // no stale audio replays
+                diffState_ = DiffuserState::FadingIn;
+                diffFade_ = 0.0f;
+            }
+            else if (!wantOn && diffState_ == DiffuserState::On)
+                diffState_ = DiffuserState::FadingOut;
+            else if (wantOn && diffState_ == DiffuserState::FadingOut)
+                diffState_ = DiffuserState::FadingIn;    // reverse: rings warm
+            else if (!wantOn && diffState_ == DiffuserState::FadingIn)
+                diffState_ = DiffuserState::FadingOut;   // reverse
         }
 
-    private:
+        // advance the fade one sample, returning the PRE-step weight for this
+        // sample (0 = raw tap, 1 = diffused tap). Transitions to On/Off at
+        // the rails.
+        float fadeStep_() noexcept
+        {
+            const float a = diffFade_;
+            if (diffState_ == DiffuserState::FadingIn)
+            {
+                diffFade_ += kDiffuserFadeInc;
+                if (diffFade_ >= 1.0f)
+                {
+                    diffFade_ = 1.0f;
+                    diffState_ = DiffuserState::On;
+                }
+            }
+            else if (diffState_ == DiffuserState::FadingOut)
+            {
+                diffFade_ -= kDiffuserFadeInc;
+                if (diffFade_ <= 0.0f)
+                {
+                    diffFade_ = 0.0f;
+                    diffState_ = DiffuserState::Off;
+                }
+            }
+            return a;
+        }
+
+        void applyDiffuserParams_(const Params& p) noexcept
+        {
+            diffuser_.setDiffusion(p.diffusion);
+            diffuser_.setSize(p.diffuserSize);
+            diffuser_.setModDepthSamples(p.diffModDepth);
+            diffuser_.setModRateHz(p.diffModRateHz);
+        }
+
         void prepareImpl_(double sampleRate, int maxBlockSize, int maxDelaySamples,
                           Memory::BumpArena* arena) noexcept
         {
@@ -471,11 +523,13 @@ namespace MarsDSP::Delays {
             {
                 ringL_.prepare(minCap, *arena);
                 ringR_.prepare(minCap, *arena);
+                diffuser_.prepare(sampleRate, *arena);
             }
             else
             {
                 ringL_.prepare(minCap);
                 ringR_.prepare(minCap);
+                diffuser_.prepare(sampleRate);
             }
             maxDelay_ = static_cast<float>(
                 ringL_.getCapacity() - Pow2RingBuffer::kTail - 2);
@@ -522,39 +576,39 @@ namespace MarsDSP::Delays {
         }
 
         // the one scalar per-sample implementation. Called by processRef
-        // (the reference twin) and by the Lc < 4 fallback in process. Reads a
-        // tap, runs the recursive chain (damp → DC → cross → saturate →
-        // makeup), writes to the ring, and outputs the raw tap as wet.
-        // Identical op order to the pre process() body.
+        // (the reference twin) and by the Lc < 4 fallback in process. Reads
+        // the loop tap at d - satLatency_ - fade*baseT, passes it through the
+        // in-loop diffuser (blended by the toggle fade), runs the recursive
+        // chain (damp → DC → cross → saturate → makeup), writes to the ring,
+        // and outputs the blended tap stream as wet. Identical op order to
+        // the chunked process() body (the blend stays scalar so FMA
+        // contraction cannot diverge between the two).
         void processSampleScalar_(const float* in, const float* inR,
                                    float* wet, float* wetR,
                                    float d, float g, float cross, float drive,
-                                   bool hasR, int mask) noexcept
+                                   bool hasR, int mask,
+                                   float fade, float baseT) noexcept
         {
             const float makeup = 1.0f / std::max(drive, kMinDriveMakeup);
             const float readDelay =
-                std::max(kMinLoopDelay, d - satLatency_);
+                std::max(kMinLoopDelay, d - satLatency_ - fade * baseT);
 
-            const float tapL = FracDelayTap::read(ringL_, writeIdx_, readDelay);
-            const float tapR = hasR
+            float tapL = FracDelayTap::read(ringL_, writeIdx_, readDelay);
+            float tapR = hasR
                 ? FracDelayTap::read(ringR_, writeIdx_, readDelay)
                 : tapL;
 
-            // C7: output tap (for diffuser base-transport comp). Read at a
-            // shorter delay before the write (same writeIdx_ as the loop tap).
-            // When outputTapOffset_ == 0, outTap == tap PER CHANNEL (pre-C7,
-            // bit-exact): the R fallback must be tapR (the R ring's tap), not
-            // outTapL — falling back to outTapL would output the L tap on the
-            // R channel whenever the chunked path and this helper disagree
-            // (caught by fb_parity at delay=12, stereo, decorrelated input).
-            const float outReadDelay = std::max(kMinLoopDelay,
-                d - satLatency_ - outputTapOffset_);
-            const float outTapL = (outputTapOffset_ > 0.0f)
-                ? FracDelayTap::read(ringL_, writeIdx_, outReadDelay) : tapL;
-            const float outTapR = (outputTapOffset_ > 0.0f)
-                ? (hasR ? FracDelayTap::read(ringR_, writeIdx_, outReadDelay)
-                        : outTapL)
-                : tapR;
+            if (baseT > 0.0f)   // diffuser running: diffuse, then fade-blend
+            {
+                float diffL = tapL;
+                float diffR = tapR;
+                diffuser_.processBlockRef(&diffL, hasR ? &diffR : nullptr, 1);
+                tapL = tapL * (1.0f - fade) + diffL * fade;
+                if (hasR)
+                    tapR = tapR * (1.0f - fade) + diffR * fade;
+                else
+                    tapR = tapL;   // mono: mirror the blended L
+            }
 
             dampL_ += dampG_ * (tapL - dampL_);
             dampR_ += dampG_ * (tapR - dampR_);
@@ -587,8 +641,8 @@ namespace MarsDSP::Delays {
 
             writeIdx_ = (writeIdx_ + 1) & mask;
 
-            *wet = outTapL;   // C7: output the compensated tap, not the loop tap
-            if (hasR) *wetR = outTapR;
+            *wet = tapL;   // the blended (diffused when on) loop-tap stream
+            if (hasR) *wetR = tapR;
         }
 
         Pow2RingBuffer ringL_;
@@ -627,13 +681,16 @@ namespace MarsDSP::Delays {
         // the largest chunk: kMaxChunk + 6 taps ≤ kMaxChunk + kTail.
         alignas(16) std::array<float, static_cast<std::size_t>(kMaxChunk) + Pow2RingBuffer::kTail> tapWinL_{};
         alignas(16) std::array<float, static_cast<std::size_t>(kMaxChunk) + Pow2RingBuffer::kTail> tapWinR_{};
-        // C7: scratch for the settled OUTPUT-tap bulk-read window fallback.
-        alignas(16) std::array<float, static_cast<std::size_t>(kMaxChunk) + Pow2RingBuffer::kTail> outTapWinL_{};
-        alignas(16) std::array<float, static_cast<std::size_t>(kMaxChunk) + Pow2RingBuffer::kTail> outTapWinR_{};
 
-        // C7: output-tap offset (diffuser base-transport comp). 0 = output tap
-        // == loop tap (pre-C7 behavior).
-        float outputTapOffset_ = 0.0f;
+        // C7c: the in-loop diffuser and its enable-toggle fade state. The
+        // diffuser sits between the loop-tap read and the damp/DC/cross/sat
+        // recursion; its output is both the wet stream and the recursion
+        // input. Off (fade settled 0) = bypassed: raw tap, no diffuser work,
+        // pre-C7c bit-exact behavior.
+        Diffusion::Diffuser diffuser_;
+        bool enableDiffuser_ = false;
+        DiffuserState diffState_ = DiffuserState::Off;
+        float diffFade_ = 0.0f;   // 0 = raw tap, 1 = diffused tap
     };
 }
 #endif

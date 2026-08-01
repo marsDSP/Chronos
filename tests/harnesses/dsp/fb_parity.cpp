@@ -35,19 +35,22 @@
 //   delay-automation ramp (sweep delay across blocks → mid-ramp smoother,
 //   crossing chunk boundaries) and a dampHz/crossFeed automation case.
 //
-// C7 output-tap section: setOutputTapOffset(offset) on BOTH instances (the
-// diffuser base-transport comp; the output tap reads the ring at
-// d − satLatency − offset while the loop tap stays at d − satLatency). Cells
-// are chosen to hit every output-tap path against processRef:
-//   * offset 37.5 at delay 480/4800: settled bulk read AND the per-sample
-//     walk (automation), Lc participates via dMinOut;
-//   * offset 37.5 at delay 12: dMinOut clamps Lc < 4 → scalar fallback WITH
-//     offset > 0 (per-sample FracDelayTap::read output tap);
-//   * offset 100 at delay 48: output tap clamps at kMinLoopDelay (repeats
-//     land late by the remainder — documented C7 clamp semantics);
-//   * offset 2930 at delay 4800: realistic diffuser base transport (size 0).
-// satOrder = 0 stays BIT-EXACT (the bulk read uses the identical mul +
-// horizontal-sum op order as FracDelayTap::read, as in the loop-tap path).
+// C7c in-loop diffuser section: the diffuser is enabled via Params on BOTH
+// instances (the loop tap reads at d − satLatency − fade·baseTransport, the
+// tap stream passes through the diffuser before the recursion, and the
+// toggle fade blends raw/diffused). Cells are chosen to hit every
+// diffuser-path difference against processRef:
+//   * diffusion {0.5, 1.0} × size {0.5, 0.0} at delay 4800: settled bulk
+//     read + the SIMD diffuser kernel (processBlock) vs the scalar chain_
+//     (processBlockRef) — these differ at last-ulp level (FMA contraction),
+//     so diffuser-on cells ALWAYS use the tolerance gate, even at satOrder 0
+//     (bit-exact is only required for diffuser-off cells);
+//   * delay 480 with size 0.5 (delay < baseTransport): the loop tap clamps
+//     at kMinLoopDelay (repeats land late by the remainder — documented C7c
+//     clamp semantics), Lc < 4 → scalar fallback WITH the diffuser live;
+//   * enable-toggle cells: resetParams(diffuser off) then setParams
+//     on→off→on mid-run — parity through FadingIn/FadingOut (the fade
+//     forces the per-sample non-settled tap walk).
 //
 // Conventions (matching latency_null_check / chain_parity): plain main(), exit
 // code, printf, always-live CHECK/FAIL. Links SharedCode only; no JUCE.
@@ -95,7 +98,9 @@ struct Cfg
     int   satOrder;
     int   block;
     bool  stereo;
-    float outOffset = 0.0f;   // C7: output-tap offset (0 = pre-C7 behavior)
+    bool  diffOn    = false;  // C7c: in-loop diffuser enabled
+    float diffusion = 0.7f;   // allpass coefficient 0..0.92
+    float diffSize  = 0.5f;   // section length scale
 };
 
 // Per-1024-sample RMS of a buffer, in dB relative to a reference RMS.
@@ -121,10 +126,13 @@ void runOne(const Cfg& c, bool automateDelay, bool automateDampCross)
     p.dampHz       = kDampHz;
     p.loopDrive    = kLoopDrive;
     p.satOrder     = c.satOrder;
+    p.enableDiffuser = c.diffOn;
+    p.diffusion      = c.diffusion;
+    p.diffuserSize   = c.diffSize;
+    p.diffModDepth   = 0.0f;   // deterministic (no LFO walk across instances)
+    p.diffModRateHz  = 0.5f;
     fast.resetParams(p);
-    ref.resetParams(p);
-    fast.setOutputTapOffset(c.outOffset);   // C7: same offset on both, so the
-    ref.setOutputTapOffset(c.outOffset);    // comparison isolates structure
+    ref.resetParams(p);   // resetParams snaps: diffuser state On/Off, no fade
 
     const bool hasR = c.stereo;
     std::vector<float> inL(static_cast<std::size_t>(kTotal));
@@ -175,7 +183,19 @@ void runOne(const Cfg& c, bool automateDelay, bool automateDampCross)
     // ── Compare ──
     const int D = c.delay;
     const int twoD = std::min(2 * D, kTotal);
-    const bool bitExact = (c.satOrder == 0);
+    // satOrder = 0 is bit-exact ONLY with the diffuser off. With it on, the
+    // chunked path's SIMD diffuser kernel (processBlock) and processRef's
+    // scalar chain_ differ at last-ulp level (FMA contraction in chain_),
+    // so diffuser-on cells always take the tolerance gate.
+    const bool bitExact = (c.satOrder == 0) && !c.diffOn;
+    // Diffuser-on cells use a COMBINED gate (abs <= 1e-6 OR rel <= 1e-3):
+    // the two diffuser kernels' per-op ulp differences compound through BOTH
+    // the diffuser's own IIR recirculation (8 allpass sections) and the fb
+    // loop, so a pure relative gate explodes on near-zero tail samples
+    // (measured: 2.3e-4 rel on an 8e-5 sample whose ABSOLUTE difference is
+    // 1.9e-9 — ~-174 dB below the signal, bounded kernel noise). The ±0.1 dB
+    // energy-envelope gate below remains the systematic-divergence check.
+    const bool combinedGate = c.diffOn;
 
     if (bitExact)
     {
@@ -183,11 +203,11 @@ void runOne(const Cfg& c, bool automateDelay, bool automateDampCross)
         for (int i = 0; i < kTotal; ++i)
         {
             const auto u = static_cast<std::size_t>(i);
-            if (fL[u] != rL[u]) { ok = false; FAIL("BIT-EXACT delay=%d fb=%.2f cross=%.2f sat=%d blk=%d ch=%d off=%.1f i=%d L: %g != %g",
-                     c.delay, c.feedback, c.cross, c.satOrder, c.block, c.stereo?2:1, c.outOffset, i,
+            if (fL[u] != rL[u]) { ok = false; FAIL("BIT-EXACT delay=%d fb=%.2f cross=%.2f sat=%d blk=%d ch=%d i=%d L: %g != %g",
+                     c.delay, c.feedback, c.cross, c.satOrder, c.block, c.stereo?2:1, i,
                      static_cast<double>(fL[u]), static_cast<double>(rL[u])); }
-            if (hasR && fR[u] != rR[u]) { ok = false; FAIL("BIT-EXACT delay=%d fb=%.2f cross=%.2f sat=%d blk=%d ch=%d off=%.1f i=%d R: %g != %g",
-                     c.delay, c.feedback, c.cross, c.satOrder, c.block, c.stereo?2:1, c.outOffset, i,
+            if (hasR && fR[u] != rR[u]) { ok = false; FAIL("BIT-EXACT delay=%d fb=%.2f cross=%.2f sat=%d blk=%d ch=%d i=%d R: %g != %g",
+                     c.delay, c.feedback, c.cross, c.satOrder, c.block, c.stereo?2:1, i,
                      static_cast<double>(fR[u]), static_cast<double>(rR[u])); }
         }
         if (ok) ++g_bitExactOk;
@@ -199,20 +219,28 @@ void runOne(const Cfg& c, bool automateDelay, bool automateDampCross)
         for (int i = 0; i < twoD; ++i)
         {
             const auto u = static_cast<std::size_t>(i);
+            const float absL = std::fabs(fL[u] - rL[u]);
             const float denom = std::max(std::fabs(rL[u]), 1e-6f);
-            const float rel = std::fabs(fL[u] - rL[u]) / denom;
+            const float rel = absL / denom;
             g_worstRel = std::max(g_worstRel, static_cast<double>(rel));
-            if (rel > 1e-5f) { tolOk = false; FAIL("TOL delay=%d fb=%.2f cross=%.2f sat=%d blk=%d i=%d L: rel=%.3e > 1e-5 (%g vs %g)",
+            const bool okL = combinedGate ? (absL <= 1e-6f || rel <= 1e-3f)
+                                          : (rel <= 1e-5f);
+            if (!okL) { tolOk = false; FAIL("TOL delay=%d fb=%.2f cross=%.2f sat=%d blk=%d i=%d L: abs=%.3e rel=%.3e (%g vs %g)",
                      c.delay, c.feedback, c.cross, c.satOrder, c.block, i,
-                     static_cast<double>(rel), static_cast<double>(fL[u]), static_cast<double>(rL[u])); }
+                     static_cast<double>(absL), static_cast<double>(rel),
+                     static_cast<double>(fL[u]), static_cast<double>(rL[u])); }
             if (hasR)
             {
+                const float absR = std::fabs(fR[u] - rR[u]);
                 const float denomR = std::max(std::fabs(rR[u]), 1e-6f);
-                const float relR = std::fabs(fR[u] - rR[u]) / denomR;
+                const float relR = absR / denomR;
                 g_worstRel = std::max(g_worstRel, static_cast<double>(relR));
-                if (relR > 1e-5f) { tolOk = false; FAIL("TOL delay=%d fb=%.2f cross=%.2f sat=%d blk=%d i=%d R: rel=%.3e > 1e-5 (%g vs %g)",
+                const bool okR = combinedGate ? (absR <= 1e-6f || relR <= 1e-3f)
+                                              : (relR <= 1e-5f);
+                if (!okR) { tolOk = false; FAIL("TOL delay=%d fb=%.2f cross=%.2f sat=%d blk=%d i=%d R: abs=%.3e rel=%.3e (%g vs %g)",
                          c.delay, c.feedback, c.cross, c.satOrder, c.block, i,
-                         static_cast<double>(relR), static_cast<double>(fR[u]), static_cast<double>(rR[u])); }
+                         static_cast<double>(absR), static_cast<double>(relR),
+                         static_cast<double>(fR[u]), static_cast<double>(rR[u])); }
             }
         }
         if (tolOk) ++g_tolOk;
@@ -286,48 +314,111 @@ int main()
     for (int blk : { 64, 256, 512 })
     for (bool stereo : stereos)
     {
-        runOne({ 480, 0.95f, 0.0f, sat, blk, stereo, 0.0f }, false, true);
+        runOne({ 480, 0.95f, 0.0f, sat, blk, stereo, false }, false, true);
         ++configs;
     }
 
-    // C7 output-tap offset cells (see header). sat 0 bit-exact + sat 2 tol.
-    g_section = "output-tap";
+    // C7c in-loop diffuser cells (see header). All tolerance-gated (the
+    // diffuser kernels differ at last-ulp level by construction).
+    g_section = "in-loop-diffuser";
     for (int sat : { 0, 2 })
     {
-        // settled bulk read + moving walk, Lc via dMinOut.
+        // settled bulk read + SIMD diffuser kernel, both sizes, both coeffs.
         for (float fbk : { 0.5f, 0.95f })
         for (int blk : { 17, 64, 256 })
         for (bool stereo : stereos)
+        for (float sz : { 0.5f, 0.0f })
+        for (float df : { 0.5f, 1.0f })
         {
-            runOne({ 480, fbk, 0.37f, sat, blk, stereo, 37.5f }, false, false);
+            runOne({ 4800, fbk, 0.37f, sat, blk, stereo, true, df, sz }, false, false);
             ++configs;
         }
-        // scalar fallback WITH offset (dMinOut clamps Lc < 4).
+        // clamp region: delay < baseTransport (loop tap at kMinLoopDelay,
+        // Lc < 4 → scalar fallback WITH the diffuser live).
         for (int blk : { 17, 64 })
         for (bool stereo : stereos)
         {
-            runOne({ 12, 0.5f, 0.37f, sat, blk, stereo, 37.5f }, false, false);
+            runOne({ 480, 0.5f, 0.37f, sat, blk, stereo, true, 1.0f, 0.5f }, false, false);
             ++configs;
         }
-        // output tap clamped at kMinLoopDelay (offset > delay − margin).
-        for (int blk : { 17, 64 })
-        for (bool stereo : stereos)
-        {
-            runOne({ 48, 0.5f, 0.37f, sat, blk, stereo, 100.0f }, false, false);
-            ++configs;
-        }
-        // realistic diffuser base transport (size 0 → ~2930 samples).
+        // delay automation with the diffuser live (moving walk, non-settled).
         for (int blk : { 64, 256 })
         for (bool stereo : stereos)
         {
-            runOne({ 4800, 0.95f, 0.37f, sat, blk, stereo, 2930.0f }, false, false);
+            runOne({ 4800, 0.95f, 0.37f, sat, blk, stereo, true, 0.7f, 0.5f }, true, false);
             ++configs;
         }
-        // delay automation with a live output-tap offset (moving walk).
+        // enable-toggle mid-run: FadingIn/FadingOut parity (the fade forces
+        // the per-sample non-settled walk and the raw/diffused blend).
         for (int blk : { 64, 256 })
         for (bool stereo : stereos)
         {
-            runOne({ 480, 0.95f, 0.37f, sat, blk, stereo, 37.5f }, true, false);
+            g_section = "in-loop-diffuser-toggle";
+            FeedbackDelay fast, ref;
+            fast.prepare(kFs, blk, kMaxDelay);
+            ref.prepare(kFs, blk, kMaxDelay);
+
+            FeedbackDelay::Params p;
+            p.delaySamples = 4800.0f;
+            p.feedback     = 0.95f;
+            p.crossFeed    = 0.37f;
+            p.dampHz       = kDampHz;
+            p.loopDrive    = kLoopDrive;
+            p.satOrder     = sat;
+            p.enableDiffuser = false;
+            p.diffusion      = 0.85f;
+            p.diffuserSize   = 0.5f;
+            p.diffModDepth   = 0.0f;
+            fast.resetParams(p);
+            ref.resetParams(p);
+
+            const bool hasR = stereo;
+            std::vector<float> inL(static_cast<std::size_t>(kTotal));
+            std::vector<float> inR(static_cast<std::size_t>(kTotal));
+            for (int i = 0; i < kTotal; ++i)
+            {
+                const auto u = static_cast<std::size_t>(i);
+                inL[u] = 0.5f * static_cast<float>(std::sin(2.0 * kPi * 440.0 * static_cast<double>(i) / kFs));
+                inR[u] = 0.5f * static_cast<float>(std::sin(2.0 * kPi * 330.0 * static_cast<double>(i) / kFs));
+            }
+            std::vector<float> fL(static_cast<std::size_t>(kTotal)), fR(static_cast<std::size_t>(kTotal));
+            std::vector<float> rL(static_cast<std::size_t>(kTotal)), rR(static_cast<std::size_t>(kTotal));
+            for (int off = 0; off < kTotal; off += blk)
+            {
+                const int n = std::min(blk, kTotal - off);
+                // toggle at 1/4 (on), 2/4 (off), 3/4 (on) of the run.
+                if (off == kTotal / 4 || off == 3 * kTotal / 4) { p.enableDiffuser = true;  fast.setParams(p); ref.setParams(p); }
+                if (off == kTotal / 2)                          { p.enableDiffuser = false; fast.setParams(p); ref.setParams(p); }
+                fast.process(inL.data() + off, hasR ? inR.data() + off : nullptr,
+                             fL.data() + off, hasR ? fR.data() + off : nullptr, n);
+                ref.processRef(inL.data() + off, hasR ? inR.data() + off : nullptr,
+                               rL.data() + off, hasR ? rR.data() + off : nullptr, n);
+            }
+            for (int i = 0; i < kTotal; ++i)
+            {
+                const auto u = static_cast<std::size_t>(i);
+                const float absL = std::fabs(fL[u] - rL[u]);
+                const float denom = std::max(std::fabs(rL[u]), 1e-6f);
+                const float rel = absL / denom;
+                g_worstRel = std::max(g_worstRel, static_cast<double>(rel));
+                if (absL > 1e-6f && rel > 1e-3f)
+                    FAIL("TOGGLE-TOL sat=%d blk=%d ch=%d i=%d L: abs=%.3e rel=%.3e (%g vs %g)",
+                         sat, blk, stereo?2:1, i, static_cast<double>(absL),
+                         static_cast<double>(rel), static_cast<double>(fL[u]),
+                         static_cast<double>(rL[u]));
+                if (hasR)
+                {
+                    const float absR = std::fabs(fR[u] - rR[u]);
+                    const float denomR = std::max(std::fabs(rR[u]), 1e-6f);
+                    const float relR = absR / denomR;
+                    g_worstRel = std::max(g_worstRel, static_cast<double>(relR));
+                    if (absR > 1e-6f && relR > 1e-3f)
+                        FAIL("TOGGLE-TOL sat=%d blk=%d ch=%d i=%d R: abs=%.3e rel=%.3e",
+                             sat, blk, stereo?2:1, i, static_cast<double>(absR),
+                             static_cast<double>(relR));
+                }
+            }
+            ++g_tolOk;
             ++configs;
         }
     }

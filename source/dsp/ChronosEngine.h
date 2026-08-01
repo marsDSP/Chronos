@@ -47,6 +47,12 @@ namespace MarsDSP {
             float crossFeed      = 0.0f;   // 0 straight, 1 full ping-pong
             float loopDrive      = 1.0f;   // linear gain into the loop tanh
             int   loopSatOrder   = 2;      // 0 hard, 1 ADAA1, 2 ADAA2
+            // C7c: diffuser placement is topology-dependent: with feedback > 0
+            // it lives INSIDE the FeedbackDelay loop (repeat n = n passes,
+            // progressive wash, loop tap compensated by the exact energy
+            // centroid baseTransport); with feedback == 0 it is a one-pass
+            // post-stage on the SimdDelayLine tap (comp = same baseTransport,
+            // so a single repeat sounds identical across the boundary).
             float diffusion      = 0.7f;   // 0..1 -> allpass coeff 0..0.92
             float diffuserSize   = 0.5f;   // 0..1 (0 = full path lengths)
             float diffModDepth   = 16.0f;  // samples, 0..62
@@ -81,9 +87,12 @@ namespace MarsDSP {
             // (padding unread).
             const int maxDelaySamp =
                 Delays::SimdDelayLine::maxDelaySamplesFor(sampleRate, 5000.0f);
+            // FeedbackDelay::ringStorageFloats includes its in-loop diffuser's
+            // 16 rings; the engine's own post diffuser (non-feedback path) is
+            // the second Diffuser term.
             const std::size_t ringFloats =
                   Delays::SimdDelayLine::ringStorageFloats(sampleRate, wetBufCapacity_, 5000.0f)
-                + Delays::FeedbackDelay::ringStorageFloats(wetBufCapacity_, maxDelaySamp)
+                + Delays::FeedbackDelay::ringStorageFloats(sampleRate, wetBufCapacity_, maxDelaySamp)
                 + Diffusion::Diffuser::ringStorageFloats(sampleRate);
             arena_.reset(static_cast<std::size_t>(kNumScratch) * strideFloats * sizeof(float)
                          + ringFloats * sizeof(float));
@@ -213,13 +222,11 @@ namespace MarsDSP {
 
                 // ── 1. Wet generation (block-rate) ─────────────────────────
 
-                const float comp = enableDiffuser_
-                    ? diffuser_.transportSamples()
-                    : 0.0f;
-
                 if (feedback_ > 0.0f)
                 {
-                    fbDelay_.setOutputTapOffset(comp);
+                    // C7c: the diffuser lives INSIDE the loop (FeedbackDelay
+                    // owns it, including the tap compensation and the toggle
+                    // fade). Nothing to do at this level.
                     fbDelay_.process(data0 + offset,
                                      hasR ? data1 + offset : nullptr,
                                      wetBufL_.data(),
@@ -228,16 +235,23 @@ namespace MarsDSP {
                 }
                 else
                 {
+                    // Non-feedback path: one-pass post diffuser on the
+                    // SimdDelayLine tap, compensated by the exact energy
+                    // centroid (baseTransport — g-invariant), so a single
+                    // repeat is centered on the grid exactly like repeat 1
+                    // of the feedback path.
+                    const float comp = enableDiffuser_
+                        ? diffuser_.transportSamples()
+                        : 0.0f;
                     const float compDelay = std::max(0.0f, delaySamples_ - comp);
                     delayLine_.process(data0 + offset,
                                        hasR ? data1 + offset : nullptr,
                                        wetBufL_.data(),
                                        hasR ? wetBufR_.data() : nullptr,
                                        chunk, compDelay, compDelay);
+
+                    stepDiffuser_(chunk, hasR);
                 }
-
-
-                stepDiffuser_(chunk, hasR);
 
                 // bits is block-rate int, no smoother. lsb is computed once per block
                 const float blockLsb = std::ldexp(1.0f, 1 - smoothedBits_);
@@ -348,7 +362,6 @@ namespace MarsDSP {
                     const int jFull = chunk & ~3;
                     for (int s = 0; s + 4 <= chunk; s += 4)
                     {
-                        const auto u = static_cast<std::size_t>(s);
                         const M128 vTheta = MM(loadu_ps)(thetaRamp_.data() + s);
                         const M128 vCos = mmCos(vTheta);
                         const M128 vSin = mmSin(vTheta);
@@ -393,7 +406,6 @@ namespace MarsDSP {
                 const int jFull = chunk & ~3;
                 for (int s = 0; s + 4 <= chunk; s += 4)
                 {
-                    const auto u = static_cast<std::size_t>(s);
                     // 9a folded: 4 blend samples per channel (sample order).
                     alignas(16) float bl[4], br[4];
                     for (int t = 0; t < 4; ++t)
@@ -523,6 +535,11 @@ namespace MarsDSP {
             fp.crossFeed    = p.crossFeed;
             fp.loopDrive    = p.loopDrive;
             fp.satOrder     = p.loopSatOrder;
+            fp.enableDiffuser = p.enableDiffuser;
+            fp.diffusion      = p.diffusion;
+            fp.diffuserSize   = p.diffuserSize;
+            fp.diffModDepth   = p.diffModDepth;
+            fp.diffModRateHz  = p.diffModRateHz;
             if (snap) fbDelay_.resetParams(fp);
             else      fbDelay_.setParams(fp);
         }
