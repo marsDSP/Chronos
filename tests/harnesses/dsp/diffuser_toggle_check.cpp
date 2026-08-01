@@ -139,15 +139,20 @@ AmpPair runScenario(bool diffOn1, bool diffOn2, bool diffOn3,
     std::vector<float> bufR(static_cast<std::size_t>(kPhase * 3));
     std::vector<float> outL(static_cast<std::size_t>(kPhase * 3));
 
+    // NOTE: kPhase (48000) is not a multiple of kBlock (256) — 48000/256 =
+    // 187.5. The last block of each phase must process only the remaining
+    // samples (min(kBlock, kPhase - off)), not a full kBlock, or it reads/writes
+    // 128 samples past the phase boundary (and past bufL/outL in phase 3).
     const double p1Freq = phase1IsA ? fA : fB;
     fillSine(bufL, p1Freq, 0, kPhase);
     fillSine(bufR, p1Freq, 0, kPhase);
     for (int off = 0; off < kPhase; off += kBlock)
     {
+        const int n = std::min(kBlock, kPhase - off);
         float* io[2] = { bufL.data() + off, bufR.data() + off };
-        eng.process(io, 2, kBlock);
+        eng.process(io, 2, n);
         std::memcpy(outL.data() + off, bufL.data() + off,
-                    static_cast<std::size_t>(kBlock) * sizeof(float));
+                    static_cast<std::size_t>(n) * sizeof(float));
     }
 
     eng.setParams(makeParams(diffOn2));
@@ -155,11 +160,12 @@ AmpPair runScenario(bool diffOn1, bool diffOn2, bool diffOn3,
     fillSine(bufR, fB, kPhase, kPhase);
     for (int off = 0; off < kPhase; off += kBlock)
     {
+        const int n = std::min(kBlock, kPhase - off);
         const int o = kPhase + off;
         float* io[2] = { bufL.data() + o, bufR.data() + o };
-        eng.process(io, 2, kBlock);
+        eng.process(io, 2, n);
         std::memcpy(outL.data() + o, bufL.data() + o,
-                    static_cast<std::size_t>(kBlock) * sizeof(float));
+                    static_cast<std::size_t>(n) * sizeof(float));
     }
 
     eng.setParams(makeParams(diffOn3));
@@ -167,11 +173,12 @@ AmpPair runScenario(bool diffOn1, bool diffOn2, bool diffOn3,
     fillSine(bufR, fB, 2 * kPhase, kPhase);
     for (int off = 0; off < kPhase; off += kBlock)
     {
+        const int n = std::min(kBlock, kPhase - off);
         const int o = 2 * kPhase + off;
         float* io[2] = { bufL.data() + o, bufR.data() + o };
-        eng.process(io, 2, kBlock);
+        eng.process(io, 2, n);
         std::memcpy(outL.data() + o, bufL.data() + o,
-                    static_cast<std::size_t>(kBlock) * sizeof(float));
+                    static_cast<std::size_t>(n) * sizeof(float));
     }
 
     const int measStart = 3 * kPhase - kMeasN;
@@ -186,9 +193,17 @@ void testStaleReplay()
     constexpr double fA = 220.0;
     constexpr double fB = 440.0;
 
-    // Baseline: diffuser always on, NO stale tone A (phase 1 feeds tone B).
-    // This measures the diffuser's inherent 220 Hz response to a 440 Hz input.
-    const AmpPair base = runScenario(true, true, true, fA, fB, /*phase1IsA=*/false);
+    // Baseline: diffuser OFF in phases 1–2, ON in phase 3, tone B throughout
+    // (NO stale tone A anywhere). This has the SAME startup transient as the
+    // toggle (prime() + FadingIn at the phase-3 enable) but no stale tone A in
+    // the rings. The diffuser's allpass impulse response to the suddenly-applied
+    // tone B produces a broadband startup transient (~−66 dBc at 220 Hz) that
+    // decays over the ring depth (~16 k samples at size 0.5); by the tail of
+    // phase 3 it is steady-state, but the measurement window still catches the
+    // transient tail. An always-on baseline (ON/ON/ON) has NO startup transient
+    // (−189 dBc) and is the WRONG comparison — it would make the startup
+    // transient look like stale replay. The toggle must not exceed THIS baseline.
+    const AmpPair base = runScenario(false, false, true, fA, fB, /*phase1IsA=*/false);
     if (base.ampB <= 1e-7)
         FAIL("baseline tone B %.3e too low (chain assembled wrong)", base.ampB);
 

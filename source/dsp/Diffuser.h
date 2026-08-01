@@ -167,6 +167,52 @@ namespace MarsDSP::Diffusion {
 
         [[nodiscard]] static constexpr int latencySamples() noexcept { return 0; }
 
+        // base transport — the total delay the 8-section cascade carries
+        // at a given size, EXCLUDING modulation (modulation is a per-sample
+        // perturbation around this base, not part of the transport). This is
+        // the quantity C7 absorbs into the tap position so repeats stay on the
+        // tempo grid. The per-section arithmetic is token-identical to the
+        // settled/unmodulated `eff` in chain_ (m==0 branch) and chunk_ (fast
+        // path): nearbyintf then clamp to [kMinDelay, len]. At diffusion = 0
+        // (g = 0) each section is a pure D-sample delay, so the base transport
+        // is the exact series delay; C7's compensation is sample-exact there.
+        //
+        // L and R banks differ (~3.8 ms skew at size 0, 48 kHz) because the
+        // prime-snapped path lengths differ — intentional decorrelation.
+        // baseTransportSamples returns the MEAN of L and R, which preserves the
+        // skew (mean-compensation moves the image center, not the L-R offset).
+        [[nodiscard]] float baseTransportSamples(float size01) const noexcept
+        {
+            const auto lr = baseTransportSamplesLR(size01);
+            return 0.5f * (lr[0] + lr[1]);
+        }
+
+        // Per-bank {L, R} base transport. Each is Σᵢ effᵢ(size) over the 8
+        // sections of that bank.
+        [[nodiscard]] std::array<float, 2> baseTransportSamplesLR(float size01) const noexcept
+        {
+            const float s = std::clamp(size01, 0.0f, 1.0f);
+            auto sumBank = [&](const Bank& bank) noexcept -> float
+            {
+                float sum = 0.0f;
+                for (int i = 0; i < kNumSections; ++i)
+                {
+                    const float lenF = static_cast<float>(bank[static_cast<std::size_t>(i)].len);
+                    float eff = lenF * (1.0f - kMaxSizeCut * s);
+                    eff = std::nearbyintf(eff);
+                    eff = std::clamp(eff, kMinDelay, lenF);
+                    sum += eff;
+                }
+                return sum;
+            };
+            return { sumBank(secL_), sumBank(secR_) };
+        }
+
+        // section length accessors (for harness recompute of base
+        // transport). Returns the prime-snapped length of section i.
+        [[nodiscard]] int sectionLenL(int i) const noexcept { return secL_[static_cast<std::size_t>(i)].len; }
+        [[nodiscard]] int sectionLenR(int i) const noexcept { return secR_[static_cast<std::size_t>(i)].len; }
+
     private:
         static constexpr double kSpeedOfSoundMps = 343.0;
         static constexpr int    kModHeadroom     = 64;

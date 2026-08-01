@@ -126,12 +126,106 @@ void runOne(const Cfg& c)
     }
 }
 
+// ── C6: base-transport unit check ─────────────────────────────────────────
+// Verify baseTransportSamples / baseTransportSamplesLR match an inline
+// recomputation of the same per-section eff expression, and sanity-check the
+// measured transport table (size 0 ≈ 611 ms, size 1 → 8×kMinDelay = 256).
+void testBaseTransport()
+{
+    g_section = "base-transport";
+    MarsDSP::Diffusion::Diffuser d;
+    d.prepare(kFs);   // primes the section lengths (prime-snapped at 48 kHz)
+
+    const float kMaxSizeCut = MarsDSP::Diffusion::Diffuser::kMaxSizeCut;
+    const float kMinDelayF  = MarsDSP::Diffusion::Diffuser::kMinDelay;
+    const int   kNum        = MarsDSP::Diffusion::Diffuser::kNumSections;
+
+    const float sizes[] = { 0.0f, 0.25f, 0.5f, 0.75f, 0.9f, 1.0f };
+    for (float sz : sizes)
+    {
+        const auto lr = d.baseTransportSamplesLR(sz);
+        const float mean = d.baseTransportSamples(sz);
+
+        // Independent recompute via the same per-section expression, using the
+        // public section-length getters. This verifies baseTransportSamplesLR
+        // uses the token-identical arithmetic to chunk_/chain_ (unmodulated).
+        const float s = std::clamp(sz, 0.0f, 1.0f);
+        float refL = 0.0f, refR = 0.0f;
+        for (int i = 0; i < kNum; ++i)
+        {
+            const float lenFL = static_cast<float>(d.sectionLenL(i));
+            float effL = lenFL * (1.0f - kMaxSizeCut * s);
+            effL = std::nearbyintf(effL);
+            effL = std::clamp(effL, kMinDelayF, lenFL);
+            refL += effL;
+
+            const float lenFR = static_cast<float>(d.sectionLenR(i));
+            float effR = lenFR * (1.0f - kMaxSizeCut * s);
+            effR = std::nearbyintf(effR);
+            effR = std::clamp(effR, kMinDelayF, lenFR);
+            refR += effR;
+        }
+        if (std::fabs(lr[0] - refL) > 1e-5f || std::fabs(lr[1] - refR) > 1e-5f)
+            FAIL("size=%.2f L=%.3f vs ref %.3f, R=%.3f vs ref %.3f",
+                 (double)sz, (double)lr[0], (double)refL, (double)lr[1], (double)refR);
+        if (std::fabs(mean - 0.5f * (lr[0] + lr[1])) > 1e-5f)
+            FAIL("size=%.2f mean=%.3f but 0.5*(L+R)=%.3f",
+                 (double)sz, (double)mean, (double)(0.5f * (lr[0] + lr[1])));
+
+        std::printf("    size=%.2f  L=%.1f (%.1f ms)  R=%.1f (%.1f ms)  skew=%.2f ms  mean=%.1f\n",
+                    (double)sz,
+                    (double)lr[0], static_cast<double>(lr[0]) / kFs * 1000.0,
+                    (double)lr[1], static_cast<double>(lr[1]) / kFs * 1000.0,
+                    std::fabs(static_cast<double>(lr[0] - lr[1])) / kFs * 1000.0,
+                    (double)mean);
+    }
+
+    // Sanity: size 0 transport ≈ 611 ms (L) / 615 ms (R) at 48 kHz (the plan's
+    // measured ΣL = 29326, ΣR = 29508 — prime-snapped, so within a few samples).
+    {
+        const auto lr0 = d.baseTransportSamplesLR(0.0f);
+        CHECK(lr0[0] > 28000.0f);   // ~583 ms lower bound (prime snap slack)
+        CHECK(lr0[1] > 28000.0f);
+        std::printf("    size=0 sanity: L=%.0f R=%.0f (both > 28000): PASS\n",
+                    (double)lr0[0], (double)lr0[1]);
+    }
+
+    // Sanity: size 1 → eff = len*(1-0.9*1) = len*0.1 per section. At 48 kHz
+    // all section lengths are > 320, so len*0.1 > kMinDelay=32 and no section
+    // clamps to the minimum — the transport is ~10% of size=0, not 8×kMinDelay.
+    // The recompute loop above already verified the exact value; monotonicity
+    // (below) verifies it is the minimum across the grid.
+    {
+        const auto lr0 = d.baseTransportSamplesLR(0.0f);
+        const auto lr1 = d.baseTransportSamplesLR(1.0f);
+        CHECK(lr1[0] < lr0[0]);   // size=1 is the shortest transport
+        CHECK(lr1[1] < lr0[1]);
+        std::printf("    size=1 sanity: L=%.0f R=%.0f (both < size=0): PASS\n",
+                    (double)lr1[0], (double)lr1[1]);
+    }
+
+    // Monotonicity: transport(size) is non-increasing (size shortens delays).
+    float prev = d.baseTransportSamples(0.0f);
+    for (float sz : sizes)
+    {
+        const float cur = d.baseTransportSamples(sz);
+        if (cur > prev + 1e-4f)
+            FAIL("non-monotonic at size=%.2f: cur=%.1f > prev=%.1f", (double)sz, (double)cur, (double)prev);
+        prev = cur;
+    }
+    std::printf("    monotonicity (transport non-increasing in size): PASS\n");
+    std::printf("base-transport unit check: PASS\n");
+}
+
 } // namespace
 
 int main()
 {
     std::printf("=== Chronos diffuser_parity (section-major SIMD vs sample-major ref) ===\n");
     std::printf("fs=%.0f  tol=%.0e\n\n", kFs, (double)kTol);
+
+    testBaseTransport();
+    std::printf("\n");
 
     const int   blockSizes[] = { 1, 2, 3, 7, 15, 16, 17, 31, 32, 33, 64, 100, 256 };
     const float diffs[]      = { 0.0f, 0.3f, 0.7f, 0.92f };
