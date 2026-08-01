@@ -1,0 +1,9 @@
+{
+  "provisional": true,
+  "records": [
+    {"name": "std::tan", "config": "", "ns_per_sample": 3.44117},
+    {"name": "mmTanScalar", "config": "", "ns_per_sample": 1.13623},
+    {"name": "mmTan(M128)", "config": "", "ns_per_sample": 0.240846},
+    {"name": "SimdSVF", "config": "", "ns_per_sample": 14.0352}
+  ]
+}

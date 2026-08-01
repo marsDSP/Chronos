@@ -28,10 +28,13 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 #include <numbers>
+#include <string>
 #include <vector>
 
+#include "bench_util.h"
 #include "dsp/StateVariable.h"            // mmTanScalar (anon namespace; identical to SVF's path)
 #include "math/Trigonometry.h"  // mmTan(M128), mmTan(float)
 
@@ -148,8 +151,18 @@ AccResult accuracySweep(std::size_t N)
 
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
+    std::string jsonPath;
+    bool provisional = false;
+    for (int i = 1; i < argc; ++i)
+    {
+        if (std::strcmp(argv[i], "--json") == 0 && i + 1 < argc) jsonPath = argv[++i];
+        else if (std::strcmp(argv[i], "--provisional") == 0) provisional = true;
+    }
+
+    bench::setFtzDaz();
+
     constexpr std::size_t tableN = 4096;
     constexpr std::size_t groups = 1024;
     constexpr std::size_t mask   = tableN - 1;
@@ -281,11 +294,20 @@ int main()
 
     const double nsNewSVF = benchNsPerOp(runNewSVF, kSvfSamples, reps, sink);
 
+    std::vector<bench::Record> records;
+    records.push_back({"std::tan",     "", nsStdTan});
+    records.push_back({"mmTanScalar",  "", nsScalar});
+    records.push_back({"mmTan(M128)",  "", nsM128});
+    records.push_back({"SimdSVF",      "", nsNewSVF});
+
     std::printf("[svf perf] ns/sample, stereo HPF+LPF wet path (min of %zu reps):\n", reps);
     std::printf("       SimdSVF (block-ramp, M128 float32) : %7.3f ns/sample  (info: ~6.3 on arm64)\n\n",
                 nsNewSVF);
 
     std::printf("(sink=%f)\n", sink);
+
+    if (!jsonPath.empty())
+        bench::writeJson(jsonPath, records, provisional);
 
     const bool ok = accOk && tanPerfOk;
     std::printf("=== %s ===\n", ok ? "NO REGRESSION" : "REGRESSION DETECTED");

@@ -81,6 +81,8 @@
 #include <string>
 #include <vector>
 
+#include "bench_util.h"
+
 namespace {
 
 constexpr double kFs        = 48000.0;
@@ -212,17 +214,24 @@ bool warmup(Diffuser& d, const std::vector<float>& inL,
 
 int main(int argc, char** argv)
 {
-    std::string csvPath;
+    std::string csvPath, jsonPath;
+    bool provisional = false;
     for (int i = 1; i < argc; ++i)
     {
         if (std::strcmp(argv[i], "--csv") == 0 && i + 1 < argc)
             csvPath = argv[++i];
+        else if (std::strcmp(argv[i], "--json") == 0 && i + 1 < argc)
+            jsonPath = argv[++i];
+        else if (std::strcmp(argv[i], "--provisional") == 0)
+            provisional = true;
         else
         {
-            std::fprintf(stderr, "usage: diffuser_bench [--csv <path>]\n");
+            std::fprintf(stderr, "usage: diffuser_bench [--csv <path>] [--json <path>] [--provisional]\n");
             return 2;
         }
     }
+
+    bench::setFtzDaz();
 
     // Pristine input: 0.5-amplitude sine pair, denormal-free.
     std::vector<float> inL(static_cast<std::size_t>(kTotal));
@@ -252,6 +261,7 @@ int main(int argc, char** argv)
 
     std::string csv;
     csv += "arch,size,modDepth,block,ramp,path,ns_per_sample\n";
+    std::vector<bench::Record> records;
     double grandSink = 0.0;
     bool allFinite = true;
 
@@ -295,6 +305,9 @@ int main(int argc, char** argv)
                     nsFast, nsRef, ratio);
 
         const char* rampStr = midRamp ? "midRamp" : "settled";
+        const std::string cfg = "size=" + std::to_string(size) + ",modDepth=" +
+            std::to_string(modDepth) + ",block=" + std::to_string(block) +
+            ",ramp=" + rampStr;
         for (const auto& pp : { std::pair<const char*, double>{ "processBlock", nsFast },
                                 std::pair<const char*, double>{ "processBlockRef", nsRef } })
         {
@@ -305,6 +318,7 @@ int main(int argc, char** argv)
             csv += rampStr; csv += ",";
             csv += pp.first; csv += ",";
             csv += std::to_string(pp.second); csv += "\n";
+            records.push_back({pp.first, cfg, pp.second});
         }
     }
 
@@ -317,6 +331,9 @@ int main(int argc, char** argv)
         f << csv;
         std::printf("\ncsv written to %s\n", csvPath.c_str());
     }
+
+    if (!jsonPath.empty())
+        bench::writeJson(jsonPath, records, provisional);
 
     std::printf("\noutput finite: %s\n", allFinite ? "yes" : "NO — NaN/Inf DETECTED");
     std::printf("(sink=%f)\n", grandSink);

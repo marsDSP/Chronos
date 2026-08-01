@@ -24,7 +24,7 @@
 // This is the first harness to link a JUCE module (juce::juce_dsp); SharedCode
 // propagates JUCE_GLOBAL_MODULE_SETTINGS_INCLUDED etc. via INTERFACE.
 //
-// Exit: 0 = no regression (SIMD not slower than scalar), non-zero = regression.
+// Exit: 0 = informational (the timing gate moved to scripts/bench_gate.py).
 // ──────────────────────────────────────────────────────────────────────────
 
 #include <algorithm>
@@ -32,10 +32,13 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 #include <numbers>
+#include <string>
 #include <vector>
 
+#include "bench_util.h"
 #include "dsp/SimdDelayLine.h"
 #include <juce_dsp/juce_dsp.h>
 
@@ -52,7 +55,6 @@ constexpr std::size_t kTotal     = kBlock * kBlocks;
 constexpr std::size_t kReps      = 5;
 constexpr float kDelaySamples    = 347.5f;               // fractional, realistic
 constexpr int   kMaxDelaySamples = 240000;               // 5000 ms @ 48 kHz
-constexpr double kSimdRegression = 1.05;                 // SIMD may be up to 5% slower than scalar w/o failing
 
 // Compiler barriers (Google Benchmark DoNotOptimize technique) — see tan_bench.
 #if defined(__clang__) || defined(__GNUC__)
@@ -176,8 +178,18 @@ const char* modeName(Interpolation m) noexcept
 
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
+    std::string jsonPath;
+    bool provisional = false;
+    for (int i = 1; i < argc; ++i)
+    {
+        if (std::strcmp(argv[i], "--json") == 0 && i + 1 < argc) jsonPath = argv[++i];
+        else if (std::strcmp(argv[i], "--provisional") == 0) provisional = true;
+    }
+
+    bench::setFtzDaz();
+
     const std::vector<float> inL = makeRampL();
     const std::vector<float> inR = makeRampR();
 
@@ -193,31 +205,42 @@ int main()
     const double nsScalar = benchNsPerSample([&]{ return runSimdDelayLine<false>(inL, inR, Interpolation::Lagrange5th); }, sink);
     const double nsJuce   = benchNsPerSample([&]{ return runJuceDelayLine(inL, inR); }, sink);
 
-    const bool simdOk = nsSimd <= nsScalar * kSimdRegression;
-
     std::printf("[delay] ns/sample, stereo (min of %zu reps):\n", kReps);
     std::printf("       SimdDelayLine  SIMD   (Lag5) : %7.3f ns/sample\n", nsSimd);
     std::printf("       SimdDelayLine  scalar (Lag5) : %7.3f ns/sample  (%.2fx vs scalar)\n",
                 nsScalar, nsScalar / nsSimd);
     std::printf("       juce::dsp::DelayLine per-smp : %7.3f ns/sample  (%.2fx vs juce)\n",
                 nsJuce, nsJuce / nsSimd);
-    std::printf("       -> %s (SIMD <= %.2fx scalar)\n\n",
-                simdOk ? "PASS" : "FAIL", kSimdRegression);
+    std::printf("       (timing gate moved to scripts/bench_gate.py)\n\n");
 
     // ---- 4. Per-mode SIMD throughput (zero-padded Linear cost check) ----
     std::printf("[per-mode] SIMD ns/sample (min of %zu reps):\n", kReps);
     const Interpolation modes[] = { Interpolation::Linear, Interpolation::Lagrange3rd, Interpolation::Lagrange5th };
     double minNs = std::numeric_limits<double>::infinity(), maxNs = 0.0;
+    double perModeNs[3] = {};
+    int mi = 0;
     for (Interpolation m : modes)
     {
         const double n = benchNsPerSample([&]{ return runSimdDelayLine<true>(inL, inR, m); }, sink);
+        perModeNs[mi++] = n;
         std::printf("       %-12s : %7.3f ns/sample\n", modeName(m), n);
         minNs = std::min(minNs, n);
         maxNs = std::max(maxNs, n);
     }
     std::printf("       (max/min = %.2fx — Linear's zero-padded 6-MAC path vs Lag5)\n\n", maxNs / minNs);
 
+    std::vector<bench::Record> records;
+    records.push_back({"SimdDelayLine",       "SIMD,Lag5",     nsSimd});
+    records.push_back({"SimdDelayLine",       "scalar,Lag5",   nsScalar});
+    records.push_back({"juce::dsp::DelayLine", "per-sample",    nsJuce});
+    records.push_back({"SimdDelayLine",       "SIMD,Linear",   perModeNs[0]});
+    records.push_back({"SimdDelayLine",       "SIMD,Lag3",     perModeNs[1]});
+
     std::printf("(sink=%f)\n", sink);
-    std::printf("=== %s ===\n", simdOk ? "NO REGRESSION" : "REGRESSION DETECTED");
-    return simdOk ? 0 : 1;
+
+    if (!jsonPath.empty())
+        bench::writeJson(jsonPath, records, provisional);
+
+    std::printf("=== DONE (informational only, gate moved to scripts/bench_gate.py) ===\n");
+    return 0;
 }

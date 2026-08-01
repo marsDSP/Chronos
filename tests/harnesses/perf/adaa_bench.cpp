@@ -36,9 +36,12 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
+#include <cstring>
 #include <limits>
+#include <string>
 #include <vector>
 
+#include "bench_util.h"
 #include "dsp/nonlinear/ADAA1.h"
 #include "dsp/nonlinear/ADAA2.h"
 #include "dsp/nonlinear/Nonlinearities.h"
@@ -145,8 +148,18 @@ int classifyBranch(double x0, double x1, double x2) noexcept
 
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
+    std::string jsonPath;
+    bool provisional = false;
+    for (int i = 1; i < argc; ++i)
+    {
+        if (std::strcmp(argv[i], "--json") == 0 && i + 1 < argc) jsonPath = argv[++i];
+        else if (std::strcmp(argv[i], "--provisional") == 0) provisional = true;
+    }
+
+    bench::setFtzDaz();
+
     constexpr std::size_t tableN = 1u << 18;        // 262144 samples (~2 MB)
     constexpr std::size_t mask   = tableN - 1;
     constexpr std::size_t ops    = 5'000'000;
@@ -206,6 +219,12 @@ int main()
     const double nsA2T  = benchNsPerOp(runADAA2Tanh,  ops, reps, sink);
     const double nsA2A  = benchNsPerOp(runADAA2Alg,   ops, reps, sink);
 
+    std::vector<bench::Record> records;
+    records.push_back({"std::tanh",          "", nsTanh});
+    records.push_back({"ADAA1<TanhNL>",      "", nsA1});
+    records.push_back({"ADAA2<TanhNL>",      "", nsA2T});
+    records.push_back({"ADAA2<AlgebraicNL>", "", nsA2A});
+
     std::printf("[timing] ns/sample (min of %zu reps, 48 kHz sweep at %.0f dB):\n", reps, kDriveDb);
     std::printf("       std::tanh (no ADAA)    : %7.2f ns/sample\n", nsTanh);
     std::printf("       ADAA1<TanhNL>          : %7.2f ns/sample  (%.1fx vs tanh)\n", nsA1,  nsA1  / nsTanh);
@@ -249,6 +268,10 @@ int main()
     }
 
     std::printf("\n(sink=%f)\n", sink);
+
+    if (!jsonPath.empty())
+        bench::writeJson(jsonPath, records, provisional);
+
     std::printf("=== informational only — no pass/fail gate ===\n");
     return 0;
 }

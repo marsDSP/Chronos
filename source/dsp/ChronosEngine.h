@@ -238,7 +238,7 @@ namespace MarsDSP {
                     gainRamp_[static_cast<std::size_t>(s)] = smoothedGain_;
                 }
 
-                // ── 3. SVF coefficients (this block's start cutoff) ───────
+                // ── 3. SVF coefficients ───────
                 hpf_.setCoeffForBlock(SVF::SVFType::HighPass, fsSafe, hpfRamp_[0], svfQ_, 0.0, chunk);
                 lpf_.setCoeffForBlock(SVF::SVFType::LowPass, fsSafe, lpfRamp_[0], svfQ_, 0.0, chunk);
 
@@ -341,7 +341,7 @@ namespace MarsDSP {
                             MM(storeu_ps)(data1 + offset + s, vOutR);
                         }
                     }
-                    // Scalar tail (same scalar overload, not a second approx)
+                    // Scalar tail
                     for (int s = jFull; s < chunk; ++s)
                     {
                         const auto u = static_cast<std::size_t>(s);
@@ -359,7 +359,6 @@ namespace MarsDSP {
                 const int jFull = chunk & ~3;
                 for (int s = 0; s + 4 <= chunk; s += 4)
                 {
-                    // 9a folded: 4 blend samples per channel (sample order).
                     alignas(16) float bl[4], br[4];
                     for (int t = 0; t < 4; ++t)
                     {
@@ -380,9 +379,11 @@ namespace MarsDSP {
                         const M128 vD2 = nextUniformSimd_(xorshiftSimdL_);
                         const M128 vDither = MM(mul_ps)(MM(sub_ps)(vD1, vD2), vLsb);
                         const M128 vQ = MM(mul_ps)(MM(add_ps)(vScaled, vDither), vInvLsb);
+
                         // round-half-away-from-zero: trunc(q + copysign(0.5, q))
                         const M128 vSign = MM(and_ps)(vQ, vSignMask);
                         const M128 vShifted = MM(add_ps)(vQ, MM(or_ps)(vHalf, vSign));
+
                         // trunc via cvtt+cvte (SSE2, no SSE4.1 needed)
                         const M128I vInt = MM(cvttps_epi32)(vShifted);
                         const M128 vRounded = MM(cvtepi32_ps)(vInt);
@@ -404,7 +405,7 @@ namespace MarsDSP {
                         MM(storeu_ps)(data1 + offset + s, MM(mul_ps)(vRounded, vLsb));
                     }
                 }
-                // Scalar tail (same folded 9a pre-step, per sample)
+                // Scalar tail
                 for (int s = jFull; s < chunk; ++s)
                 {
                     const auto u = static_cast<std::size_t>(s);
@@ -519,19 +520,19 @@ namespace MarsDSP {
             }
             else if (!wantOn && diffState_ == DiffuserState::On)
             {
-                diffState_ = DiffuserState::FadingOut;   // diffFade_ is 1.0
+                diffState_ = DiffuserState::FadingOut;
             }
             else if (wantOn && diffState_ == DiffuserState::FadingOut)
             {
-                diffState_ = DiffuserState::FadingIn;     // reverse: rings warm
+                diffState_ = DiffuserState::FadingIn;
             }
             else if (!wantOn && diffState_ == DiffuserState::FadingIn)
             {
-                diffState_ = DiffuserState::FadingOut;    // reverse
+                diffState_ = DiffuserState::FadingOut;
             }
 
             if (diffState_ == DiffuserState::Off)
-                return;   // bypassed: wetBuf stays undiffused
+                return;
 
             if (diffState_ == DiffuserState::On)
             {
@@ -622,6 +623,7 @@ namespace MarsDSP {
             state = MM(xor_si128)(state, MM(slli_epi32)(state, 13));
             state = MM(xor_si128)(state, MM(srli_epi32)(state, 17));
             state = MM(xor_si128)(state, MM(slli_epi32)(state, 5));
+
             // top 24 bits -> float in [0, 1)
             const M128I shifted = MM(srli_epi32)(state, 8);
             const M128 asFloat = MM(cvtepi32_ps)(shifted);
@@ -646,7 +648,7 @@ namespace MarsDSP {
         Align::ShortDelay<Align::SaturatorAlign::kBudget> bypassDryL_;
         Align::ShortDelay<Align::SaturatorAlign::kBudget> bypassDryR_;
 
-        Memory::BumpArena arena_;   // C9/C9b: backs the 20 rings + scratch spans
+        Memory::BumpArena arena_;
         std::span<float> driveRamp_;
         std::span<float> hpfRamp_;
         std::span<float> lpfRamp_;
@@ -660,7 +662,7 @@ namespace MarsDSP {
         std::span<float> wetPostSvfR_;
         std::span<float> bypassDryInL_;
         std::span<float> bypassDryInR_;
-        std::span<float> undiffWetL_;   // C5: diffuser crossfade (undiffused copy)
+        std::span<float> undiffWetL_;
         std::span<float> undiffWetR_;
 
         double sampleRate_{0.0};
@@ -671,9 +673,8 @@ namespace MarsDSP {
         float feedback_{0.0f};
         bool enableDiffuser_{false};
 
-        // C5: diffuser enable-toggle crossfade state machine.
         DiffuserState diffState_{DiffuserState::Off};
-        float diffFade_{0.0f};   // 0 = undiffused, 1 = diffused
+        float diffFade_{0.0f};
     };
 }
 #endif

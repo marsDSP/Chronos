@@ -1,0 +1,9 @@
+{
+  "provisional": true,
+  "records": [
+    {"name": "std::tanh", "config": "", "ns_per_sample": 4.57587},
+    {"name": "ADAA1<TanhNL>", "config": "", "ns_per_sample": 6.52336},
+    {"name": "ADAA2<TanhNL>", "config": "", "ns_per_sample": 11.5796},
+    {"name": "ADAA2<AlgebraicNL>", "config": "", "ns_per_sample": 10.2255}
+  ]
+}

@@ -269,9 +269,8 @@ if(BUILD_TEST_HARNESSES)
     # 23 correctness harnesses: exit 0 = pass. The 6 benchmarks (tan_bench,
     # adaa_bench, delay_line_bench, chain_bench, fb_bench, diffuser_bench) are
     # labeled "bench" so
-    # `ctest -LE bench` excludes them. they report numbers rather than pass/fail
-    # (delay_line_bench does carry a timing-dependent SIMD≤1.05×scalar gate
-    # that is flaky in CI).
+    # `ctest -LE bench` excludes them. They report numbers, not pass/fail.
+    # Timing regression gating lives in scripts/bench_gate.py.
     add_test(NAME ring_buffer_check      COMMAND ring_buffer_check)
     add_test(NAME halfsample_fir_check   COMMAND halfsample_fir_check)
     add_test(NAME short_delay_check      COMMAND short_delay_check)
@@ -304,9 +303,9 @@ if(BUILD_TEST_HARNESSES)
     add_test(NAME rt_stack_check         COMMAND rt_stack_check)
 
     # The 6 benchmarks are registered as tests but labeled "bench" so
-    # `ctest -LE bench` excludes them. They report numbers, not pass/fail
-    # (delay_line_bench carries a timing-dependent SIMD≤1.05×scalar gate
-    # that is flaky in CI, so it is excluded from the correctness gate).
+    # `ctest -LE bench` excludes them. They report numbers, not pass/fail.
+    # The timing gate that lived inside delay_line_bench moved to
+    # scripts/bench_gate.py (see the bench_gate target below).
     add_test(NAME tan_bench          COMMAND tan_bench)
     add_test(NAME adaa_bench         COMMAND adaa_bench)
     add_test(NAME delay_line_bench   COMMAND delay_line_bench)
@@ -314,5 +313,16 @@ if(BUILD_TEST_HARNESSES)
     add_test(NAME fb_bench           COMMAND fb_bench)
     add_test(NAME diffuser_bench     COMMAND diffuser_bench)
 
-    set_tests_properties(tan_bench adaa_bench delay_line_bench chain_bench fb_bench diffuser_bench PROPERTIES LABELS "bench")
+    # bench_gate: runs every perf harness with --json and compares against the
+    # committed baselines in tests/baselines/ via scripts/bench_gate.py. CI runs
+    # at 25% tolerance. The owner runs 15% locally on a pinned core:
+    #   <bench> --json current.json
+    #   python scripts/bench_gate.py tests/baselines/<bench>.json current.json --tolerance 15
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/baselines")
+    add_test(NAME bench_gate
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/scripts/bench_gate.py"
+                --ci --baselines "${CMAKE_CURRENT_SOURCE_DIR}/baselines"
+                --bindir "${CMAKE_CURRENT_BINARY_DIR}" --tolerance 25)
+
+    set_tests_properties(tan_bench adaa_bench delay_line_bench chain_bench fb_bench diffuser_bench bench_gate PROPERTIES LABELS "bench")
 endif()

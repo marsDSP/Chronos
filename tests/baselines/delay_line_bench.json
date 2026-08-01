@@ -1,0 +1,10 @@
+{
+  "provisional": true,
+  "records": [
+    {"name": "SimdDelayLine", "config": "SIMD,Lag5", "ns_per_sample": 4.94774},
+    {"name": "SimdDelayLine", "config": "scalar,Lag5", "ns_per_sample": 5.64492},
+    {"name": "juce::dsp::DelayLine", "config": "per-sample", "ns_per_sample": 8.79268},
+    {"name": "SimdDelayLine", "config": "SIMD,Linear", "ns_per_sample": 2.50494},
+    {"name": "SimdDelayLine", "config": "SIMD,Lag3", "ns_per_sample": 2.6565}
+  ]
+}

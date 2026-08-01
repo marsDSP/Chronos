@@ -69,6 +69,8 @@
 #include <string>
 #include <vector>
 
+#include "bench_util.h"
+
 namespace {
 
 constexpr double kFs           = 48000.0;
@@ -664,17 +666,24 @@ const char* archName()
 
 int main(int argc, char** argv)
 {
-    std::string csvPath;
+    std::string csvPath, jsonPath;
+    bool provisional = false;
     for (int i = 1; i < argc; ++i)
     {
         if (std::strcmp(argv[i], "--csv") == 0 && i + 1 < argc)
             csvPath = argv[++i];
+        else if (std::strcmp(argv[i], "--json") == 0 && i + 1 < argc)
+            jsonPath = argv[++i];
+        else if (std::strcmp(argv[i], "--provisional") == 0)
+            provisional = true;
         else
         {
-            std::fprintf(stderr, "usage: chain_bench [--csv <path>]\n");
+            std::fprintf(stderr, "usage: chain_bench [--csv <path>] [--json <path>] [--provisional]\n");
             return 2;
         }
     }
+
+    bench::setFtzDaz();
 
     const float driveLin = std::pow(10.0f, kDriveDb / 20.0f);
     const float gainLin  = std::pow(10.0f, kGainDb / 20.0f);
@@ -701,6 +710,7 @@ int main(int argc, char** argv)
 
     std::string csv;
     csv += "arch,mode,mix,block,channels,stage,ns_per_sample\n";
+    std::vector<bench::Record> records;
 
     double grandSink = 0.0;
     bool recordingOk = true;
@@ -806,6 +816,15 @@ int main(int argc, char** argv)
                                 : extra[0] == 'f' ? nsFull : nsEngine);
             csv += "\n";
         }
+
+        const std::string cfg = "mode=" + std::to_string(mode) + ",mix=" +
+            std::to_string(static_cast<int>(mix)) + ",block=" + std::to_string(block) +
+            ",ch=" + std::to_string(ch);
+        for (int st = 0; st < kNumStages; ++st)
+            records.push_back({kStageNames[st], cfg, ns[st]});
+        records.push_back({"stages-sum", cfg, sum});
+        records.push_back({"full-chain", cfg, nsFull});
+        records.push_back({"engine", cfg, nsEngine});
     }
 
     if (!csvPath.empty())
@@ -817,6 +836,9 @@ int main(int argc, char** argv)
         f << csv;
         std::printf("\ncsv written to %s\n", csvPath.c_str());
     }
+
+    if (!jsonPath.empty())
+        bench::writeJson(jsonPath, records, provisional);
 
     std::printf("\nrecording pass finite: %s\n", recordingOk ? "yes" : "NO — CHAIN ASSEMBLY BUG");
     std::printf("(sink=%f)\n", grandSink);
