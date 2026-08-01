@@ -15,12 +15,14 @@
 #include "FeedbackDelay.h"
 #include "FracDelayTap.h"
 #include "math/Trigonometry.h"
+#include "utils/memory/BumpArena.h"
 
 #include <algorithm>
 #include <array>
 #include <cassert>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <numbers>
 #include <span>
 #include <vector>
@@ -70,9 +72,24 @@ namespace MarsDSP {
 
             constexpr int kNumScratch = 19;
             const auto cap = static_cast<std::size_t>(wetBufCapacity_);
-            scratch_.assign(static_cast<std::size_t>(kNumScratch) * cap, 0.0f);
-            float* p = scratch_.data();
-            auto take = [&](std::span<float>& s) { s = { p, cap }; p += cap; };
+            // C9: one 64-byte-aligned BumpArena instead of a std::vector +
+            // manual float* carve — one allocation to reason about, and one
+            // get_total_num_bytes() for the memory map. strideFloats pads
+            // the span stride to a multiple of 16 floats (64 bytes) so every
+            // span starts 64-byte aligned even when wetBufCapacity_ is not a
+            // multiple of 16 (a host may pass maxBlockSize = 24 -> cap 48).
+            // Spans keep their logical size cap, so every loop body stays
+            // textually identical. The logical region is zeroed to preserve
+            // the old scratch_.assign(..., 0.0f) behavior; padding unread.
+            const std::size_t strideFloats = (cap + 15u) & ~static_cast<std::size_t>(15u);
+            arena_.reset(static_cast<std::size_t>(kNumScratch) * strideFloats * sizeof(float));
+            auto take = [&](std::span<float>& s)
+            {
+                float* q = arena_.allocate<float>(strideFloats, Memory::BumpArena::kBaseAlignment);
+                assert(q != nullptr);   // sized by construction; cannot exhaust
+                std::memset(q, 0, cap * sizeof(float));
+                s = { q, cap };
+            };
             take(wetBufL_);      take(wetBufR_);
             take(driveRamp_);    take(hpfRamp_);    take(lpfRamp_);
             take(thetaRamp_);    take(gainRamp_);
@@ -669,7 +686,7 @@ namespace MarsDSP {
         Align::ShortDelay<Align::SaturatorAlign::kBudget> bypassDryL_;
         Align::ShortDelay<Align::SaturatorAlign::kBudget> bypassDryR_;
 
-        std::vector<float> scratch_;
+        Memory::BumpArena arena_;   // C9: backs all scratch spans below
         std::span<float> driveRamp_;
         std::span<float> hpfRamp_;
         std::span<float> lpfRamp_;
