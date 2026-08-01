@@ -91,6 +91,9 @@ jobs:
         # antiderivatives call std::exp/std::tan, which differ across libm, so
         # the committed hashes only match on macOS. Run it there; skip it on
         # Linux and Windows (cross-platform hash drift is expected, not a defect).
+        # shell: bash forces Git Bash on Windows (the runner default is
+        # PowerShell, which cannot parse the POSIX if/test syntax below).
+        shell: bash
         run: |
           if [ "$RUNNER_OS" = "macOS" ]; then
             ctest --test-dir build -C Release --output-on-failure -LE bench
