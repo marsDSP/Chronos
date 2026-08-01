@@ -41,6 +41,7 @@ namespace MarsDSP::Delays {
             float diffuserSize   = 0.5f;  // 0..1 (0 = full path lengths)
             float diffModDepth   = 16.0f; // samples, 0..62
             float diffModRateHz  = 0.5f;  // 0..8
+            bool  enableDiffuser = false; // off by default
         };
 
         void prepare(double sampleRate, int maxBlockSize, int maxDelaySamples) noexcept
