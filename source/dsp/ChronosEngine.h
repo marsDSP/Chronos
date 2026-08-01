@@ -64,12 +64,12 @@ namespace MarsDSP {
             numChannels_ = numChannels;
             wetBufCapacity_ = std::max(1, 2 * maxBlockSize);
 
-            constexpr int kNumScratch = 19;
+            constexpr int kNumScratch = 17;   // C10: blendL_/blendR_ died in the 9a fold
             const auto cap = static_cast<std::size_t>(wetBufCapacity_);
             const std::size_t strideFloats = (cap + 15u) & ~static_cast<std::size_t>(15u);
 
             // C9/C9b: one 64-byte-aligned BumpArena backs ALL engine storage
-            // — the 20 rings (delay 2, feedback 2, diffuser 16) and the 19
+            // — the 20 rings (delay 2, feedback 2, diffuser 16) and the 17
             // scratch spans — so the whole DSP layer is one allocation with
             // one get_total_num_bytes() (C11's memory-map figure). Sizes are
             // exact by construction: every ring carve is 64-aligned and
@@ -107,7 +107,6 @@ namespace MarsDSP {
             take(alignedDryL_);  take(alignedDryR_);
             take(wetPostSvfL_);  take(wetPostSvfR_);
             take(bypassDryInL_); take(bypassDryInR_);
-            take(blendL_);       take(blendR_);
             take(undiffWetL_);   take(undiffWetR_);
 
             bypassSmoother_.reset(sampleRate, 0.01);
@@ -268,24 +267,26 @@ namespace MarsDSP {
                 alignL_.setMode(adaaOrder_);
                 alignR_.setMode(adaaOrder_);
 
-                // ── 5. Align dry stage (stateful: ShortDelay ring) ────────
-                for (int s = 0; s < chunk; ++s)
-                {
-                    bypassDryInL_[static_cast<std::size_t>(s)] = data0[offset + s];
-                    if (hasR)
-                        bypassDryInR_[static_cast<std::size_t>(s)] = data1[offset + s];
-                    alignedDryL_[static_cast<std::size_t>(s)] =
-                        alignL_.processDry(data0[offset + s]);
-                    if (hasR)
-                        alignedDryR_[static_cast<std::size_t>(s)] =
-                            alignR_.processDry(data1[offset + s]);
-                }
-
-                // ── 6. ADAA + align wet stage (stateful) ──────────────────
+                // ── 5+6. Align dry + ADAA + align wet (C10: fused) ──────
+                // Two independent per-sample recursions over the same chunk
+                // (dry: SaturatorAlign::processDry; wet: ADAA + processWet)
+                // fused into one loop — halves loop overhead and the live
+                // scratch streams. The two paths share no state, so each
+                // path's op order is unchanged and the fusion is bit-exact
+                // (chain_parity). The bypassDryIn capture stays in this
+                // early loop: stage 9b needs PRE-crossfade input, and stage
+                // 8 overwrites data0/data1 in place.
                 for (int s = 0; s < chunk; ++s)
                 {
                     const auto u = static_cast<std::size_t>(s);
-                    const float drv = driveRamp_[u];
+
+                    bypassDryInL_[u] = data0[offset + s];
+                    if (hasR)
+                        bypassDryInR_[u] = data1[offset + s];
+                    alignedDryL_[u] = alignL_.processDry(data0[offset + s]);
+                    if (hasR)
+                        alignedDryR_[u] = alignR_.processDry(data1[offset + s]);
+
                     const float wet0 = wetBufL_[u];
                     const float wet1 = hasR ? wetBufR_[u] : 0.0f;
 
@@ -306,7 +307,6 @@ namespace MarsDSP {
                             if (hasR) sat1 = static_cast<float>(adaa2R_.process(driveRamp_[u] * wet1));
                             break;
                     }
-                    (void)drv;
 
                     satL_[u] = alignL_.processWet(sat0);
                     if (hasR) satR_[u] = alignR_.processWet(sat1);
@@ -383,27 +383,14 @@ namespace MarsDSP {
                     }
                 }
 
-                // ── 9a. Bypass blend (scalar, stateful: dry delay + fade) ──
-                for (int s = 0; s < chunk; ++s)
-                {
-                    const auto u = static_cast<std::size_t>(s);
-                    const float bypassAmt = bypassSmoother_.getNextValue();
-                    {
-                        const float rawIn = bypassDryInL_[u];
-                        const float dryDelayed = bypassDryL_.process(rawIn);
-                        blendL_[u] = data0[offset + s] * (1.0f - bypassAmt)
-                                   + dryDelayed * bypassAmt;
-                    }
-                    if (hasR)
-                    {
-                        const float rawIn = bypassDryInR_[u];
-                        const float dryDelayed = bypassDryR_.process(rawIn);
-                        blendR_[u] = data1[offset + s] * (1.0f - bypassAmt)
-                                   + dryDelayed * bypassAmt;
-                    }
-                }
-
-                // ── 9b. Gain + TPDF dither + quant (V2 SIMD) ──────────────
+                // ── 9b. Bypass blend + gain + TPDF dither + quant ───────
+                // C10: stage 9a is folded in as a per-lane scalar pre-step
+                // (the bypass smoother and the ShortDelay are per-sample
+                // stateful — they cannot vectorize across time). The blend
+                // values are computed in the same order with the same ops as
+                // the old 9a loop, so the fusion is bit-exact; the blendL_/
+                // blendR_ scratch spans are gone. The smoother advances ONCE
+                // per sample (shared by L and R, as before).
                 // lsb is block-constant. Rounding: emulate
                 // round-half-away-from-zero via trunc(x + copysign(0.5, x)).
                 const M128 vLsb = MM(set1_ps)(blockLsb);
@@ -414,9 +401,21 @@ namespace MarsDSP {
                 for (int s = 0; s + 4 <= chunk; s += 4)
                 {
                     const auto u = static_cast<std::size_t>(s);
+                    // 9a folded: 4 blend samples per channel (sample order).
+                    alignas(16) float bl[4], br[4];
+                    for (int t = 0; t < 4; ++t)
+                    {
+                        const auto ut = static_cast<std::size_t>(s + t);
+                        const float bypassAmt = bypassSmoother_.getNextValue();
+                        bl[t] = data0[offset + s + t] * (1.0f - bypassAmt)
+                              + bypassDryL_.process(bypassDryInL_[ut]) * bypassAmt;
+                        if (hasR)
+                            br[t] = data1[offset + s + t] * (1.0f - bypassAmt)
+                                  + bypassDryR_.process(bypassDryInR_[ut]) * bypassAmt;
+                    }
                     // L
                     {
-                        const M128 vBlend = MM(loadu_ps)(blendL_.data() + s);
+                        const M128 vBlend = MM(load_ps)(bl);
                         const M128 vGain = MM(loadu_ps)(gainRamp_.data() + s);
                         const M128 vScaled = MM(mul_ps)(vBlend, vGain);
                         const M128 vD1 = nextUniformSimd_(xorshiftSimdL_);
@@ -433,7 +432,7 @@ namespace MarsDSP {
                     }
                     if (hasR)
                     {
-                        const M128 vBlend = MM(loadu_ps)(blendR_.data() + s);
+                        const M128 vBlend = MM(load_ps)(br);
                         const M128 vGain = MM(loadu_ps)(gainRamp_.data() + s);
                         const M128 vScaled = MM(mul_ps)(vBlend, vGain);
                         const M128 vD1 = nextUniformSimd_(xorshiftSimdR_);
@@ -447,19 +446,24 @@ namespace MarsDSP {
                         MM(storeu_ps)(data1 + offset + s, MM(mul_ps)(vRounded, vLsb));
                     }
                 }
-                // Scalar tail
+                // Scalar tail (same folded 9a pre-step, per sample)
                 for (int s = jFull; s < chunk; ++s)
                 {
                     const auto u = static_cast<std::size_t>(s);
                     const float gainLin = gainRamp_[u];
+                    const float bypassAmt = bypassSmoother_.getNextValue();
                     {
-                        const float scaled = blendL_[u] * gainLin;
+                        const float blend = data0[offset + s] * (1.0f - bypassAmt)
+                                          + bypassDryL_.process(bypassDryInL_[u]) * bypassAmt;
+                        const float scaled = blend * gainLin;
                         const float dither = (nextUniform(xorshiftL_) - nextUniform(xorshiftL_)) * blockLsb;
                         data0[offset + s] = std::round((scaled + dither) / blockLsb) * blockLsb;
                     }
                     if (hasR)
                     {
-                        const float scaled = blendR_[u] * gainLin;
+                        const float blend = data1[offset + s] * (1.0f - bypassAmt)
+                                          + bypassDryR_.process(bypassDryInR_[u]) * bypassAmt;
+                        const float scaled = blend * gainLin;
                         const float dither = (nextUniform(xorshiftR_) - nextUniform(xorshiftR_)) * blockLsb;
                         data1[offset + s] = std::round((scaled + dither) / blockLsb) * blockLsb;
                     }
@@ -710,8 +714,6 @@ namespace MarsDSP {
         std::span<float> wetPostSvfR_;
         std::span<float> bypassDryInL_;
         std::span<float> bypassDryInR_;
-        std::span<float> blendL_;
-        std::span<float> blendR_;
         std::span<float> undiffWetL_;   // C5: diffuser crossfade (undiffused copy)
         std::span<float> undiffWetR_;
 
