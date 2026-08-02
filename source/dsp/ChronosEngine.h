@@ -64,7 +64,10 @@ namespace MarsDSP {
             numChannels_ = numChannels;
             wetBufCapacity_ = std::max(1, 2 * maxBlockSize);
 
-            constexpr int kNumScratch = 17;   // C10: blendL_/blendR_ died in the 9a fold
+            // the engine-level SimdDelayLine and post-stage Diffuser are
+            // deleted. The feedback line owns the delay and the in-loop
+            // diffuser. 15 scratch spans (undiffWetL_/R_ removed).
+            constexpr int kNumScratch = 15;
             const auto cap = static_cast<std::size_t>(wetBufCapacity_);
             const std::size_t strideFloats = (cap + 15u) & ~static_cast<std::size_t>(15u);
 
@@ -72,16 +75,12 @@ namespace MarsDSP {
                 Delays::SimdDelayLine::maxDelaySamplesFor(sampleRate, 5000.0f);
 
             const std::size_t ringFloats =
-                  Delays::SimdDelayLine::ringStorageFloats(sampleRate, wetBufCapacity_, 5000.0f)
-                + Delays::FeedbackDelay::ringStorageFloats(sampleRate, wetBufCapacity_, maxDelaySamp)
-                + Diffusion::Diffuser::ringStorageFloats(sampleRate);
+                Delays::FeedbackDelay::ringStorageFloats(sampleRate, wetBufCapacity_, maxDelaySamp);
             arena_.reset(static_cast<std::size_t>(kNumScratch) * strideFloats * sizeof(float)
                          + ringFloats * sizeof(float));
 
-            delayLine_.prepare(sampleRate, wetBufCapacity_, 5000.0f, arena_);
             fbDelay_.prepare(sampleRate, wetBufCapacity_, maxDelaySamp, arena_);
             assert(fbDelay_.getMaxDelay() >= static_cast<float>(maxDelaySamp));
-            diffuser_.prepare(sampleRate, arena_);
 
             auto take = [&](std::span<float>& s)
             {
@@ -97,7 +96,6 @@ namespace MarsDSP {
             take(alignedDryL_);  take(alignedDryR_);
             take(wetPostSvfL_);  take(wetPostSvfR_);
             take(bypassDryInL_); take(bypassDryInR_);
-            take(undiffWetL_);   take(undiffWetR_);
 
             bypassSmoother_.reset(sampleRate, 0.01);
             bypassDryL_.reset();
@@ -117,9 +115,7 @@ namespace MarsDSP {
 
         void reset() noexcept
         {
-            delayLine_.reset();
             fbDelay_.reset();
-            diffuser_.reset();
             hpf_.reset();
             lpf_.reset();
             adaa1L_.reset(); adaa1R_.reset();
@@ -137,9 +133,6 @@ namespace MarsDSP {
             smoothedLpf_ = 0.0f;
             smoothedMix_ = 0.0f;
             smoothedDrive_ = 0.0f;
-
-            diffState_ = DiffuserState::Off;
-            diffFade_ = 0.0f;
         }
 
         void resetParams(const Params &p) noexcept
@@ -147,7 +140,6 @@ namespace MarsDSP {
             delaySamples_ = p.delaySamples;
             adaaOrder_ = p.adaaOrder;
             interp_ = p.interp;
-            delayLine_.setInterpolation(p.interp);
 
             smoothedHpf_ = p.hpfHz;
             smoothedLpf_ = p.lpfHz;
@@ -162,7 +154,6 @@ namespace MarsDSP {
             feedback_ = p.feedback;
             enableDiffuser_ = p.enableDiffuser;
             applyFeedbackParams_(p, /*snap=*/true);
-            applyDiffuserParams_(p);
         }
 
         void setParams(const Params &p) noexcept
@@ -170,7 +161,6 @@ namespace MarsDSP {
             delaySamples_ = p.delaySamples;
             adaaOrder_ = p.adaaOrder;
             interp_ = p.interp;
-            delayLine_.setInterpolation(p.interp);
 
             gainSmoother_.setTargetValue(p.gainLin);
             smoothedBits_ = p.bits;
@@ -182,7 +172,6 @@ namespace MarsDSP {
             feedback_ = p.feedback;
             enableDiffuser_ = p.enableDiffuser;
             applyFeedbackParams_(p, /*snap=*/false);
-            applyDiffuserParams_(p);
         }
 
         void process(float *const*io, int numChannels, int numSamples) noexcept
@@ -202,29 +191,14 @@ namespace MarsDSP {
                 const int chunk = std::min(wetBufCapacity_, numSamples - offset);
 
                 // ── 1. Wet generation (block-rate) ─────────────────────────
-
-                if (feedback_ > 0.0f)
-                {
-                    fbDelay_.process(data0 + offset,
-                                     hasR ? data1 + offset : nullptr,
-                                     wetBufL_.data(),
-                                     hasR ? wetBufR_.data() : nullptr,
-                                     chunk);
-                }
-                else
-                {
-                    const float comp = enableDiffuser_
-                        ? diffuser_.transportSamples()
-                        : 0.0f;
-                    const float compDelay = std::max(0.0f, delaySamples_ - comp);
-                    delayLine_.process(data0 + offset,
-                                       hasR ? data1 + offset : nullptr,
-                                       wetBufL_.data(),
-                                       hasR ? wetBufR_.data() : nullptr,
-                                       chunk, compDelay, compDelay);
-
-                    stepDiffuser_(chunk, hasR);
-                }
+                // all delay routes through the feedback line. At a feedback
+                // of zero the feedback line degenerates to a plain delay. The
+                // in-loop diffuser inside FeedbackDelay is the only diffuser.
+                fbDelay_.process(data0 + offset,
+                                 hasR ? data1 + offset : nullptr,
+                                 wetBufL_.data(),
+                                 hasR ? wetBufR_.data() : nullptr,
+                                 chunk);
 
                 const float blockLsb = std::ldexp(1.0f, 1 - smoothedBits_);
                 for (int s = 0; s < chunk; ++s)
@@ -437,8 +411,6 @@ namespace MarsDSP {
             return Align::SaturatorAlign::kBudget;
         }
 
-        static constexpr int kDiffuserFadeSamples = 480;
-
         [[nodiscard]] int getWetBufCapacity() const noexcept { return wetBufCapacity_; }
 
         void setDitherSeeds(std::uint32_t l, std::uint32_t r) noexcept
@@ -497,95 +469,7 @@ namespace MarsDSP {
             else      fbDelay_.setParams(fp);
         }
 
-        void applyDiffuserParams_(const Params &p) noexcept
-        {
-            diffuser_.setDiffusion(p.diffusion);
-            diffuser_.setSize(p.diffuserSize);
-            diffuser_.setModDepthSamples(p.diffModDepth);
-            diffuser_.setModRateHz(p.diffModRateHz);
-        }
-
-        enum class DiffuserState { Off, FadingIn, On, FadingOut };
-
-        void stepDiffuser_(int chunk, bool hasR) noexcept
-        {
-            const bool wantOn = enableDiffuser_;
-
-            // ── state transitions ──
-            if (wantOn && diffState_ == DiffuserState::Off)
-            {
-                diffuser_.prime();
-                diffState_ = DiffuserState::FadingIn;
-                diffFade_ = 0.0f;
-            }
-            else if (!wantOn && diffState_ == DiffuserState::On)
-            {
-                diffState_ = DiffuserState::FadingOut;
-            }
-            else if (wantOn && diffState_ == DiffuserState::FadingOut)
-            {
-                diffState_ = DiffuserState::FadingIn;
-            }
-            else if (!wantOn && diffState_ == DiffuserState::FadingIn)
-            {
-                diffState_ = DiffuserState::FadingOut;
-            }
-
-            if (diffState_ == DiffuserState::Off)
-                return;
-
-            if (diffState_ == DiffuserState::On)
-            {
-                diffuser_.processBlock(wetBufL_.data(),
-                                       hasR ? wetBufR_.data() : nullptr, chunk);
-                return;
-            }
-
-            std::memcpy(undiffWetL_.data(), wetBufL_.data(),
-                        static_cast<std::size_t>(chunk) * sizeof(float));
-            if (hasR)
-                std::memcpy(undiffWetR_.data(), wetBufR_.data(),
-                            static_cast<std::size_t>(chunk) * sizeof(float));
-
-            diffuser_.processBlock(wetBufL_.data(),
-                                   hasR ? wetBufR_.data() : nullptr, chunk);
-
-            const float inc = 1.0f / static_cast<float>(kDiffuserFadeSamples);
-            const bool fadingIn = (diffState_ == DiffuserState::FadingIn);
-            for (int s = 0; s < chunk; ++s)
-            {
-                const auto u = static_cast<std::size_t>(s);
-                const float a = diffFade_;
-                const float oneMinusA = 1.0f - a;
-                wetBufL_[u] = undiffWetL_[u] * oneMinusA + wetBufL_[u] * a;
-                if (hasR)
-                    wetBufR_[u] = undiffWetR_[u] * oneMinusA + wetBufR_[u] * a;
-
-                diffFade_ += fadingIn ? inc : -inc;
-                if (fadingIn && diffFade_ >= 1.0f)
-                {
-                    diffFade_ = 1.0f;
-                    diffState_ = DiffuserState::On;
-                    break;
-                }
-                if (!fadingIn && diffFade_ <= 0.0f)
-                {
-                    diffFade_ = 0.0f;
-                    diffState_ = DiffuserState::Off;
-                    for (int t = s + 1; t < chunk; ++t)
-                    {
-                        const auto ut = static_cast<std::size_t>(t);
-                        wetBufL_[ut] = undiffWetL_[ut];
-                        if (hasR) wetBufR_[ut] = undiffWetR_[ut];
-                    }
-                    break;
-                }
-            }
-        }
-
-        Delays::SimdDelayLine delayLine_;
         Delays::FeedbackDelay fbDelay_;
-        Diffusion::Diffuser diffuser_;
         std::span<float> wetBufL_;
         std::span<float> wetBufR_;
         int wetBufCapacity_{0};
@@ -662,8 +546,6 @@ namespace MarsDSP {
         std::span<float> wetPostSvfR_;
         std::span<float> bypassDryInL_;
         std::span<float> bypassDryInR_;
-        std::span<float> undiffWetL_;
-        std::span<float> undiffWetR_;
 
         double sampleRate_{0.0};
         int numChannels_{0};
@@ -672,9 +554,6 @@ namespace MarsDSP {
         Delays::Interpolation interp_{Delays::Interpolation::Lagrange5th};
         float feedback_{0.0f};
         bool enableDiffuser_{false};
-
-        DiffuserState diffState_{DiffuserState::Off};
-        float diffFade_{0.0f};
     };
 }
 #endif

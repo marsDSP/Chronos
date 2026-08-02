@@ -18,6 +18,7 @@
 // ──────────────────────────────────────────────────────────────────────────
 
 #include "dsp/ChronosEngine.h"
+#include "dsp/FeedbackDelay.h"
 #include "dsp/SimdDelayLine.h"
 #include "dsp/StateVariable.h"
 #include "dsp/LinearSmoother.h"
@@ -55,7 +56,7 @@ namespace Ref {
 // reference only — do not optimize, do not delete
 struct ChainRef
 {
-    MarsDSP::Delays::SimdDelayLine                        delayLine;
+    MarsDSP::Delays::FeedbackDelay                        fbDelay;
     std::vector<float>                                   wetBufL;
     std::vector<float>                                   wetBufR;
     int                                                  wetBufCap {0};
@@ -80,6 +81,17 @@ struct ChainRef
     float   delaySamples {};
     int     adaaOrder {2};
     double  sampleRate {0.0};
+    // feedback params mirrored from the engine (feedback=0, no diffuser)
+    float   fbFeedback {0.0f};
+    float   fbDampHz {6000.0f};
+    float   fbCrossFeed {0.0f};
+    float   fbLoopDrive {1.0f};
+    int     fbSatOrder {2};
+    bool    fbEnableDiffuser {false};
+    float   fbDiffusion {0.7f};
+    float   fbDiffuserSize {0.5f};
+    float   fbDiffModDepth {16.0f};
+    float   fbDiffModRateHz {0.5f};
 
     static float nextUniform(std::uint32_t& s) noexcept
     {
@@ -91,7 +103,9 @@ struct ChainRef
     {
         sampleRate = sr;
         wetBufCap = std::max(1, 2 * maxBlock);
-        delayLine.prepare(sr, wetBufCap, 5000.0f);
+        const int maxDelaySamp =
+            MarsDSP::Delays::SimdDelayLine::maxDelaySamplesFor(sr, 5000.0f);
+        fbDelay.prepare(sr, wetBufCap, maxDelaySamp);
         wetBufL.resize(static_cast<std::size_t>(wetBufCap));
         wetBufR.resize(static_cast<std::size_t>(wetBufCap));
         constexpr double kRamp = 0.02;
@@ -103,13 +117,13 @@ struct ChainRef
 
     void reset() noexcept
     {
-        delayLine.reset(); hpf.reset(); lpf.reset();
+        fbDelay.reset(); hpf.reset(); lpf.reset();
         adaa1L.reset(); adaa1R.reset(); adaa2L.reset(); adaa2R.reset();
         alignL.reset(); alignR.reset();
         smGain = 0.0f; smBits = 0; smHpf = 0.0f; smLpf = 0.0f; smMix = 0.0f; smDrive = 0.0f;
     }
 
-    void resetParams(float drvLin, float mix, float gainLin, float hpfHz, float lpfHz, int bits) noexcept
+    void resetParams(float dlySmp, float drvLin, float mix, float gainLin, float hpfHz, float lpfHz, int bits) noexcept
     {
         // init the smoothed values AND snap the smoothers to the
         // raw parameters, so the SVF is configured from the correct cutoff
@@ -123,6 +137,21 @@ struct ChainRef
         lpfS.setCurrentAndTargetValue(lpfHz);
         mixS.setCurrentAndTargetValue(mix);
         driveS.setCurrentAndTargetValue(drvLin);
+        // snap the feedback delay to the initial delay (matches the
+        // engine's resetParams snap).
+        MarsDSP::Delays::FeedbackDelay::Params fp;
+        fp.delaySamples  = dlySmp;
+        fp.feedback      = fbFeedback;
+        fp.dampHz        = fbDampHz;
+        fp.crossFeed     = fbCrossFeed;
+        fp.loopDrive     = fbLoopDrive;
+        fp.satOrder      = fbSatOrder;
+        fp.enableDiffuser = fbEnableDiffuser;
+        fp.diffusion      = fbDiffusion;
+        fp.diffuserSize   = fbDiffuserSize;
+        fp.diffModDepth   = fbDiffModDepth;
+        fp.diffModRateHz  = fbDiffModRateHz;
+        fbDelay.resetParams(fp);
     }
 
     void setParams(float dlySmp, int order, float drvLin, float mix, float gainLin, float hpfHz, float lpfHz, int bits,
@@ -130,13 +159,28 @@ struct ChainRef
     {
         delaySamples = dlySmp;
         adaaOrder = order;
-        delayLine.setInterpolation(interp);
         smBits = bits;
         gainS.setTargetValue(gainLin);
         hpfS.setTargetValue(hpfHz);
         lpfS.setTargetValue(lpfHz);
         mixS.setTargetValue(mix);
         driveS.setTargetValue(drvLin);
+        // the engine routes all delay through FeedbackDelay. Mirror the
+        // same feedback params (feedback=0, no diffuser) so the wet path
+        // matches the engine bit-for-bit.
+        MarsDSP::Delays::FeedbackDelay::Params fp;
+        fp.delaySamples  = dlySmp;
+        fp.feedback      = fbFeedback;
+        fp.dampHz        = fbDampHz;
+        fp.crossFeed     = fbCrossFeed;
+        fp.loopDrive     = fbLoopDrive;
+        fp.satOrder      = fbSatOrder;
+        fp.enableDiffuser = fbEnableDiffuser;
+        fp.diffusion      = fbDiffusion;
+        fp.diffuserSize   = fbDiffuserSize;
+        fp.diffModDepth   = fbDiffModDepth;
+        fp.diffModRateHz  = fbDiffModRateHz;
+        fbDelay.setParams(fp);
     }
 
     void setDitherSeeds(std::uint32_t l, std::uint32_t r) noexcept { xsL = l; xsR = r; }
@@ -153,11 +197,11 @@ struct ChainRef
         {
             const int chunk = std::min(wetBufCap, numSamples - offset);
 
-            delayLine.process(data0 + offset,
-                              data1 != nullptr ? data1 + offset : nullptr,
-                              wetBufL.data(),
-                              data1 != nullptr ? wetBufR.data() : nullptr,
-                              chunk, delaySamples, delaySamples);
+            fbDelay.process(data0 + offset,
+                            data1 != nullptr ? data1 + offset : nullptr,
+                            wetBufL.data(),
+                            data1 != nullptr ? wetBufR.data() : nullptr,
+                            chunk);
 
             // the ramp pass runs BEFORE setCoeffForBlock so the SVF
             // uses this block's start cutoff (hpfRamp[0]/lpfRamp[0]), not
@@ -336,7 +380,7 @@ void runOne(const TestCfg& tc, long& totalSamples)
     ref.prepare(kFs, 256, tc.numChannels);
     ref.reset();
     ref.setDitherSeeds(kSeedL, kSeedR);
-    ref.resetParams(drvLin, tc.mixPct, gainLin, kHpfHz, kLpfHz, kBits);
+    ref.resetParams(dlySmp, drvLin, tc.mixPct, gainLin, kHpfHz, kLpfHz, kBits);
 
     // Generate input: sine + ramp (breaks symmetry).
     std::vector<float> inL(static_cast<std::size_t>(tc.blockSize));
@@ -419,7 +463,7 @@ void runStateCarry(long& totalSamples)
     ref.prepare(kFs, 256, kNumCh);
     ref.reset();
     ref.setDitherSeeds(kSeedL, kSeedR);
-    ref.resetParams(drvLin, 50.0f, 1.0f, kHpfHz, kLpfHz, kBits);
+    ref.resetParams(dlySmp, drvLin, 50.0f, 1.0f, kHpfHz, kLpfHz, kBits);
 
     for (int b = 0; b < kBlocks; ++b)
     {
