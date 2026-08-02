@@ -76,6 +76,15 @@ void processFrame_(MarsDSP::ChronosEngine& eng, float* ioL, float* ioR, int n) n
     eng.process(io, kChannels, n);
 }
 
+// Call prepare in a child frame so the canary captures the prepare stack.
+// The section length prime scan moved off the stack in S12, so this stays
+// well under the gate.
+CHRONOS_NOINLINE
+void prepareFrame_(MarsDSP::ChronosEngine& eng, double sr) noexcept
+{
+    eng.prepare(sr, kBlock, kChannels);
+}
+
 struct RtConfig
 {
     float delaySamples;
@@ -169,6 +178,11 @@ int main()
         const float sizeSweep = 0.2f + 0.6f * static_cast<float>(0.5 + 0.5 * std::sin(2.0 * 3.14159265358979323846 * i / 97.0));
         p.diffuserSize = (c.enableDiffuser) ? sizeSweep : c.diffuserSize;
         engine.setParams(p);
+
+        // Re-prepare at a different rate every 250 blocks so the canary
+        // captures the prepare path (the prime scan and the arena setup).
+        if (i % 250 == 0 && i > 0)
+            prepareFrame_(engine, kFs);
 
         processFrame_(engine, ioL.data(), ioR.data(), kBlock);
     }

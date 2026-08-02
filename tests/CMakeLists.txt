@@ -87,6 +87,14 @@ if(BUILD_TEST_HARNESSES)
     else()
         target_compile_options(unity_transparency_check PRIVATE /O2)
     endif()
+
+    add_executable(prepare_bench harnesses/perf/prepare_bench.cpp)
+    target_link_libraries(prepare_bench PRIVATE SharedCode)
+    if(NOT MSVC)
+        target_compile_options(prepare_bench PRIVATE -O2)
+    else()
+        target_compile_options(prepare_bench PRIVATE /O2)
+    endif()
     if(MSVC)
         target_compile_options(crossfade_parity PRIVATE /O2)
     else()
@@ -342,6 +350,7 @@ if(BUILD_TEST_HARNESSES)
     add_test(NAME long_run_stability_check   COMMAND long_run_stability_check)
     add_test(NAME automation_sweep_check       COMMAND automation_sweep_check)
     add_test(NAME unity_transparency_check     COMMAND unity_transparency_check)
+    add_test(NAME prepare_bench               COMMAND prepare_bench)
 
     # The 6 benchmarks are registered as tests but labeled "bench" so
     # `ctest -LE bench` excludes them. They report numbers, not pass/fail.
@@ -365,5 +374,5 @@ if(BUILD_TEST_HARNESSES)
                 --ci --baselines "${CMAKE_CURRENT_SOURCE_DIR}/baselines"
                 --bindir "${CMAKE_CURRENT_BINARY_DIR}" --tolerance 25)
 
-    set_tests_properties(tan_bench adaa_bench delay_line_bench chain_bench fb_bench diffuser_bench bench_gate PROPERTIES LABELS "bench")
+    set_tests_properties(tan_bench adaa_bench delay_line_bench chain_bench fb_bench diffuser_bench prepare_bench bench_gate PROPERTIES LABELS "bench")
 endif()

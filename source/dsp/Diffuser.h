@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bitset>
 #include <cassert>
 #include <cmath>
 #include <cstring>
@@ -239,23 +240,34 @@ namespace MarsDSP::Diffusion {
             oscBc_ *= nB; oscBs_ *= nB;
         }
 
-        // prime-snapped section lengths from the acoustic path tables.
-        // Shared by prepareImpl_ (the rings) and ringStorageFloats (the
-        // arena size query) so the two can never drift.
+        // Compute the section lengths from the acoustic path tables.
+        // The prepare path and the arena size query call this function.
+        // The cache holds the result so the prime scan runs once per rate.
         static void computeSectionLens(double sampleRate,
                                        int* outL, int* outR) noexcept
         {
+            if (sectionLenCache_.valid && sectionLenCache_.sr == sampleRate)
+            {
+                std::copy_n(sectionLenCache_.lenL, kNumSections, outL);
+                std::copy_n(sectionLenCache_.lenR, kNumSections, outR);
+                return;
+            }
+
             const double samplesPerMeter = sampleRate / kSpeedOfSoundMps;
-            bool used[kMaxPrimeScan] = {};
+            sectionLenCache_.used.reset();
             for (int i = 0; i < kNumSections; ++i)
             {
                 const int wantL = static_cast<int>(
                     std::lround(static_cast<double>(kPathMetersL[static_cast<std::size_t>(i)]) * samplesPerMeter));
                 const int wantR = static_cast<int>(
                     std::lround(static_cast<double>(kPathMetersR[static_cast<std::size_t>(i)]) * samplesPerMeter));
-                outL[i] = distinctPrimeNear_(wantL, used);
-                outR[i] = distinctPrimeNear_(wantR, used);
+                sectionLenCache_.lenL[i] = distinctPrimeNear_(wantL, sectionLenCache_.used);
+                sectionLenCache_.lenR[i] = distinctPrimeNear_(wantR, sectionLenCache_.used);
             }
+            sectionLenCache_.sr = sampleRate;
+            sectionLenCache_.valid = true;
+            std::copy_n(sectionLenCache_.lenL, kNumSections, outL);
+            std::copy_n(sectionLenCache_.lenR, kNumSections, outR);
         }
 
         void prepareImpl_(double sampleRate, Memory::BumpArena* arena) noexcept
@@ -303,7 +315,8 @@ namespace MarsDSP::Diffusion {
             return true;
         }
 
-        static int distinctPrimeNear_(int want, bool (&used)[kMaxPrimeScan]) noexcept
+        // Find the nearest unused prime to the given length.
+        static int distinctPrimeNear_(int want, std::bitset<kMaxPrimeScan>& used) noexcept
         {
             want = std::clamp(want, 5, kMaxPrimeScan - 2);
             for (int d = 0; d < kMaxPrimeScan; ++d)
@@ -311,9 +324,9 @@ namespace MarsDSP::Diffusion {
                 for (const int cand : { want + d, want - d })
                 {
                     if (cand >= 5 && cand < kMaxPrimeScan
-                        && isPrime_(cand) && !used[cand])
+                        && isPrime_(cand) && !used.test(cand))
                     {
-                        used[cand] = true;
+                        used.set(cand);
                         return cand;
                     }
                 }
@@ -467,6 +480,18 @@ namespace MarsDSP::Diffusion {
         double oscBs_ = 1.0;
         double oscBk_ = 0.0;
         int    oscCount_ = 0;
+
+        // Cache for the section length prime scan. Holds the result per
+        // sample rate so the scan runs once. The bitset replaces the old
+        // 64 kB stack array. The prepare path is single-threaded.
+        struct SectionLenCache {
+            double sr;
+            int lenL[kNumSections];
+            int lenR[kNumSections];
+            std::bitset<kMaxPrimeScan> used;
+            bool valid;
+        };
+        static inline SectionLenCache sectionLenCache_{};
     };
 }
 #endif
