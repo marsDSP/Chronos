@@ -14,6 +14,7 @@
 #include "Diffuser.h"
 #include "FeedbackDelay.h"
 #include "FracDelayTap.h"
+#include "math/SaturatorMakeup.h"
 #include "math/Trigonometry.h"
 #include "utils/memory/BumpArena.h"
 
@@ -253,6 +254,14 @@ namespace MarsDSP {
                             sat0 = static_cast<float>(adaa2L_.process(driveRamp_[u] * wet0));
                             if (hasR) sat1 = static_cast<float>(adaa2R_.process(driveRamp_[u] * wet1));
                             break;
+                    }
+
+                    if (adaaOrder_ > 0)
+                    {
+                        const float makeup = Math::outputMakeup(driveRamp_[u])
+                                           * Math::kOutputMakeupUnity;
+                        sat0 *= makeup;
+                        if (hasR) sat1 *= makeup;
                     }
 
                     satL_[u] = alignL_.processWet(sat0);

@@ -27,6 +27,7 @@
 #include "dsp/nonlinear/Nonlinearities.h"
 #include "dsp/align/SaturatorAlign.h"
 #include "math/Trigonometry.h"
+#include "math/SaturatorMakeup.h"
 
 #include <algorithm>
 #include <array>
@@ -290,6 +291,14 @@ struct ChainRef
                         sat0 = static_cast<float>(adaa2L.process(driveLin * wet0));
                         if (data1 != nullptr) sat1 = static_cast<float>(adaa2R.process(driveLin * wet1));
                         break;
+                }
+
+                if (adaaOrder > 0)
+                {
+                    const float makeup = MarsDSP::Math::outputMakeup(driveLin)
+                                       * MarsDSP::Math::kOutputMakeupUnity;
+                    sat0 *= makeup;
+                    if (data1 != nullptr) sat1 *= makeup;
                 }
 
                 sat0 = alignL.processWet(sat0);

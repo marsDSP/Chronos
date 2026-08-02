@@ -8,6 +8,7 @@
 #include "FracDelayTap.h"
 #include "LinearSmoother.h"
 #include "Pow2RingBuffer.h"
+#include "math/SaturatorMakeup.h"
 #include "nonlinear/ADAA1.h"
 #include "nonlinear/ADAA2.h"
 #include "nonlinear/Nonlinearities.h"
@@ -512,7 +513,7 @@ namespace MarsDSP::Delays {
             satLatencySm_.setTargetValue(newSatLatency);
 
             const float clampedDrive = std::clamp(p.loopDrive, 0.1f, 16.0f);
-            loopTrim_ = std::pow(rmsRatioForDrive_(clampedDrive), -0.5f);
+            loopTrim_ = Math::loopTrim(clampedDrive);
         }
 
         float saturate_(Nonlinear::ADAA1<Nonlinear::TanhNL>& a1,
