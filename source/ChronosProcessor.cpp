@@ -1,5 +1,6 @@
 #include "ChronosProcessor.h"
 #include "ChronosEditor.h"
+#include "utils/helpers/TempoSync.h"
 
 #include <algorithm>
 #include <cmath>
@@ -112,7 +113,7 @@ void ChronosProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     engine.reset();
 
     MarsDSP::ChronosEngine::Params p {};
-    p.delaySamples = parameters.getDelaySamples();
+    p.delaySamples = computeDelaySamples_();
     p.driveLin = parameters.getRawDriveLin();
     p.mix = parameters.getRawMix();
     p.gainLin = parameters.getRawGainLin();
@@ -138,6 +139,16 @@ void ChronosProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     engine.resetParams(p);
 
     setLatencySamples(MarsDSP::Align::SaturatorAlign::kBudget);
+}
+
+float ChronosProcessor::computeDelaySamples_() const
+{
+    if (! parameters.getRawDelaySync())
+        return parameters.getDelaySamples();
+    const double ms = MarsDSP::Utils::Helpers::TempoSync::convertChoiceIndexToMilliseconds(
+        parameters.getRawDelayDivision(), cachedBpm_);
+    const double clamped = std::clamp(ms, 1.0, 5000.0);
+    return static_cast<float>(clamped * 0.001 * getSampleRate());
 }
 
 void ChronosProcessor::releaseResources()
@@ -184,11 +195,16 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
     parameters.update();
     engine.setBypass(parameters.getBypass());
 
+    // Read the host tempo. Hold the last known BPM when the host gives none.
+    if (const auto pos = getPlayHead()->getPosition())
+        if (const auto bpm = pos->getBpm())
+            cachedBpm_ = *bpm;
+
     const int numSamples = buffer.getNumSamples();
     if (numSamples <= 0) return;
 
     MarsDSP::ChronosEngine::Params p {};
-    p.delaySamples = parameters.getDelaySamples();
+    p.delaySamples = computeDelaySamples_();
     p.driveLin = parameters.getRawDriveLin();
     p.mix = parameters.getRawMix();
     p.gainLin = parameters.getRawGainLin();

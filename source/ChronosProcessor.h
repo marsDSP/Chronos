@@ -59,6 +59,12 @@ private:
     // Fill the body when the parameter ranges change.
     void migrateState_ (ValueTree& state, int fromVersion);
 
+    // The last known host BPM. Held when the host gives no tempo.
+    double cachedBpm_ = 120.0;
+
+    // Compute the delay in samples, using tempo sync when enabled.
+    float computeDelaySamples_() const;
+
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChronosProcessor)
 };

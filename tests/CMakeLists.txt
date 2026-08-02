@@ -95,6 +95,14 @@ if(BUILD_TEST_HARNESSES)
     else()
         target_compile_options(prepare_bench PRIVATE /O2)
     endif()
+
+    add_executable(tempo_sync_check harnesses/dsp/tempo_sync_check.cpp)
+    target_link_libraries(tempo_sync_check PRIVATE SharedCode)
+    if(NOT MSVC)
+        target_compile_options(tempo_sync_check PRIVATE -O2)
+    else()
+        target_compile_options(tempo_sync_check PRIVATE /O2)
+    endif()
     if(MSVC)
         target_compile_options(crossfade_parity PRIVATE /O2)
     else()
@@ -351,6 +359,7 @@ if(BUILD_TEST_HARNESSES)
     add_test(NAME automation_sweep_check       COMMAND automation_sweep_check)
     add_test(NAME unity_transparency_check     COMMAND unity_transparency_check)
     add_test(NAME prepare_bench               COMMAND prepare_bench)
+    add_test(NAME tempo_sync_check             COMMAND tempo_sync_check)
 
     # The 6 benchmarks are registered as tests but labeled "bench" so
     # `ctest -LE bench` excludes them. They report numbers, not pass/fail.
