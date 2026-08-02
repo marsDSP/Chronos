@@ -27,7 +27,7 @@ namespace MarsDSP::Smoothers {
         void setTargetValue(T value) noexcept
         {
             target_ = value;
-            if (stepsToTarget_ <= 0)
+            if (stepsToTarget_ <= 0 || target_ == current_)
             {
                 current_ = target_;
                 step_ = T(0);
@@ -51,6 +51,7 @@ namespace MarsDSP::Smoothers {
 
         [[nodiscard]] T getCurrentValue() const noexcept { return current_; }
         [[nodiscard]] T getTargetValue() const noexcept { return target_; }
+        [[nodiscard]] bool isSmoothing() const noexcept { return countdown_ > 0; }
 
     private:
         T current_{};

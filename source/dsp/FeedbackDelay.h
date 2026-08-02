@@ -509,8 +509,7 @@ namespace MarsDSP::Delays {
                                    float fade, float baseT) noexcept
         {
             const float makeup = 1.0f / drive;
-            const float readDelay =
-                std::max(kMinLoopDelay, d - satLatency_ - fade * baseT);
+            const float readDelay = std::max(kMinLoopDelay, d - satLatency_ - fade * baseT);
 
             float tapL = FracDelayTap::read(ringL_, writeIdx_, readDelay);
             float tapR = hasR

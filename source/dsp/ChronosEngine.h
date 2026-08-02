@@ -272,8 +272,9 @@ namespace MarsDSP {
 
                 // ── 8. Crossfade stage (stateless) ────────────────────────
                 const float mixVal = mixSmoother_.getCurrentValue();
-                const bool fullDry = (mixVal <= 0.0f);
-                const bool fullWet = (mixVal >= 100.0f);
+                const bool settled = ! mixSmoother_.isSmoothing();
+                const bool fullDry = settled && mixVal <= 0.0f;
+                const bool fullWet = settled && mixVal >= 100.0f;
 
                 if (fullDry)
                 {
