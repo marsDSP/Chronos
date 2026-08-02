@@ -16,6 +16,7 @@ public:
     //==============================================================================
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override;
+    void reset() override;
 
 protected:
     bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
@@ -53,6 +54,10 @@ private:
     ChronosParameters parameters {apvts};
 
     MarsDSP::ChronosEngine engine;
+
+    // Bring a stored state up to the current schema version.
+    // Fill the body when the parameter ranges change.
+    void migrateState_ (ValueTree& state, int fromVersion);
 
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChronosProcessor)

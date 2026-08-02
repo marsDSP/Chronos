@@ -56,6 +56,13 @@ if(BUILD_TEST_HARNESSES)
     target_link_libraries(dither_check PRIVATE SharedCode)
     add_executable(bump_arena_check harnesses/utils/bump_arena_check.cpp)
     target_link_libraries(bump_arena_check PRIVATE SharedCode)
+
+    # State schema harness. Links the JUCE processor modules with SharedCode.
+    # The harness builds a real APVTS from the Chronos parameter layout.
+    # It needs no JucePlugin macros and no plugin client wrapper.
+    add_executable(state_roundtrip_check harnesses/dsp/state_roundtrip_check.cpp)
+    target_link_libraries(state_roundtrip_check PRIVATE SharedCode
+        juce::juce_audio_processors juce::juce_dsp juce::juce_gui_basics)
     if(MSVC)
         target_compile_options(crossfade_parity PRIVATE /O2)
     else()
@@ -307,6 +314,7 @@ if(BUILD_TEST_HARNESSES)
     add_test(NAME golden_render_check    COMMAND golden_render_check)
     add_test(NAME rt_alloc_check         COMMAND rt_alloc_check)
     add_test(NAME rt_stack_check         COMMAND rt_stack_check)
+    add_test(NAME state_roundtrip_check  COMMAND state_roundtrip_check)
 
     # The 6 benchmarks are registered as tests but labeled "bench" so
     # `ctest -LE bench` excludes them. They report numbers, not pass/fail.

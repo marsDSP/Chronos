@@ -1,7 +1,20 @@
 #include "ChronosProcessor.h"
 #include "ChronosEditor.h"
 
+#include <algorithm>
+#include <cmath>
 #include <random>
+
+namespace {
+    // State schema version written into every saved state tree.
+    constexpr int kStateVersion = 2;
+    // Cap on the repeat count for the tail length above self-oscillation.
+    constexpr int kMaxTailRepeats = 240;
+    // Ring-down margin in samples, added to the delay repeat tail.
+    constexpr int kMargin = 32768;
+    // Constant latency budget of the saturator stage.
+    constexpr int kAlignBudget = MarsDSP::Align::SaturatorAlign::kBudget;
+}
 //==============================================================================
 ChronosProcessor::ChronosProcessor() : AudioProcessor(BusesProperties()
     .withInput("Input", AudioChannelSet::stereo(), true)
@@ -53,10 +66,13 @@ double ChronosProcessor::getTailLengthSeconds() const
     const double sr = getSampleRate();
     if (sr <= 0.0) return 0.0;
     const double delaySeconds = static_cast<double>(parameters.getDelayMs()) * 0.001;
-    constexpr int kMargin = 32768;
-    constexpr int kAlignBudget = MarsDSP::Align::SaturatorAlign::kBudget;
-    return delaySeconds + static_cast<double>(kMargin) / sr
-           + static_cast<double>(kAlignBudget) / sr;
+    // Clamp the feedback before the logarithm to stay finite at zero.
+    const double g = std::max(static_cast<double>(parameters.getRawFeedback()), 1e-4);
+    const double n = (g >= 1.0)
+        ? static_cast<double>(kMaxTailRepeats)
+        : std::ceil(-3.0 / std::log10(g));
+    const double repeatTail = std::min(delaySeconds * n, 60.0);
+    return repeatTail + static_cast<double>(kAlignBudget + kMargin) / sr;
 }
 
 int ChronosProcessor::getNumPrograms()
@@ -123,6 +139,12 @@ void ChronosProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 
 void ChronosProcessor::releaseResources()
 {
+}
+
+void ChronosProcessor::reset()
+{
+    engine.reset();
+    parameters.reset();
 }
 
 bool ChronosProcessor::isBusesLayoutSupported(const BusesLayout &layouts) const
@@ -206,15 +228,31 @@ AudioProcessorEditor *ChronosProcessor::createEditor()
 //==============================================================================
 void ChronosProcessor::getStateInformation(MemoryBlock &destData)
 {
-    copyXmlToBinary(*apvts.copyState().createXml(), destData);
+    ValueTree state = apvts.copyState();
+    state.setProperty("version", kStateVersion, nullptr);
+    copyXmlToBinary(*state.createXml(), destData);
 }
 
 void ChronosProcessor::setStateInformation(const void *data, int sizeInBytes)
 {
     std::unique_ptr xml(getXmlFromBinary(data, sizeInBytes));
-    if (xml != nullptr && xml->hasTagName(apvts.state.getType()))
+    if (xml == nullptr || !xml->hasTagName(apvts.state.getType()))
+        return;
+    ValueTree state(ValueTree::fromXml(*xml));
+    const int fileVersion = static_cast<int>(state.getProperty("version"));
+    if (fileVersion < kStateVersion)
+        migrateState_(state, fileVersion);
+    state.setProperty("version", kStateVersion, nullptr);
+    apvts.replaceState(state);
+}
+
+void ChronosProcessor::migrateState_(ValueTree& state, int fromVersion)
+{
+    if (fromVersion < 2)
     {
-        apvts.replaceState(ValueTree::fromXml(*xml));
+        // A version-1 or absent state needs no change yet.
+        // Add the clamps to the new legal ranges when the ranges change.
+        ignoreUnused(state);
     }
 }
 
