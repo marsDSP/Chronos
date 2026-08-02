@@ -35,6 +35,7 @@ namespace MarsDSP::Delays {
             float delaySamples = 4800.0f;
             float feedback     = 0.0f;    // 0..kMaxFeedback; > 1 self-oscillates, bounded
             float dampHz       = 6000.0f; // one-pole lowpass in the loop
+            float loopCutHz    = 40.0f;  // one-pole highpass in the loop
             float crossFeed    = 0.0f;    // 0 straight, 1 full ping-pong
             float loopDrive    = 1.0f;    // how hard repeats lean on the tanh ceiling
             int   satOrder     = 2;       // 0 hard, 1 ADAA1, 2 ADAA2
@@ -73,6 +74,7 @@ namespace MarsDSP::Delays {
             adaa1L_.reset(); adaa1R_.reset();
             adaa2L_.reset(); adaa2R_.reset();
             dampL_ = dampR_ = 0.0f;
+            cutLpL_ = cutLpR_ = 0.0f;
             dcXL_ = dcXR_ = dcYL_ = dcYR_ = 0.0f;
             diffuser_.reset();
             enableDiffuser_ = false;
@@ -92,6 +94,8 @@ namespace MarsDSP::Delays {
             driveSm_.setCurrentAndTargetValue(std::clamp(p.loopDrive, 0.501f, 15.849f));
             dampGSm_.setCurrentAndTargetValue(dampGSm_.getTargetValue());
             dampG_ = dampGSm_.getCurrentValue();
+            cutGSm_.setCurrentAndTargetValue(cutGSm_.getTargetValue());
+            cutG_ = cutGSm_.getCurrentValue();
             satLatencySm_.setCurrentAndTargetValue(satLatencySm_.getTargetValue());
             satLatency_ = satLatencySm_.getCurrentValue();
             applyDiffuserParams_(p);
@@ -153,6 +157,7 @@ namespace MarsDSP::Delays {
                         const float drive = driveSm_.getNextValue();
                         const float fade  = fadeStep_();
                         dampG_      = dampGSm_.getNextValue();
+                        cutG_       = cutGSm_.getNextValue();
                         satLatency_ = satLatencySm_.getNextValue();
                         processSampleScalar_(inL + s + i, hasR ? inR + s + i : nullptr,
                                              wetL + s + i, hasR ? wetR + s + i : nullptr,
@@ -165,7 +170,7 @@ namespace MarsDSP::Delays {
 
                 alignas(16) float dR[kMaxChunk], gR[kMaxChunk],
                                  crossR[kMaxChunk], driveR[kMaxChunk], fadeR[kMaxChunk],
-                                 dampGR[kMaxChunk], satLatR[kMaxChunk];
+                                 dampGR[kMaxChunk], satLatR[kMaxChunk], cutGR[kMaxChunk];
                 const bool wasRunning = (diffState_ != DiffuserState::Off);
                 for (int i = 0; i < Lc; ++i)
                 {
@@ -175,6 +180,7 @@ namespace MarsDSP::Delays {
                     driveR[i]  = driveSm_.getNextValue();
                     fadeR[i]   = fadeStep_();
                     dampGR[i]  = dampGSm_.getNextValue();
+                    cutGR[i]   = cutGSm_.getNextValue();
                     satLatR[i] = satLatencySm_.getNextValue();
                 }
                 const bool runDiff = wasRunning || (diffState_ != DiffuserState::Off);
@@ -255,17 +261,9 @@ namespace MarsDSP::Delays {
                 alignas(16) float vL[kMaxChunk], vR[kMaxChunk];
                 for (int i = 0; i < Lc; ++i)
                 {
-                    dampL_ += dampGR[i] * (tapL[i] - dampL_);
-                    dampR_ += dampGR[i] * (tapR[i] - dampR_);
-
-                    const float hL = dampL_ - dcXL_ + dcR_ * dcYL_;
-                    dcXL_ = dampL_; dcYL_ = hL;
-                    const float hR = dampR_ - dcXR_ + dcR_ * dcYR_;
-                    dcXR_ = dampR_; dcYR_ = hR;
-
                     const float g = gR[i], cross = crossR[i];
-                    vL[i] = g * ((1.0f - cross) * hL + cross * hR);
-                    vR[i] = g * ((1.0f - cross) * hR + cross * hL);
+                    vL[i] = g * ((1.0f - cross) * tapL[i] + cross * tapR[i]);
+                    vR[i] = g * ((1.0f - cross) * tapR[i] + cross * tapL[i]);
                 }
 
                 alignas(16) float wL[kMaxChunk], wR[kMaxChunk];
@@ -274,11 +272,9 @@ namespace MarsDSP::Delays {
                     for (int i = 0; i < Lc; ++i)
                     {
                         const float makeup = 1.0f / driveR[i];
-                        const float sL = std::clamp(driveR[i] * vL[i], -1.0f, 1.0f) * makeup;
-                        const float sR = hasR ? std::clamp(driveR[i] * vR[i], -1.0f, 1.0f) * makeup : sL;
-                        wL[i] = inL[s + i] + sL;
-                        if (!std::isfinite(wL[i])) wL[i] = 0.0f;
-                        if (hasR) { wR[i] = inR[s + i] + sR; if (!std::isfinite(wR[i])) wR[i] = 0.0f; }
+                        vL[i] = std::clamp(driveR[i] * vL[i], -1.0f, 1.0f) * makeup;
+                        if (hasR) vR[i] = std::clamp(driveR[i] * vR[i], -1.0f, 1.0f) * makeup;
+                        else vR[i] = vL[i];
                     }
                 }
                 else if (satOrder_ == 1)
@@ -286,11 +282,9 @@ namespace MarsDSP::Delays {
                     for (int i = 0; i < Lc; ++i)
                     {
                         const float makeup = 1.0f / driveR[i];
-                        const float sL = static_cast<float>(adaa1L_.process(static_cast<double>(driveR[i] * vL[i]))) * makeup;
-                        const float sR = hasR ? static_cast<float>(adaa1R_.process(static_cast<double>(driveR[i] * vR[i]))) * makeup : sL;
-                        wL[i] = inL[s + i] + sL;
-                        if (!std::isfinite(wL[i])) wL[i] = 0.0f;
-                        if (hasR) { wR[i] = inR[s + i] + sR; if (!std::isfinite(wR[i])) wR[i] = 0.0f; }
+                        vL[i] = static_cast<float>(adaa1L_.process(static_cast<double>(driveR[i] * vL[i]))) * makeup;
+                        if (hasR) vR[i] = static_cast<float>(adaa1R_.process(static_cast<double>(driveR[i] * vR[i]))) * makeup;
+                        else vR[i] = vL[i];
                     }
                 }
                 else
@@ -298,12 +292,30 @@ namespace MarsDSP::Delays {
                     for (int i = 0; i < Lc; ++i)
                     {
                         const float makeup = 1.0f / driveR[i];
-                        const float sL = static_cast<float>(adaa2L_.process(static_cast<double>(driveR[i] * vL[i]))) * makeup;
-                        const float sR = hasR ? static_cast<float>(adaa2R_.process(static_cast<double>(driveR[i] * vR[i]))) * makeup : sL;
-                        wL[i] = inL[s + i] + sL;
-                        if (!std::isfinite(wL[i])) wL[i] = 0.0f;
-                        if (hasR) { wR[i] = inR[s + i] + sR; if (!std::isfinite(wR[i])) wR[i] = 0.0f; }
+                        vL[i] = static_cast<float>(adaa2L_.process(static_cast<double>(driveR[i] * vL[i]))) * makeup;
+                        if (hasR) vR[i] = static_cast<float>(adaa2R_.process(static_cast<double>(driveR[i] * vR[i]))) * makeup;
+                        else vR[i] = vL[i];
                     }
+                }
+
+                for (int i = 0; i < Lc; ++i)
+                {
+                    dampL_ += dampGR[i] * (vL[i] - dampL_);
+                    dampR_ += dampGR[i] * (vR[i] - dampR_);
+
+                    cutLpL_ += cutGR[i] * (dampL_ - cutLpL_);
+                    cutLpR_ += cutGR[i] * (dampR_ - cutLpR_);
+                    const float cutL = dampL_ - cutLpL_;
+                    const float cutR = dampR_ - cutLpR_;
+
+                    const float hL = cutL - dcXL_ + dcR_ * dcYL_;
+                    dcXL_ = cutL; dcYL_ = hL;
+                    const float hR = cutR - dcXR_ + dcR_ * dcYR_;
+                    dcXR_ = cutR; dcYR_ = hR;
+
+                    wL[i] = inL[s + i] + hL;
+                    if (!std::isfinite(wL[i])) wL[i] = 0.0f;
+                    if (hasR) { wR[i] = inR[s + i] + hR; if (!std::isfinite(wR[i])) wR[i] = 0.0f; }
                 }
 
                 ringL_.writeBlock(wL, writeIdx_, Lc);
@@ -469,6 +481,7 @@ namespace MarsDSP::Delays {
             crossSm_.reset(sampleRate, 0.020);
             driveSm_.reset(sampleRate, 0.020);
             dampGSm_.reset(sampleRate, 0.020);
+            cutGSm_.reset(sampleRate, 0.020);
             satLatencySm_.reset(sampleRate, 0.010);
             reset();
         }
@@ -502,9 +515,17 @@ namespace MarsDSP::Delays {
             const double gw = std::tan(std::numbers::pi * fc / sampleRate_);
             dampGSm_.setTargetValue(static_cast<float>(gw / (1.0 + gw)));
 
-            // DC blocker pole: ~8 Hz, R = exp(-2*pi*fc/fs).
+            // DC blocker pole: 5 Hz. The blocker sits after the saturator
+            // and compounds over more passes. The 5 Hz corner keeps the
+            // loss at 40 Hz under 2 dB over 20 passes.
             dcR_ = static_cast<float>(
-                std::exp(-2.0 * std::numbers::pi * 8.0 / sampleRate_));
+                std::exp(-2.0 * std::numbers::pi * 5.0 / sampleRate_));
+
+            // Low cut: one-pole highpass, same topology as the damp filter.
+            const double fcCut = std::clamp(static_cast<double>(p.loopCutHz),
+                                            20.0, 0.45 * sampleRate_);
+            const double gwCut = std::tan(std::numbers::pi * fcCut / sampleRate_);
+            cutGSm_.setTargetValue(static_cast<float>(gwCut / (1.0 + gwCut)));
 
             satOrder_ = std::clamp(p.satOrder, 0, 2);
             const float newSatLatency = (satOrder_ == 2) ? 1.0f
@@ -554,30 +575,36 @@ namespace MarsDSP::Delays {
                     tapR = tapL;   // mono: mirror the blended L
             }
 
-            dampL_ += dampG_ * (tapL - dampL_);
-            dampR_ += dampG_ * (tapR - dampR_);
-
-            const float hL = dampL_ - dcXL_ + dcR_ * dcYL_;
-            dcXL_ = dampL_; dcYL_ = hL;
-            const float hR = dampR_ - dcXR_ + dcR_ * dcYR_;
-            dcXR_ = dampR_; dcYR_ = hR;
-
-            const float vL = g * ((1.0f - cross) * hL + cross * hR);
-            const float vR = g * ((1.0f - cross) * hR + cross * hL);
+            // cross and gain run before the saturator.
+            const float vL = g * ((1.0f - cross) * tapL + cross * tapR);
+            const float vR = g * ((1.0f - cross) * tapR + cross * tapL);
 
             const float sL = saturate_(adaa1L_, adaa2L_, drive * vL) * makeup;
             const float sR = hasR
                 ? saturate_(adaa1R_, adaa2R_, drive * vR) * makeup
                 : sL;
 
-            float wL = *in + sL;
+            dampL_ += dampG_ * (sL - dampL_);
+            dampR_ += dampG_ * (sR - dampR_);
+
+            cutLpL_ += cutG_ * (dampL_ - cutLpL_);
+            cutLpR_ += cutG_ * (dampR_ - cutLpR_);
+            const float cutL = dampL_ - cutLpL_;
+            const float cutR = dampR_ - cutLpR_;
+
+            const float hL = cutL - dcXL_ + dcR_ * dcYL_;
+            dcXL_ = cutL; dcYL_ = hL;
+            const float hR = cutR - dcXR_ + dcR_ * dcYR_;
+            dcXR_ = cutR; dcYR_ = hR;
+
+            float wL = *in + hL;
             if (!std::isfinite(wL)) wL = 0.0f;
             ringL_.writeBlock(&wL, writeIdx_, 1);
             ringL_.refreshMirror(writeIdx_, 1);
 
             if (hasR)
             {
-                float wR = *inR + sR;
+                float wR = *inR + hR;
                 if (!std::isfinite(wR)) wR = 0.0f;
                 ringR_.writeBlock(&wR, writeIdx_, 1);
                 ringR_.refreshMirror(writeIdx_, 1);
@@ -601,6 +628,7 @@ namespace MarsDSP::Delays {
         Smoothers::LinearSmoother<float> crossSm_;
         Smoothers::LinearSmoother<float> driveSm_;
         Smoothers::LinearSmoother<float> dampGSm_;
+        Smoothers::LinearSmoother<float> cutGSm_;
         Smoothers::LinearSmoother<float> satLatencySm_;
 
         // Last glide ramp duration, in seconds.
@@ -608,6 +636,7 @@ namespace MarsDSP::Delays {
 
         // block-rate coefficients
         float dampG_ = 0.0f;
+        float cutG_  = 0.0f;
         float dcR_   = 0.999f;
         int   satOrder_ = 2;
         float satLatency_ = 1.0f;
@@ -616,6 +645,8 @@ namespace MarsDSP::Delays {
         // per-channel loop state
         float dampL_ = 0.0f;
         float dampR_ = 0.0f;
+        float cutLpL_ = 0.0f;
+        float cutLpR_ = 0.0f;
         float dcXL_ = 0.0f;
         float dcYL_ = 0.0f;
         float dcXR_ = 0.0f;

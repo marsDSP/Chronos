@@ -511,6 +511,7 @@ namespace MarsDSP {
             fp.delaySamples = p.delaySamples;
             fp.feedback     = p.feedback;
             fp.dampHz       = p.dampHz;
+            fp.loopCutHz    = p.loopCutHz;
             fp.crossFeed    = p.crossFeed;
             fp.loopDrive    = p.loopDrive;
             fp.satOrder     = p.loopSatOrder;
