@@ -24,8 +24,10 @@
 #define CHRONOS_HAVE_BACKTRACE 1
 #include <execinfo.h>
 #include <unistd.h>
-#else
-#define CHRONOS_HAVE_BACKTRACE 0
+#endif
+
+#if defined(_MSC_VER)
+#include <malloc.h>
 #endif
 
 namespace {
@@ -75,22 +77,21 @@ void* doAlloc(std::size_t size, std::size_t align)
         }
     }
 
+    // On MSVC every allocation goes through _aligned_malloc so every free can
+    // use _aligned_free (the aligned and default heaps are distinct on Windows;
+ // mixing _aligned_free with malloc memory is undefined and segfaults).
     void* p = nullptr;
-    if (align <= __STDCPP_DEFAULT_NEW_ALIGNMENT__)
-    {
-        p = std::malloc(size);
-    }
-    else
-    {
-#if defined(__APPLE__)
-        if (posix_memalign(&p, align, size) != 0) p = nullptr;
-#elif defined(_MSC_VER)
-        p = _aligned_malloc(size, align);
+    const std::size_t effAlign = align < __STDCPP_DEFAULT_NEW_ALIGNMENT__
+                               ? static_cast<std::size_t>(__STDCPP_DEFAULT_NEW_ALIGNMENT__)
+                               : align;
+#if defined(_MSC_VER)
+    p = _aligned_malloc(size, effAlign);
+#elif defined(__APPLE__)
+    if (posix_memalign(&p, effAlign, size) != 0) p = nullptr;
 #else
-        const std::size_t rounded = (size + align - 1) & ~(align - 1);
-        p = std::aligned_alloc(align, rounded);
+    const std::size_t rounded = (size + effAlign - 1) & ~(effAlign - 1);
+    p = std::aligned_alloc(effAlign, rounded);
 #endif
-    }
     if (p == nullptr) throw std::bad_alloc{};
     return p;
 }

@@ -24,7 +24,6 @@ namespace MarsDSP::Delays {
     public:
         static constexpr float kMaxFeedback     = 1.2f;
         static constexpr float kMinLoopDelay    = 4.0f;   // > FracDelayTap's 3.0 contract
-        static constexpr float kMinDriveMakeup  = 1.0f;
 
         static constexpr int   kMaxChunk    = 64;   // max sub-chunk length (ramp-array footprint)
         static constexpr int   kChunkGuard  = 6;    // interpolator window (base = wIdx - i - 3, len 6 ≤ kTail)
@@ -257,7 +256,7 @@ namespace MarsDSP::Delays {
                 {
                     for (int i = 0; i < Lc; ++i)
                     {
-                        const float makeup = 1.0f / std::max(driveR[i], kMinDriveMakeup);
+                        const float makeup = 1.0f / driveR[i];
                         const float sL = std::clamp(driveR[i] * vL[i], -1.0f, 1.0f) * makeup;
                         const float sR = hasR ? std::clamp(driveR[i] * vR[i], -1.0f, 1.0f) * makeup : sL;
                         wL[i] = inL[s + i] + sL;
@@ -269,7 +268,7 @@ namespace MarsDSP::Delays {
                 {
                     for (int i = 0; i < Lc; ++i)
                     {
-                        const float makeup = 1.0f / std::max(driveR[i], kMinDriveMakeup);
+                        const float makeup = 1.0f / driveR[i];
                         const float sL = static_cast<float>(adaa1L_.process(static_cast<double>(driveR[i] * vL[i]))) * makeup;
                         const float sR = hasR ? static_cast<float>(adaa1R_.process(static_cast<double>(driveR[i] * vR[i]))) * makeup : sL;
                         wL[i] = inL[s + i] + sL;
@@ -281,7 +280,7 @@ namespace MarsDSP::Delays {
                 {
                     for (int i = 0; i < Lc; ++i)
                     {
-                        const float makeup = 1.0f / std::max(driveR[i], kMinDriveMakeup);
+                        const float makeup = 1.0f / driveR[i];
                         const float sL = static_cast<float>(adaa2L_.process(static_cast<double>(driveR[i] * vL[i]))) * makeup;
                         const float sR = hasR ? static_cast<float>(adaa2R_.process(static_cast<double>(driveR[i] * vR[i]))) * makeup : sL;
                         wL[i] = inL[s + i] + sL;
@@ -301,8 +300,8 @@ namespace MarsDSP::Delays {
 
                 for (int i = 0; i < Lc; ++i)
                 {
-                    wetL[s + i] = tapL[i];
-                    if (hasR) wetR[s + i] = tapR[i];
+                    wetL[s + i] = tapL[i] * loopTrim_;
+                    if (hasR) wetR[s + i] = tapR[i] * loopTrim_;
                 }
 
                 s += Lc;
@@ -336,6 +335,27 @@ namespace MarsDSP::Delays {
 
         [[nodiscard]] static constexpr int latencySamples() noexcept { return 0; }
         [[nodiscard]] float getMaxDelay() const noexcept { return maxDelay_; }
+
+        // RMS ratio of tanh(k * x) to x for a 0.5-amplitude sine reference.
+        // The loop output trim is pow(rmsRatio, -0.5). Computed by fixed
+        // quadrature over one sine period.
+        static float rmsRatioForDrive_(float k) noexcept
+        {
+            constexpr int N = 128;
+            constexpr double kPi = 3.14159265358979323846;
+            const double kd = static_cast<double>(k);
+            double sum = 0.0;
+            for (int i = 0; i < N; ++i)
+            {
+                const double t = kPi * (static_cast<double>(i) + 0.5) / static_cast<double>(N);
+                const double x = kd * 0.5 * std::sin(2.0 * t);
+                const double y = std::tanh(x);
+                sum += y * y;
+            }
+            const double rmsTanh = std::sqrt(sum / static_cast<double>(N));
+            constexpr double rmsRef = 0.5 / 1.41421356237309504880;
+            return static_cast<float>(rmsTanh / rmsRef);
+        }
 
     private:
         enum class DiffuserState { Off, FadingIn, On, FadingOut };
@@ -444,6 +464,9 @@ namespace MarsDSP::Delays {
             satLatency_ = (satOrder_ == 2) ? 1.0f
                         : (satOrder_ == 1) ? 0.5f
                                            : 0.0f;
+
+            const float clampedDrive = std::clamp(p.loopDrive, 0.1f, 16.0f);
+            loopTrim_ = std::pow(rmsRatioForDrive_(clampedDrive), -0.5f);
         }
 
         float saturate_(Nonlinear::ADAA1<Nonlinear::TanhNL>& a1,
@@ -464,7 +487,7 @@ namespace MarsDSP::Delays {
                                    bool hasR, int mask,
                                    float fade, float baseT) noexcept
         {
-            const float makeup = 1.0f / std::max(drive, kMinDriveMakeup);
+            const float makeup = 1.0f / drive;
             const float readDelay =
                 std::max(kMinLoopDelay, d - satLatency_ - fade * baseT);
 
@@ -516,8 +539,8 @@ namespace MarsDSP::Delays {
 
             writeIdx_ = (writeIdx_ + 1) & mask;
 
-            *wet = tapL;   // the blended (diffused when on) loop-tap stream
-            if (hasR) *wetR = tapR;
+            *wet = tapL * loopTrim_;   // the blended (diffused when on) loop-tap stream
+            if (hasR) *wetR = tapR * loopTrim_;
         }
 
         Pow2RingBuffer ringL_;
@@ -537,6 +560,7 @@ namespace MarsDSP::Delays {
         float dcR_   = 0.999f;
         int   satOrder_ = 2;
         float satLatency_ = 1.0f;
+        float loopTrim_ = 1.0f;
 
         // per-channel loop state
         float dampL_ = 0.0f;

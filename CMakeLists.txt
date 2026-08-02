@@ -79,6 +79,20 @@ add_library(SharedCode INTERFACE)
 # Set compile features for SharedCode
 target_compile_features(SharedCode INTERFACE cxx_std_23)
 
+# Enable FMA3 on the x86_64 baseline so simde_mm_fmadd_ps lowers to a fused
+# vfmadd*ps instead of a separate mul+add pair. arm64 has FMA unconditionally.
+# Propagated through SharedCode INTERFACE so EVERY consumer (the plugin AND
+# every test harness) gets the same FMA configuration — without this, a
+# harness that links SharedCode but omits -mfma compiles FMADD as mul+add on
+# x86_64, producing ~1 ULP different float32 results than the shipped binary.
+if(APPLE)
+    target_compile_options(SharedCode INTERFACE "-Xarch_x86_64" "-mfma")
+elseif(MSVC)
+    target_compile_options(SharedCode INTERFACE "/arch:AVX2")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64|AMD64)")
+    target_compile_options(SharedCode INTERFACE "-mfma")
+endif()
+
 # Include directories and compile definitions for SharedCode
 cmake_policy(SET CMP0167 NEW)
 

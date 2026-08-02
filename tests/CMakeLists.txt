@@ -46,6 +46,8 @@ if(BUILD_TEST_HARNESSES)
     target_link_libraries(diffuser_loop_check PRIVATE SharedCode)
     add_executable(diffuser_transport_check harnesses/dsp/diffuser_transport_check.cpp)
     target_link_libraries(diffuser_transport_check PRIVATE SharedCode)
+    add_executable(loop_gain_check harnesses/dsp/loop_gain_check.cpp)
+    target_link_libraries(loop_gain_check PRIVATE SharedCode)
     add_executable(bypass_null_check harnesses/dsp/bypass_null_check.cpp)
     target_link_libraries(bypass_null_check PRIVATE SharedCode)
     add_executable(crossfade_parity harnesses/simd/crossfade_parity.cpp)
@@ -268,7 +270,7 @@ if(BUILD_TEST_HARNESSES)
     endif()
 
     # ── CTest registration ──────────────────────────────────────────────
-    # 24 correctness harnesses: exit 0 = pass. The 6 benchmarks (tan_bench,
+    # 25 correctness harnesses: exit 0 = pass. The 6 benchmarks (tan_bench,
     # adaa_bench, delay_line_bench, chain_bench, fb_bench, diffuser_bench) are
     # labeled "bench" so
     # `ctest -LE bench` excludes them. They report numbers, not pass/fail.
@@ -287,6 +289,7 @@ if(BUILD_TEST_HARNESSES)
     add_test(NAME diffusion_onset_check   COMMAND diffusion_onset_check)
     add_test(NAME diffuser_loop_check      COMMAND diffuser_loop_check)
     add_test(NAME diffuser_transport_check  COMMAND diffuser_transport_check)
+    add_test(NAME loop_gain_check          COMMAND loop_gain_check)
     add_test(NAME bypass_null_check      COMMAND bypass_null_check)
     add_test(NAME crossfade_parity       COMMAND crossfade_parity)
     add_test(NAME dither_check            COMMAND dither_check)
