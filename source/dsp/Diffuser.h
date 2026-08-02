@@ -30,6 +30,7 @@ namespace MarsDSP::Diffusion {
         static constexpr int   kModSectionA    = 2;
         static constexpr int   kModSectionB    = 5;
         static constexpr float kDetuneRatio    = 1.317f;
+        static constexpr int   kRenormInterval = 4096; // samples between amplitude corrections
 
         static constexpr std::array<float, kNumSections> kPathMetersL{
             4.54125f, 3.93375f, 3.19125f, 2.92875f, 2.32875f, 2.01000f, 1.18875f, 0.82875f };
@@ -68,6 +69,7 @@ namespace MarsDSP::Diffusion {
 
             oscAc_ = 1.0; oscAs_ = 0.0;
             oscBc_ = 0.0; oscBs_ = 1.0;
+            oscCount_ = 0;
             sizeSm_.setCurrentAndTargetValue(sizeSm_.getTargetValue());
             coefSm_.setCurrentAndTargetValue(coefSm_.getTargetValue());
             depthSm_.setCurrentAndTargetValue(depthSm_.getTargetValue());
@@ -120,6 +122,7 @@ namespace MarsDSP::Diffusion {
                     oscAc_ -= oscAk_ * oscAs_;
                     oscBs_ += oscBk_ * oscBc_;
                     oscBc_ -= oscBk_ * oscBs_;
+                    if (++oscCount_ >= kRenormInterval) { oscCount_ = 0; renormaliseOsc_(); }
 
                     modAL_[static_cast<std::size_t>(j)] = depth * static_cast<float>(oscAc_);
                     modBL_[static_cast<std::size_t>(j)] = depth * static_cast<float>(oscBc_);
@@ -150,6 +153,7 @@ namespace MarsDSP::Diffusion {
                 oscAc_ -= oscAk_ * oscAs_;
                 oscBs_ += oscBk_ * oscBc_;
                 oscBc_ -= oscBk_ * oscBs_;
+                if (++oscCount_ >= kRenormInterval) { oscCount_ = 0; renormaliseOsc_(); }
 
                 const float modAL = depth * static_cast<float>(oscAc_);
                 const float modBL = depth * static_cast<float>(oscBc_);
@@ -213,10 +217,27 @@ namespace MarsDSP::Diffusion {
             return lenF * (1.0f - kMaxSizeCut * (1.0f - size01));
         }
 
+        // Return the larger oscillator magnitude. Both pairs stay near one.
+        [[nodiscard]] double oscillatorMagnitude() const noexcept
+        {
+            const double a = oscAc_ * oscAc_ + oscAs_ * oscAs_;
+            const double b = oscBc_ * oscBc_ + oscBs_ * oscBs_;
+            return std::sqrt(std::max(a, b));
+        }
+
     private:
         static constexpr double kSpeedOfSoundMps = 343.0;
         static constexpr int    kModHeadroom     = 64;
         static constexpr int    kMaxPrimeScan    = 1 << 16;
+
+        // Hold the oscillator amplitude at one.
+        void renormaliseOsc_() noexcept
+        {
+            const double nA = (3.0 - (oscAc_ * oscAc_ + oscAs_ * oscAs_)) * 0.5;
+            oscAc_ *= nA; oscAs_ *= nA;
+            const double nB = (3.0 - (oscBc_ * oscBc_ + oscBs_ * oscBs_)) * 0.5;
+            oscBc_ *= nB; oscBs_ *= nB;
+        }
 
         // prime-snapped section lengths from the acoustic path tables.
         // Shared by prepareImpl_ (the rings) and ringStorageFloats (the
@@ -445,6 +466,7 @@ namespace MarsDSP::Diffusion {
         double oscBc_ = 0.0;
         double oscBs_ = 1.0;
         double oscBk_ = 0.0;
+        int    oscCount_ = 0;
     };
 }
 #endif

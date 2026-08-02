@@ -63,6 +63,14 @@ if(BUILD_TEST_HARNESSES)
     add_executable(state_roundtrip_check harnesses/dsp/state_roundtrip_check.cpp)
     target_link_libraries(state_roundtrip_check PRIVATE SharedCode
         juce::juce_audio_processors juce::juce_dsp juce::juce_gui_basics)
+
+    add_executable(long_run_stability_check harnesses/dsp/long_run_stability_check.cpp)
+    target_link_libraries(long_run_stability_check PRIVATE SharedCode)
+    if(NOT MSVC)
+        target_compile_options(long_run_stability_check PRIVATE -O2)
+    else()
+        target_compile_options(long_run_stability_check PRIVATE /O2)
+    endif()
     if(MSVC)
         target_compile_options(crossfade_parity PRIVATE /O2)
     else()
@@ -315,6 +323,7 @@ if(BUILD_TEST_HARNESSES)
     add_test(NAME rt_alloc_check         COMMAND rt_alloc_check)
     add_test(NAME rt_stack_check         COMMAND rt_stack_check)
     add_test(NAME state_roundtrip_check  COMMAND state_roundtrip_check)
+    add_test(NAME long_run_stability_check   COMMAND long_run_stability_check)
 
     # The 6 benchmarks are registered as tests but labeled "bench" so
     # `ctest -LE bench` excludes them. They report numbers, not pass/fail.

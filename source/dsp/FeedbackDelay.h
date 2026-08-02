@@ -336,6 +336,9 @@ namespace MarsDSP::Delays {
         [[nodiscard]] static constexpr int latencySamples() noexcept { return 0; }
         [[nodiscard]] float getMaxDelay() const noexcept { return maxDelay_; }
 
+        // Return the larger modulation oscillator magnitude.
+        [[nodiscard]] double oscillatorMagnitude() const noexcept { return diffuser_.oscillatorMagnitude(); }
+
         // RMS ratio of tanh(k * x) to x for a 0.5-amplitude sine reference.
         // The loop output trim is pow(rmsRatio, -0.5). Computed by fixed
         // quadrature over one sine period.
