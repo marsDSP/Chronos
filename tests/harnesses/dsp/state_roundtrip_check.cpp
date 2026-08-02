@@ -148,10 +148,10 @@ int main()
         a.replaceState (s);
 
         // The out-of-range feedback must clamp to the legal maximum.
-        const float fb = getDenorm (a, "feedback");
-        CHECK (fb > 1.19f && fb < 1.21f);
-        const float delay = getDenorm (a, "delayTime");
-        CHECK (delay >= 5.0f && delay <= 5000.001f);
+        const float fb = getDenorm(a, "feedback");
+        CHECK(fb > 1.14f && fb < 1.16f);
+        const float delay = getDenorm(a, "delayTime");
+        CHECK(delay >= 1.0f && delay <= 5000.001f);
         // The live state now carries the current schema version.
         CHECK (static_cast<int> (a.state.getProperty ("version")) == 2);
     }

@@ -85,7 +85,7 @@ namespace MarsDSP::Delays {
             delaySm_.setCurrentAndTargetValue(clampDelay_(p.delaySamples));
             fbSm_.setCurrentAndTargetValue(std::clamp(p.feedback, 0.0f, kMaxFeedback));
             crossSm_.setCurrentAndTargetValue(std::clamp(p.crossFeed, 0.0f, 1.0f));
-            driveSm_.setCurrentAndTargetValue(std::clamp(p.loopDrive, 0.1f, 16.0f));
+            driveSm_.setCurrentAndTargetValue(std::clamp(p.loopDrive, 0.501f, 15.849f));
             dampGSm_.setCurrentAndTargetValue(dampGSm_.getTargetValue());
             dampG_ = dampGSm_.getCurrentValue();
             satLatencySm_.setCurrentAndTargetValue(satLatencySm_.getTargetValue());
@@ -105,7 +105,7 @@ namespace MarsDSP::Delays {
             delaySm_.setTargetValue(clampDelay_(p.delaySamples));
             fbSm_.setTargetValue(std::clamp(p.feedback, 0.0f, kMaxFeedback));
             crossSm_.setTargetValue(std::clamp(p.crossFeed, 0.0f, 1.0f));
-            driveSm_.setTargetValue(std::clamp(p.loopDrive, 0.1f, 16.0f));
+            driveSm_.setTargetValue(std::clamp(p.loopDrive, 0.501f, 15.849f));
             applyDiffuserParams_(p);
             enableDiffuser_ = p.enableDiffuser;
         }
@@ -426,7 +426,8 @@ namespace MarsDSP::Delays {
         {
             diffuser_.setDiffusion(p.diffusion);
             diffuser_.setSize(p.diffuserSize);
-            diffuser_.setModDepthSamples(p.diffModDepth);
+            const float diffModSamples = p.diffModDepth * 0.001f * static_cast<float>(sampleRate_);
+            diffuser_.setModDepthSamples(diffModSamples);
             diffuser_.setModRateHz(p.diffModRateHz);
         }
 

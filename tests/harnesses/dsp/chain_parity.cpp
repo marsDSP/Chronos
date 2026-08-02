@@ -90,7 +90,7 @@ struct ChainRef
     bool    fbEnableDiffuser {false};
     float   fbDiffusion {0.7f};
     float   fbDiffuserSize {0.5f};
-    float   fbDiffModDepth {16.0f};
+    float   fbDiffModDepth {0.30f};
     float   fbDiffModRateHz {0.5f};
 
     static float nextUniform(std::uint32_t& s) noexcept
@@ -154,8 +154,7 @@ struct ChainRef
         fbDelay.resetParams(fp);
     }
 
-    void setParams(float dlySmp, int order, float drvLin, float mix, float gainLin, float hpfHz, float lpfHz, int bits,
-                   MarsDSP::Delays::Interpolation interp) noexcept
+    void setParams(float dlySmp, int order, float drvLin, float mix, float gainLin, float hpfHz, float lpfHz, int bits) noexcept
     {
         delaySamples = dlySmp;
         adaaOrder = order;
@@ -337,7 +336,7 @@ struct TestCfg
 
 // Build engine Params from raw values.
 MarsDSP::ChronosEngine::Params makeParams(float dlySmp, int order, float drvLin, float mix, float gainLin,
-                                          float hpfHz, float lpfHz, int bits, MarsDSP::Delays::Interpolation interp)
+                                          float hpfHz, float lpfHz, int bits)
 {
     MarsDSP::ChronosEngine::Params p{};
     p.delaySamples = dlySmp;
@@ -348,7 +347,6 @@ MarsDSP::ChronosEngine::Params makeParams(float dlySmp, int order, float drvLin,
     p.lpfHz        = lpfHz;
     p.bits         = bits;
     p.adaaOrder    = order;
-    p.interp       = interp;
     return p;
 }
 
@@ -362,7 +360,6 @@ void runOne(const TestCfg& tc, long& totalSamples)
     constexpr float kHpfHz = 200.0f;
     constexpr float kLpfHz = 8000.0f;
     constexpr int   kBits  = 24;
-    constexpr auto  kInterp = MarsDSP::Delays::Interpolation::Lagrange5th;
 
     const float drvLin   = std::pow(10.0f, tc.driveDb / 20.0f);
     const float gainLin  = 1.0f;
@@ -373,7 +370,7 @@ void runOne(const TestCfg& tc, long& totalSamples)
     engine.prepare(kFs, 256, tc.numChannels);
     engine.reset();
     engine.setDitherSeeds(kSeedL, kSeedR);
-    engine.resetParams(makeParams(dlySmp, tc.adaaOrder, drvLin, tc.mixPct, gainLin, kHpfHz, kLpfHz, kBits, kInterp));
+    engine.resetParams(makeParams(dlySmp, tc.adaaOrder, drvLin, tc.mixPct, gainLin, kHpfHz, kLpfHz, kBits));
 
     // ── Reference ──
     Ref::ChainRef ref;
@@ -406,8 +403,8 @@ void runOne(const TestCfg& tc, long& totalSamples)
 
     // setParams for the first block (matching what processBlock does: update
     // then setParams). For static, the targets don't change.
-    engine.setParams(makeParams(dlySmp, tc.adaaOrder, curDrvLin, curMix, gainLin, kHpfHz, kLpfHz, kBits, kInterp));
-    ref.setParams(dlySmp, tc.adaaOrder, curDrvLin, curMix, gainLin, kHpfHz, kLpfHz, kBits, kInterp);
+    engine.setParams(makeParams(dlySmp, tc.adaaOrder, curDrvLin, curMix, gainLin, kHpfHz, kLpfHz, kBits));
+    ref.setParams(dlySmp, tc.adaaOrder, curDrvLin, curMix, gainLin, kHpfHz, kLpfHz, kBits);
 
     float* engIo[2] = { engL.data(), tc.numChannels > 1 ? engR.data() : nullptr };
     float* refIo[2] = { refL.data(), tc.numChannels > 1 ? refR.data() : nullptr };
@@ -449,7 +446,6 @@ void runStateCarry(long& totalSamples)
     constexpr std::uint32_t kSeedR = 0x9abcdef0u;
     constexpr float kHpfHz = 200.0f, kLpfHz = 8000.0f;
     constexpr int kBits = 24;
-    constexpr auto kInterp = MarsDSP::Delays::Interpolation::Lagrange5th;
     const float drvLin = std::pow(10.0f, 12.0f / 20.0f);
     const float dlySmp = 240.0f;
 
@@ -457,7 +453,7 @@ void runStateCarry(long& totalSamples)
     engine.prepare(kFs, 256, kNumCh);
     engine.reset();
     engine.setDitherSeeds(kSeedL, kSeedR);
-    engine.resetParams(makeParams(dlySmp, 2, drvLin, 50.0f, 1.0f, kHpfHz, kLpfHz, kBits, kInterp));
+    engine.resetParams(makeParams(dlySmp, 2, drvLin, 50.0f, 1.0f, kHpfHz, kLpfHz, kBits));
 
     Ref::ChainRef ref;
     ref.prepare(kFs, 256, kNumCh);
@@ -471,8 +467,8 @@ void runStateCarry(long& totalSamples)
         const float mix = 50.0f + 30.0f * std::sin(static_cast<double>(b) * 0.05);
         const float drv = std::pow(10.0f, (12.0f + 6.0f * std::sin(static_cast<double>(b) * 0.03)) / 20.0f);
 
-        engine.setParams(makeParams(dlySmp, 2, drv, mix, 1.0f, kHpfHz, kLpfHz, kBits, kInterp));
-        ref.setParams(dlySmp, 2, drv, mix, 1.0f, kHpfHz, kLpfHz, kBits, kInterp);
+        engine.setParams(makeParams(dlySmp, 2, drv, mix, 1.0f, kHpfHz, kLpfHz, kBits));
+        ref.setParams(dlySmp, 2, drv, mix, 1.0f, kHpfHz, kLpfHz, kBits);
 
         std::vector<float> engL(kBlockSize), engR(kBlockSize);
         std::vector<float> refL(kBlockSize), refR(kBlockSize);

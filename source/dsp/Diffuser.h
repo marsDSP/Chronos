@@ -48,17 +48,23 @@ namespace MarsDSP::Diffusion {
             prepareImpl_(sampleRate, &arena);
         }
 
+        static int modHeadroomFor(double sampleRate) noexcept
+        {
+            return std::max(128, static_cast<int>(std::ceil(0.002 * sampleRate)));
+        }
+
         static std::size_t ringStorageFloats(double sampleRate) noexcept
         {
+            const int headroom = modHeadroomFor(sampleRate);
             int lenL[kNumSections], lenR[kNumSections];
             computeSectionLens(sampleRate, lenL, lenR);
             std::size_t total = 0;
             for (int i = 0; i < kNumSections; ++i)
             {
                 total += Delays::Pow2RingBuffer::arenaFloatsFor(
-                    lenL[i] + kModHeadroom + Delays::Pow2RingBuffer::kTail + 8);
+                    lenL[i] + headroom + Delays::Pow2RingBuffer::kTail + 8);
                 total += Delays::Pow2RingBuffer::arenaFloatsFor(
-                    lenR[i] + kModHeadroom + Delays::Pow2RingBuffer::kTail + 8);
+                    lenR[i] + headroom + Delays::Pow2RingBuffer::kTail + 8);
             }
             return total;
         }
@@ -94,7 +100,7 @@ namespace MarsDSP::Diffusion {
         void setModDepthSamples(float depth) noexcept
         {
             depthSm_.setTargetValue(
-                std::clamp(depth, 0.0f, static_cast<float>(kModHeadroom - 2)));
+                std::clamp(depth, 0.0f, static_cast<float>(kModHeadroom_ - 2)));
         }
 
         void setModRateHz(float hz) noexcept
@@ -228,8 +234,8 @@ namespace MarsDSP::Diffusion {
 
     private:
         static constexpr double kSpeedOfSoundMps = 343.0;
-        static constexpr int    kModHeadroom     = 64;
         static constexpr int    kMaxPrimeScan    = 1 << 16;
+        int    kModHeadroom_  = 128;
 
         // Hold the oscillator amplitude at one.
         void renormaliseOsc_() noexcept
@@ -283,10 +289,11 @@ namespace MarsDSP::Diffusion {
                 secR_[static_cast<std::size_t>(i)].len = lenR[i];
             }
 
+            kModHeadroom_ = modHeadroomFor(sampleRate);
             for (auto* bank : { &secL_, &secR_ })
                 for (auto& s : *bank)
                 {
-                    const int minCap = s.len + kModHeadroom + Delays::Pow2RingBuffer::kTail + 8;
+                    const int minCap = s.len + kModHeadroom_ + Delays::Pow2RingBuffer::kTail + 8;
                     if (arena != nullptr) s.ring.prepare(minCap, *arena);
                     else                  s.ring.prepare(minCap);
                 }

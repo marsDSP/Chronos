@@ -618,7 +618,6 @@ double benchEngine(const Cfg& c, const Bufs& b, float driveLin, float gainLin,
     ep.lpfHz        = static_cast<float>(kLpfHz);
     ep.bits         = kBits;
     ep.adaaOrder    = c.mode;
-    ep.interp       = kInterp;
     eng.resetParams(ep);
 
     std::vector<float> eL(static_cast<std::size_t>(kSamples));

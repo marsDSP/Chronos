@@ -156,7 +156,6 @@ int main()
         p.lpfHz = 20000.0f;
         p.bits = 24;
         p.adaaOrder = 0;
-        p.interp = MarsDSP::Delays::Interpolation::Lagrange5th;
         engine.resetParams(p);
 
         std::vector<float> inL(static_cast<std::size_t>(kN), 0.0f);
@@ -269,7 +268,6 @@ int main()
         p.lpfHz = 20000.0f;
         p.bits = 32;
         p.adaaOrder = 0;
-        p.interp = MarsDSP::Delays::Interpolation::Lagrange5th;
         p.feedback = 0.0f;
         engine.resetParams(p);
 

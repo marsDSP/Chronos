@@ -86,7 +86,6 @@ Engine::Params makeParams(bool enableDiff, float diffusion, float size) noexcept
     p.lpfHz           = 20000.0f;
     p.bits            = 24;
     p.adaaOrder       = 0;
-    p.interp          = MarsDSP::Delays::Interpolation::Lagrange5th;
     p.feedback        = kFbGain;
     p.dampHz          = 6000.0f;
     p.crossFeed       = 0.0f;

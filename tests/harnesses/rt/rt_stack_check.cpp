@@ -114,7 +114,6 @@ MarsDSP::ChronosEngine::Params toParams(const RtConfig& c) noexcept
     p.lpfHz          = 20000.0f;
     p.bits           = 32;
     p.adaaOrder      = c.adaaOrder;
-    p.interp         = MarsDSP::Delays::Interpolation::Lagrange5th;
     p.feedback       = c.feedback;
     p.dampHz         = c.dampHz;
     p.crossFeed      = c.crossFeed;

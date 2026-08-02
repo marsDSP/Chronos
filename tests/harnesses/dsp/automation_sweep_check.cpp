@@ -50,16 +50,15 @@ MarsDSP::ChronosEngine::Params paramsAt(float pos) noexcept
     p.lpfHz        = lerp(2000.0f, 20000.0f, pos);
     p.bits         = 32;
     p.adaaOrder    = (pos < 0.5f) ? 2 : 0;
-    p.interp       = MarsDSP::Delays::Interpolation::Lagrange5th;
 
     p.feedback     = lerp(0.0f, 0.9f, pos);
     p.dampHz       = lerp(200.0f, 16000.0f, pos);
     p.crossFeed    = lerp(0.0f, 1.0f, pos);
-    p.loopDrive    = lerp(0.5f, 4.0f, pos);
+    p.loopDrive    = lerp(0.501f, 4.0f, pos);
     p.loopSatOrder = (pos < 0.5f) ? 2 : 0;
     p.diffusion    = lerp(0.0f, 1.0f, pos);
     p.diffuserSize = lerp(0.0f, 1.0f, pos);
-    p.diffModDepth = lerp(0.0f, 32.0f, pos);
+    p.diffModDepth = lerp(0.0f, 1.5f, pos);
     p.diffModRateHz = lerp(0.1f, 4.0f, pos);
     p.enableDiffuser = (pos >= 0.5f);
 

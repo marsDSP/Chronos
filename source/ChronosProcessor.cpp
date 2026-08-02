@@ -120,9 +120,9 @@ void ChronosProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     p.lpfHz = parameters.getRawLpfHz();
     p.bits = parameters.getRawBits();
     p.adaaOrder = parameters.getADAAOrder();
-    p.interp = parameters.getInterpolation();
     p.feedback = parameters.getRawFeedback();
     p.dampHz = parameters.getRawDampHz();
+    p.loopCutHz = parameters.getRawLoopCutHz();
     p.crossFeed = parameters.getRawCrossFeed();
     p.loopDrive = parameters.getRawLoopDrive();
     p.loopSatOrder = parameters.getRawLoopSatOrder();
@@ -131,9 +131,12 @@ void ChronosProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     p.diffModDepth = parameters.getRawDiffModDepth();
     p.diffModRateHz = parameters.getRawDiffModRateHz();
     p.enableDiffuser = parameters.getRawEnableDiffuser();
+    p.delaySync = parameters.getRawDelaySync();
+    p.delayDivision = parameters.getRawDelayDivision();
+    p.delayModDepth = parameters.getRawDelayModDepth();
+    p.delayModRateHz = parameters.getRawDelayModRateHz();
     engine.resetParams(p);
 
-    // Constant compile-time latency, reported once here
     setLatencySamples(MarsDSP::Align::SaturatorAlign::kBudget);
 }
 
@@ -178,7 +181,6 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear(i, 0, buffer.getNumSamples());
 
-    // The engine handles bypass internally with a latency-aligned fade.
     parameters.update();
     engine.setBypass(parameters.getBypass());
 
@@ -194,9 +196,9 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
     p.lpfHz = parameters.getRawLpfHz();
     p.bits = parameters.getRawBits();
     p.adaaOrder = parameters.getADAAOrder();
-    p.interp = parameters.getInterpolation();
     p.feedback = parameters.getRawFeedback();
     p.dampHz = parameters.getRawDampHz();
+    p.loopCutHz = parameters.getRawLoopCutHz();
     p.crossFeed = parameters.getRawCrossFeed();
     p.loopDrive = parameters.getRawLoopDrive();
     p.loopSatOrder = parameters.getRawLoopSatOrder();
@@ -205,6 +207,10 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
     p.diffModDepth = parameters.getRawDiffModDepth();
     p.diffModRateHz = parameters.getRawDiffModRateHz();
     p.enableDiffuser = parameters.getRawEnableDiffuser();
+    p.delaySync = parameters.getRawDelaySync();
+    p.delayDivision = parameters.getRawDelayDivision();
+    p.delayModDepth = parameters.getRawDelayModDepth();
+    p.delayModRateHz = parameters.getRawDelayModRateHz();
     engine.setParams(p);
 
     float *io[2] = {
@@ -250,9 +256,31 @@ void ChronosProcessor::migrateState_(ValueTree& state, int fromVersion)
 {
     if (fromVersion < 2)
     {
-        // A version-1 or absent state needs no change yet.
-        // Add the clamps to the new legal ranges when the ranges change.
-        ignoreUnused(state);
+        for (int i = state.getNumChildren() - 1; i >= 0; --i)
+        {
+            auto child = state.getChild(i);
+            const String id = child.getProperty("id").toString();
+            if (id == "feedback")
+            {
+                const float v = static_cast<float>(child.getProperty("value"));
+                child.setProperty("value", std::clamp(v, 0.0f, 1.15f), nullptr);
+            }
+            else if (id == "drive")
+            {
+                const float v = static_cast<float>(child.getProperty("value"));
+                child.setProperty("value", std::clamp(v, 0.0f, 24.0f), nullptr);
+            }
+            else if (id == "diffModDepth")
+            {
+                const float samples = static_cast<float>(child.getProperty("value"));
+                const float ms = samples / static_cast<float>(getSampleRate()) * 1000.0f;
+                child.setProperty("value", std::clamp(ms, 0.0f, 1.5f), nullptr);
+            }
+            else if (id == "interpolation")
+            {
+                state.removeChild(i, nullptr);
+            }
+        }
     }
 }
 

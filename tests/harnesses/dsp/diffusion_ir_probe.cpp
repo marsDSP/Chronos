@@ -38,7 +38,6 @@ Engine::Params baseParams(bool enableDiff, float diffusion, float size,
     p.delaySamples = delay;
     p.driveLin = 1.0f; p.mix = 100.0f; p.gainLin = 1.0f;
     p.hpfHz = 20.0f; p.lpfHz = 20000.0f; p.bits = 24; p.adaaOrder = 0;
-    p.interp = MarsDSP::Delays::Interpolation::Lagrange5th;
     p.feedback = feedback; p.dampHz = 6000.0f; p.crossFeed = 0.0f;
     p.loopDrive = 1.0f; p.loopSatOrder = 0;
     p.diffusion = diffusion; p.diffuserSize = size;

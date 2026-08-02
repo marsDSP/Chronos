@@ -67,7 +67,6 @@ int main()
         p.lpfHz        = 8000.0f;
         p.bits         = 24;
         p.adaaOrder    = 2;
-        p.interp       = Interpolation::Lagrange5th;
         engine.setParams(p);
 
         // Mono prepare path.

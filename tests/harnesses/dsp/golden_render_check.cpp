@@ -162,9 +162,9 @@ StereoBuffer makeBurst()
 }
 
 // ── Configurations ───────────────────────────────────────────────────────
-// Columns: delayMs, feedback, dampHz, crossFeed, loopDrive (linear),
+// Columns: delayMs, feedback, dampHz, crossFeed, loopDriveDb,
 // loopSatOrder, driveDb, adaaOrder, mixPercent, enableDiffuser,
-// diffusion, diffuserSize, diffModDepth (samples), diffModRateHz.
+// diffusion, diffuserSize, diffModDepthMs, diffModRateHz.
 struct Config
 {
     int id;
@@ -172,7 +172,7 @@ struct Config
     float feedback;
     float dampHz;
     float crossFeed;
-    float loopDrive;
+    float loopDriveDb;
     int loopSatOrder;
     float driveDb;
     int adaaOrder;
@@ -180,25 +180,25 @@ struct Config
     bool enableDiffuser;
     float diffusion;
     float diffuserSize;
-    float diffModDepth;
+    float diffModDepthMs;
     float diffModRateHz;
 };
 
 const std::array<Config, 12>& configs()
 {
     static constexpr std::array<Config, 12> kConfigs{ {
-        { 1,  500.0f, 0.00f, 6000.0f, 0.0f, 1.0f, 2,  0.0f, 2, 100.0f, false, 0.7f, 0.5f, 16.0f, 0.5f },
-        { 2,  500.0f, 0.50f, 6000.0f, 0.0f, 1.0f, 2,  0.0f, 2, 100.0f, false, 0.7f, 0.5f, 16.0f, 0.5f },
-        { 3,  500.0f, 0.90f, 6000.0f, 0.0f, 1.0f, 2,  0.0f, 2, 100.0f, false, 0.7f, 0.5f, 16.0f, 0.5f },
-        { 4,  500.0f, 1.10f, 6000.0f, 0.0f, 1.0f, 2,  0.0f, 2, 100.0f, false, 0.7f, 0.5f, 16.0f, 0.5f },
-        { 5,   37.0f, 0.65f,12000.0f, 0.0f, 1.0f, 2,  0.0f, 2, 100.0f, false, 0.7f, 0.5f, 16.0f, 0.5f },
-        { 6, 4800.0f, 0.40f, 3000.0f, 0.0f, 1.0f, 2,  0.0f, 2, 100.0f, false, 0.7f, 0.5f, 16.0f, 0.5f },
-        { 7,  500.0f, 0.60f, 6000.0f, 1.0f, 1.0f, 2,  0.0f, 2, 100.0f, false, 0.7f, 0.5f, 16.0f, 0.5f },
-        { 8,  500.0f, 0.60f, 6000.0f, 0.0f, 8.0f, 2,  0.0f, 2, 100.0f, false, 0.7f, 0.5f, 16.0f, 0.5f },
-        { 9,  500.0f, 0.60f, 6000.0f, 0.0f, 1.0f, 1, 18.0f, 1, 100.0f, false, 0.7f, 0.5f, 16.0f, 0.5f },
-        { 10, 500.0f, 0.60f, 6000.0f, 0.0f, 1.0f, 0,  0.0f, 0, 100.0f, false, 0.7f, 0.5f, 16.0f, 0.5f },
-        { 11, 500.0f, 0.60f, 6000.0f, 0.0f, 1.0f, 2,  0.0f, 2, 100.0f, true,  0.7f, 0.5f, 16.0f, 0.5f },
-        { 12, 500.0f, 0.60f, 6000.0f, 0.3f, 2.0f, 2,  6.0f, 2,  45.0f, true,  0.9f, 0.8f, 32.0f, 1.7f },
+        { 1,  500.0f, 0.00f, 6000.0f, 0.0f,  0.0f, 2,  0.0f, 2, 100.0f, false, 0.7f, 0.5f, 16.0f/48.0f, 0.5f },
+        { 2,  500.0f, 0.50f, 6000.0f, 0.0f,  0.0f, 2,  0.0f, 2, 100.0f, false, 0.7f, 0.5f, 16.0f/48.0f, 0.5f },
+        { 3,  500.0f, 0.90f, 6000.0f, 0.0f,  0.0f, 2,  0.0f, 2, 100.0f, false, 0.7f, 0.5f, 16.0f/48.0f, 0.5f },
+        { 4,  500.0f, 1.10f, 6000.0f, 0.0f,  0.0f, 2,  0.0f, 2, 100.0f, false, 0.7f, 0.5f, 16.0f/48.0f, 0.5f },
+        { 5,   37.0f, 0.65f,12000.0f, 0.0f,  0.0f, 2,  0.0f, 2, 100.0f, false, 0.7f, 0.5f, 16.0f/48.0f, 0.5f },
+        { 6, 4800.0f, 0.40f, 3000.0f, 0.0f,  0.0f, 2,  0.0f, 2, 100.0f, false, 0.7f, 0.5f, 16.0f/48.0f, 0.5f },
+        { 7,  500.0f, 0.60f, 6000.0f, 1.0f,  0.0f, 2,  0.0f, 2, 100.0f, false, 0.7f, 0.5f, 16.0f/48.0f, 0.5f },
+        { 8,  500.0f, 0.60f, 6000.0f, 0.0f, 18.06f, 2,  0.0f, 2, 100.0f, false, 0.7f, 0.5f, 16.0f/48.0f, 0.5f },
+        { 9,  500.0f, 0.60f, 6000.0f, 0.0f,  0.0f, 1, 18.0f, 1, 100.0f, false, 0.7f, 0.5f, 16.0f/48.0f, 0.5f },
+        { 10, 500.0f, 0.60f, 6000.0f, 0.0f,  0.0f, 0,  0.0f, 0, 100.0f, false, 0.7f, 0.5f, 16.0f/48.0f, 0.5f },
+        { 11, 500.0f, 0.60f, 6000.0f, 0.0f,  0.0f, 2,  0.0f, 2, 100.0f, true,  0.7f, 0.5f, 16.0f/48.0f, 0.5f },
+        { 12, 500.0f, 0.60f, 6000.0f, 0.3f,  6.02f, 2,  6.0f, 2,  45.0f, true,  0.9f, 0.8f, 32.0f/48.0f, 1.7f },
     } };
     return kConfigs;
 }
@@ -209,22 +209,26 @@ MarsDSP::ChronosEngine::Params buildParams(const Config& c)
     p.delaySamples   = c.delayMs * 0.001f * static_cast<float>(kFsInt);
     p.driveLin       = std::pow(10.0f, c.driveDb / 20.0f);
     p.mix            = c.mixPercent;
-    p.gainLin        = 1.0f;        // gain 0 dB
-    p.hpfHz          = 20.0f;       // transparent (min)
-    p.lpfHz          = 20000.0f;    // transparent (max)
+    p.gainLin        = 1.0f;
+    p.hpfHz          = 20.0f;
+    p.lpfHz          = 20000.0f;
     p.bits           = 32;
     p.adaaOrder      = c.adaaOrder;
-    p.interp         = MarsDSP::Delays::Interpolation::Lagrange5th;
     p.feedback       = c.feedback;
     p.dampHz         = c.dampHz;
+    p.loopCutHz      = 40.0f;
     p.crossFeed      = c.crossFeed;
-    p.loopDrive      = c.loopDrive; // linear gain
+    p.loopDrive      = std::pow(10.0f, c.loopDriveDb / 20.0f);
     p.loopSatOrder   = c.loopSatOrder;
     p.diffusion      = c.diffusion;
     p.diffuserSize   = c.diffuserSize;
-    p.diffModDepth   = c.diffModDepth;
+    p.diffModDepth   = c.diffModDepthMs;
     p.diffModRateHz  = c.diffModRateHz;
     p.enableDiffuser = c.enableDiffuser;
+    p.delaySync      = false;
+    p.delayDivision  = 11;
+    p.delayModDepth  = 0.0f;
+    p.delayModRateHz = 0.35f;
     return p;
 }
 

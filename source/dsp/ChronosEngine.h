@@ -40,18 +40,23 @@ namespace MarsDSP {
             float lpfHz;
             int bits;
             int adaaOrder;
-            Delays::Interpolation interp;
             // --- feedback / diffusion ---
-            float feedback       = 0.0f;   // 0..1.2; >1 self-oscillates, bounded
-            float dampHz         = 6000.0f; // loop lowpass
-            float crossFeed      = 0.0f;   // 0 straight, 1 full ping-pong
-            float loopDrive      = 1.0f;   // linear gain into the loop tanh
-            int   loopSatOrder   = 2;      // 0 hard, 1 ADAA1, 2 ADAA2
-            float diffusion      = 0.7f;   // 0..1 -> allpass coeff 0..0.92
-            float diffuserSize   = 0.5f;   // 0..1 (1 = full path length)
-            float diffModDepth   = 16.0f;  // samples, 0..62
-            float diffModRateHz  = 0.5f;   // 0..8
-            bool  enableDiffuser = false;  // off by default
+            float feedback       = 0.0f;
+            float dampHz         = 6000.0f;
+            float loopCutHz      = 40.0f;
+            float crossFeed      = 0.0f;
+            float loopDrive      = 1.0f;
+            int   loopSatOrder   = 2;
+            float diffusion      = 0.7f;
+            float diffuserSize   = 0.5f;
+            float diffModDepth   = 0.30f;
+            float diffModRateHz  = 0.5f;
+            bool  enableDiffuser = false;
+            // --- tempo sync / delay mod ---
+            bool  delaySync      = false;
+            int   delayDivision  = 11;
+            float delayModDepth  = 0.0f;
+            float delayModRateHz = 0.35f;
         };
 
         void prepare(double sampleRate, int maxBlockSize, int numChannels) noexcept
@@ -139,7 +144,6 @@ namespace MarsDSP {
         {
             delaySamples_ = p.delaySamples;
             adaaOrder_ = p.adaaOrder;
-            interp_ = p.interp;
 
             smoothedHpf_ = p.hpfHz;
             smoothedLpf_ = p.lpfHz;
@@ -160,7 +164,6 @@ namespace MarsDSP {
         {
             delaySamples_ = p.delaySamples;
             adaaOrder_ = p.adaaOrder;
-            interp_ = p.interp;
 
             gainSmoother_.setTargetValue(p.gainLin);
             smoothedBits_ = p.bits;
@@ -593,7 +596,6 @@ namespace MarsDSP {
         int numChannels_{0};
         float delaySamples_{0.0f};
         int adaaOrder_{2};
-        Delays::Interpolation interp_{Delays::Interpolation::Lagrange5th};
         float feedback_{0.0f};
         bool enableDiffuser_{false};
     };

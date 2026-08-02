@@ -53,7 +53,6 @@ int main()
     p.lpfHz = 20000.0f;
     p.bits = 32;             // quantiser bypass
     p.adaaOrder = 0;
-    p.interp = MarsDSP::Delays::Interpolation::Lagrange5th;
     p.feedback = 0.0f;
     p.dampHz = 6000.0f;
     p.crossFeed = 0.0f;

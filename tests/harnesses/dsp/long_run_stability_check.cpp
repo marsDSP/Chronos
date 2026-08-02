@@ -67,7 +67,7 @@ int main()
     p.satOrder = 0;
     p.diffusion = 0.7f;
     p.diffuserSize = 0.5f;
-    p.diffModDepth = 16.0f;
+    p.diffModDepth = 16.0f / 48.0f;
     p.diffModRateHz = 0.5f;
     p.enableDiffuser = true;
     fb.resetParams(p);

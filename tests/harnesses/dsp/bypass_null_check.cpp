@@ -35,7 +35,6 @@ MarsDSP::ChronosEngine::Params makeParams(int adaaOrder)
     p.lpfHz        = 8000.0f;
     p.bits         = 24;
     p.adaaOrder    = adaaOrder;
-    p.interp       = MarsDSP::Delays::Interpolation::Lagrange5th;
     return p;
 }
 
