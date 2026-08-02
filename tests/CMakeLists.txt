@@ -79,6 +79,14 @@ if(BUILD_TEST_HARNESSES)
     else()
         target_compile_options(automation_sweep_check PRIVATE /O2)
     endif()
+
+    add_executable(unity_transparency_check harnesses/dsp/unity_transparency_check.cpp)
+    target_link_libraries(unity_transparency_check PRIVATE SharedCode)
+    if(NOT MSVC)
+        target_compile_options(unity_transparency_check PRIVATE -O2)
+    else()
+        target_compile_options(unity_transparency_check PRIVATE /O2)
+    endif()
     if(MSVC)
         target_compile_options(crossfade_parity PRIVATE /O2)
     else()
@@ -333,6 +341,7 @@ if(BUILD_TEST_HARNESSES)
     add_test(NAME state_roundtrip_check  COMMAND state_roundtrip_check)
     add_test(NAME long_run_stability_check   COMMAND long_run_stability_check)
     add_test(NAME automation_sweep_check       COMMAND automation_sweep_check)
+    add_test(NAME unity_transparency_check     COMMAND unity_transparency_check)
 
     # The 6 benchmarks are registered as tests but labeled "bench" so
     # `ctest -LE bench` excludes them. They report numbers, not pass/fail.

@@ -327,79 +327,120 @@ namespace MarsDSP {
                     }
                 }
 
-                const M128 vLsb = MM(set1_ps)(blockLsb);
-                const M128 vInvLsb = MM(set1_ps)(1.0f / blockLsb);
-                const M128 vHalf = MM(set1_ps)(0.5f);
-                const M128 vSignMask = MM(set1_ps)(-0.0f);
+                const bool bypassQuant = (smoothedBits_ >= 32);
                 const int jFull = chunk & ~3;
-                for (int s = 0; s + 4 <= chunk; s += 4)
+                if (bypassQuant)
                 {
-                    alignas(16) float bl[4], br[4];
-                    for (int t = 0; t < 4; ++t)
+                    // No dither, no quantiser. Apply the bypass blend and the gain.
+                    for (int s = 0; s + 4 <= chunk; s += 4)
                     {
-                        const auto ut = static_cast<std::size_t>(s + t);
-                        const float bypassAmt = bypassSmoother_.getNextValue();
-                        bl[t] = data0[offset + s + t] * (1.0f - bypassAmt)
-                              + bypassDryL_.process(bypassDryInL_[ut]) * bypassAmt;
+                        alignas(16) float bl[4], br[4];
+                        for (int t = 0; t < 4; ++t)
+                        {
+                            const auto ut = static_cast<std::size_t>(s + t);
+                            const float bypassAmt = bypassSmoother_.getNextValue();
+                            bl[t] = data0[offset + s + t] * (1.0f - bypassAmt)
+                                  + bypassDryL_.process(bypassDryInL_[ut]) * bypassAmt;
+                            if (hasR)
+                                br[t] = data1[offset + s + t] * (1.0f - bypassAmt)
+                                      + bypassDryR_.process(bypassDryInR_[ut]) * bypassAmt;
+                        }
+                        const M128 vGain = MM(loadu_ps)(gainRamp_.data() + s);
+                        MM(storeu_ps)(data0 + offset + s,
+                            MM(mul_ps)(MM(load_ps)(bl), vGain));
                         if (hasR)
-                            br[t] = data1[offset + s + t] * (1.0f - bypassAmt)
-                                  + bypassDryR_.process(bypassDryInR_[ut]) * bypassAmt;
+                            MM(storeu_ps)(data1 + offset + s,
+                                MM(mul_ps)(MM(load_ps)(br), vGain));
                     }
-                    // L
+                    for (int s = jFull; s < chunk; ++s)
                     {
-                        const M128 vBlend = MM(load_ps)(bl);
-                        const M128 vGain = MM(loadu_ps)(gainRamp_.data() + s);
-                        const M128 vScaled = MM(mul_ps)(vBlend, vGain);
-                        const M128 vD1 = nextUniformSimd_(xorshiftSimdL_);
-                        const M128 vD2 = nextUniformSimd_(xorshiftSimdL_);
-                        const M128 vDither = MM(mul_ps)(MM(sub_ps)(vD1, vD2), vLsb);
-                        const M128 vQ = MM(mul_ps)(MM(add_ps)(vScaled, vDither), vInvLsb);
-
-                        // round-half-away-from-zero: trunc(q + copysign(0.5, q))
-                        const M128 vSign = MM(and_ps)(vQ, vSignMask);
-                        const M128 vShifted = MM(add_ps)(vQ, MM(or_ps)(vHalf, vSign));
-
-                        // trunc via cvtt+cvte (SSE2, no SSE4.1 needed)
-                        const M128I vInt = MM(cvttps_epi32)(vShifted);
-                        const M128 vRounded = MM(cvtepi32_ps)(vInt);
-                        MM(storeu_ps)(data0 + offset + s, MM(mul_ps)(vRounded, vLsb));
-                    }
-                    if (hasR)
-                    {
-                        const M128 vBlend = MM(load_ps)(br);
-                        const M128 vGain = MM(loadu_ps)(gainRamp_.data() + s);
-                        const M128 vScaled = MM(mul_ps)(vBlend, vGain);
-                        const M128 vD1 = nextUniformSimd_(xorshiftSimdR_);
-                        const M128 vD2 = nextUniformSimd_(xorshiftSimdR_);
-                        const M128 vDither = MM(mul_ps)(MM(sub_ps)(vD1, vD2), vLsb);
-                        const M128 vQ = MM(mul_ps)(MM(add_ps)(vScaled, vDither), vInvLsb);
-                        const M128 vSign = MM(and_ps)(vQ, vSignMask);
-                        const M128 vShifted = MM(add_ps)(vQ, MM(or_ps)(vHalf, vSign));
-                        const M128I vInt = MM(cvttps_epi32)(vShifted);
-                        const M128 vRounded = MM(cvtepi32_ps)(vInt);
-                        MM(storeu_ps)(data1 + offset + s, MM(mul_ps)(vRounded, vLsb));
-                    }
-                }
-                // Scalar tail
-                for (int s = jFull; s < chunk; ++s)
-                {
-                    const auto u = static_cast<std::size_t>(s);
-                    const float gainLin = gainRamp_[u];
-                    const float bypassAmt = bypassSmoother_.getNextValue();
-                    {
+                        const auto u = static_cast<std::size_t>(s);
+                        const float gainLin = gainRamp_[u];
+                        const float bypassAmt = bypassSmoother_.getNextValue();
                         const float blend = data0[offset + s] * (1.0f - bypassAmt)
                                           + bypassDryL_.process(bypassDryInL_[u]) * bypassAmt;
-                        const float scaled = blend * gainLin;
-                        const float dither = (nextUniform(xorshiftL_) - nextUniform(xorshiftL_)) * blockLsb;
-                        data0[offset + s] = std::round((scaled + dither) / blockLsb) * blockLsb;
+                        data0[offset + s] = blend * gainLin;
+                        if (hasR)
+                        {
+                            const float blendR = data1[offset + s] * (1.0f - bypassAmt)
+                                               + bypassDryR_.process(bypassDryInR_[u]) * bypassAmt;
+                            data1[offset + s] = blendR * gainLin;
+                        }
                     }
-                    if (hasR)
+                }
+                else
+                {
+                    const M128 vLsb = MM(set1_ps)(blockLsb);
+                    const M128 vInvLsb = MM(set1_ps)(1.0f / blockLsb);
+                    const M128 vHalf = MM(set1_ps)(0.5f);
+                    const M128 vSignMask = MM(set1_ps)(-0.0f);
+                    for (int s = 0; s + 4 <= chunk; s += 4)
                     {
-                        const float blend = data1[offset + s] * (1.0f - bypassAmt)
-                                          + bypassDryR_.process(bypassDryInR_[u]) * bypassAmt;
-                        const float scaled = blend * gainLin;
-                        const float dither = (nextUniform(xorshiftR_) - nextUniform(xorshiftR_)) * blockLsb;
-                        data1[offset + s] = std::round((scaled + dither) / blockLsb) * blockLsb;
+                        alignas(16) float bl[4], br[4];
+                        for (int t = 0; t < 4; ++t)
+                        {
+                            const auto ut = static_cast<std::size_t>(s + t);
+                            const float bypassAmt = bypassSmoother_.getNextValue();
+                            bl[t] = data0[offset + s + t] * (1.0f - bypassAmt)
+                                  + bypassDryL_.process(bypassDryInL_[ut]) * bypassAmt;
+                            if (hasR)
+                                br[t] = data1[offset + s + t] * (1.0f - bypassAmt)
+                                      + bypassDryR_.process(bypassDryInR_[ut]) * bypassAmt;
+                        }
+                        // L
+                        {
+                            const M128 vBlend = MM(load_ps)(bl);
+                            const M128 vGain = MM(loadu_ps)(gainRamp_.data() + s);
+                            const M128 vScaled = MM(mul_ps)(vBlend, vGain);
+                            const M128 vD1 = nextUniformSimd_(xorshiftSimdL_);
+                            const M128 vD2 = nextUniformSimd_(xorshiftSimdL_);
+                            const M128 vDither = MM(mul_ps)(MM(sub_ps)(vD1, vD2), vLsb);
+                            const M128 vQ = MM(mul_ps)(MM(add_ps)(vScaled, vDither), vInvLsb);
+
+                            const M128 vSign = MM(and_ps)(vQ, vSignMask);
+                            const M128 vShifted = MM(add_ps)(vQ, MM(or_ps)(vHalf, vSign));
+
+                            const M128I vInt = MM(cvttps_epi32)(vShifted);
+                            const M128 vRounded = MM(cvtepi32_ps)(vInt);
+                            MM(storeu_ps)(data0 + offset + s, MM(mul_ps)(vRounded, vLsb));
+                        }
+                        if (hasR)
+                        {
+                            const M128 vBlend = MM(load_ps)(br);
+                            const M128 vGain = MM(loadu_ps)(gainRamp_.data() + s);
+                            const M128 vScaled = MM(mul_ps)(vBlend, vGain);
+                            const M128 vD1 = nextUniformSimd_(xorshiftSimdR_);
+                            const M128 vD2 = nextUniformSimd_(xorshiftSimdR_);
+                            const M128 vDither = MM(mul_ps)(MM(sub_ps)(vD1, vD2), vLsb);
+                            const M128 vQ = MM(mul_ps)(MM(add_ps)(vScaled, vDither), vInvLsb);
+                            const M128 vSign = MM(and_ps)(vQ, vSignMask);
+                            const M128 vShifted = MM(add_ps)(vQ, MM(or_ps)(vHalf, vSign));
+                            const M128I vInt = MM(cvttps_epi32)(vShifted);
+                            const M128 vRounded = MM(cvtepi32_ps)(vInt);
+                            MM(storeu_ps)(data1 + offset + s, MM(mul_ps)(vRounded, vLsb));
+                        }
+                    }
+                    // Scalar tail
+                    for (int s = jFull; s < chunk; ++s)
+                    {
+                        const auto u = static_cast<std::size_t>(s);
+                        const float gainLin = gainRamp_[u];
+                        const float bypassAmt = bypassSmoother_.getNextValue();
+                        {
+                            const float blend = data0[offset + s] * (1.0f - bypassAmt)
+                                              + bypassDryL_.process(bypassDryInL_[u]) * bypassAmt;
+                            const float scaled = blend * gainLin;
+                            const float dither = (nextUniform(xorshiftL_) - nextUniform(xorshiftL_)) * blockLsb;
+                            data0[offset + s] = std::round((scaled + dither) / blockLsb) * blockLsb;
+                        }
+                        if (hasR)
+                        {
+                            const float blend = data1[offset + s] * (1.0f - bypassAmt)
+                                              + bypassDryR_.process(bypassDryInR_[u]) * bypassAmt;
+                            const float scaled = blend * gainLin;
+                            const float dither = (nextUniform(xorshiftR_) - nextUniform(xorshiftR_)) * blockLsb;
+                            data1[offset + s] = std::round((scaled + dither) / blockLsb) * blockLsb;
+                        }
                     }
                 }
 

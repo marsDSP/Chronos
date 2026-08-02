@@ -251,6 +251,53 @@ int main()
                     spread);
     }
 
+    // 9. bits == 32 produces no added noise (quantiser bypass).
+    g_section = "bits==32 no-noise";
+    {
+        constexpr int kN = 100000;
+        MarsDSP::ChronosEngine engine;
+        engine.prepare(48000.0, 256, 2);
+        engine.setDitherSeeds(0x12345678u, 0x9abcdef0u);
+        engine.setBypass(false);
+
+        MarsDSP::ChronosEngine::Params p{};
+        p.delaySamples = 0.0f;
+        p.driveLin = 1.0f;
+        p.mix = 100.0f;
+        p.gainLin = 1.0f;
+        p.hpfHz = 20.0f;
+        p.lpfHz = 20000.0f;
+        p.bits = 32;
+        p.adaaOrder = 0;
+        p.interp = MarsDSP::Delays::Interpolation::Lagrange5th;
+        p.feedback = 0.0f;
+        engine.resetParams(p);
+
+        std::vector<float> inL(static_cast<std::size_t>(kN), 0.0f);
+        std::vector<float> inR(static_cast<std::size_t>(kN), 0.0f);
+        std::vector<float> outL(inL), outR(inR);
+
+        constexpr int kBlock = 256;
+        for (int off = 0; off < kN; off += kBlock)
+        {
+            const int n = std::min(kBlock, kN - off);
+            engine.setParams(p);
+            float* io[2] = { outL.data() + off, outR.data() + off };
+            engine.process(io, 2, n);
+        }
+
+        // The output is pure delay tail of a zero input: silence.
+        double maxAbs = 0.0;
+        for (int i = 0; i < kN; ++i)
+        {
+            maxAbs = std::max(maxAbs, std::fabs(static_cast<double>(outL[static_cast<std::size_t>(i)])));
+            maxAbs = std::max(maxAbs, std::fabs(static_cast<double>(outR[static_cast<std::size_t>(i)])));
+        }
+        if (maxAbs > 0.0)
+            FAIL("bits==32: max abs output = %.3e > 0 (quantiser bypass adds noise)", maxAbs);
+        std::printf("bits==32 no-noise (max abs = 0): PASS\n");
+    }
+
     std::printf("\n=== ALL PROPERTIES HELD ===\n");
     return 0;
 }
