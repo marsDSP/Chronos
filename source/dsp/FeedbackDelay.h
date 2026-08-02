@@ -86,8 +86,12 @@ namespace MarsDSP::Delays {
             fbSm_.setCurrentAndTargetValue(std::clamp(p.feedback, 0.0f, kMaxFeedback));
             crossSm_.setCurrentAndTargetValue(std::clamp(p.crossFeed, 0.0f, 1.0f));
             driveSm_.setCurrentAndTargetValue(std::clamp(p.loopDrive, 0.1f, 16.0f));
+            dampGSm_.setCurrentAndTargetValue(dampGSm_.getTargetValue());
+            dampG_ = dampGSm_.getCurrentValue();
+            satLatencySm_.setCurrentAndTargetValue(satLatencySm_.getTargetValue());
+            satLatency_ = satLatencySm_.getCurrentValue();
             applyDiffuserParams_(p);
-            diffuser_.prime();   // snap smoothers to the targets just set, clear rings
+            diffuser_.prime();
             enableDiffuser_ = p.enableDiffuser;
             diffState_ = enableDiffuser_ ? DiffuserState::On : DiffuserState::Off;
             diffFade_ = enableDiffuser_ ? 1.0f : 0.0f;
@@ -125,8 +129,10 @@ namespace MarsDSP::Delays {
 
                 const float dCur = delaySm_.getCurrentValue();
                 const float dTgt = delaySm_.getTargetValue();
+                const float satLatMax = std::max(satLatencySm_.getCurrentValue(),
+                                                 satLatencySm_.getTargetValue());
                 const float dMin = std::max(kMinLoopDelay,
-                    std::min(dCur, dTgt) - satLatency_ - baseT);
+                    std::min(dCur, dTgt) - satLatMax - baseT);
 
                 int Lc = static_cast<int>(std::floor(dMin)) - kChunkGuard;
                 Lc = std::clamp(Lc, 1, std::min(kMaxChunk, remaining));
@@ -142,6 +148,8 @@ namespace MarsDSP::Delays {
                         const float cross = crossSm_.getNextValue();
                         const float drive = driveSm_.getNextValue();
                         const float fade  = fadeStep_();
+                        dampG_      = dampGSm_.getNextValue();
+                        satLatency_ = satLatencySm_.getNextValue();
                         processSampleScalar_(inL + s + i, hasR ? inR + s + i : nullptr,
                                              wetL + s + i, hasR ? wetR + s + i : nullptr,
                                              d, g, cross, drive, hasR, mask,
@@ -152,25 +160,30 @@ namespace MarsDSP::Delays {
                 }
 
                 alignas(16) float dR[kMaxChunk], gR[kMaxChunk],
-                                 crossR[kMaxChunk], driveR[kMaxChunk], fadeR[kMaxChunk];
+                                 crossR[kMaxChunk], driveR[kMaxChunk], fadeR[kMaxChunk],
+                                 dampGR[kMaxChunk], satLatR[kMaxChunk];
                 const bool wasRunning = (diffState_ != DiffuserState::Off);
                 for (int i = 0; i < Lc; ++i)
                 {
-                    dR[i]     = delaySm_.getNextValue();
-                    gR[i]     = fbSm_.getNextValue();
-                    crossR[i] = crossSm_.getNextValue();
-                    driveR[i] = driveSm_.getNextValue();
-                    fadeR[i]  = fadeStep_();
+                    dR[i]      = delaySm_.getNextValue();
+                    gR[i]      = fbSm_.getNextValue();
+                    crossR[i]  = crossSm_.getNextValue();
+                    driveR[i]  = driveSm_.getNextValue();
+                    fadeR[i]   = fadeStep_();
+                    dampGR[i]  = dampGSm_.getNextValue();
+                    satLatR[i] = satLatencySm_.getNextValue();
                 }
                 const bool runDiff = wasRunning || (diffState_ != DiffuserState::Off);
 
                 alignas(16) float tapL[kMaxChunk], tapR[kMaxChunk];
-                const bool settled = (dR[0] == dR[Lc - 1]) && (fadeR[0] == fadeR[Lc - 1]);
+                const bool settled = (dR[0] == dR[Lc - 1])
+                                     && (fadeR[0] == fadeR[Lc - 1])
+                                     && (satLatR[0] == satLatR[Lc - 1]);
 
                 if (settled)
                 {
                     const float readDelay = std::max(kMinLoopDelay,
-                        dR[0] - satLatency_ - fadeR[0] * baseT);
+                        dR[0] - satLatR[0] - fadeR[0] * baseT);
                     const auto  iInt = static_cast<int>(readDelay);
                     const float f = readDelay - static_cast<float>(iInt);
                     const FracDelayTap::Coeffs4 k = FracDelayTap::lagrange3(f);
@@ -208,7 +221,7 @@ namespace MarsDSP::Delays {
                     for (int i = 0; i < Lc; ++i)
                     {
                         const float readDelay = std::max(kMinLoopDelay,
-                            dR[i] - satLatency_ - fadeR[i] * baseT);
+                            dR[i] - satLatR[i] - fadeR[i] * baseT);
                         tapL[i] = FracDelayTap::read(ringL_, writeIdx_ + i, readDelay);
                         if (hasR)
                             tapR[i] = FracDelayTap::read(ringR_, writeIdx_ + i, readDelay);
@@ -238,8 +251,8 @@ namespace MarsDSP::Delays {
                 alignas(16) float vL[kMaxChunk], vR[kMaxChunk];
                 for (int i = 0; i < Lc; ++i)
                 {
-                    dampL_ += dampG_ * (tapL[i] - dampL_);
-                    dampR_ += dampG_ * (tapR[i] - dampR_);
+                    dampL_ += dampGR[i] * (tapL[i] - dampL_);
+                    dampR_ += dampGR[i] * (tapR[i] - dampR_);
 
                     const float hL = dampL_ - dcXL_ + dcR_ * dcYL_;
                     dcXL_ = dampL_; dcYL_ = hL;
@@ -327,6 +340,8 @@ namespace MarsDSP::Delays {
                 const float cross = crossSm_.getNextValue();
                 const float drive = driveSm_.getNextValue();
                 const float fade  = fadeStep_();
+                dampG_      = dampGSm_.getNextValue();
+                satLatency_ = satLatencySm_.getNextValue();
                 processSampleScalar_(inL + s, hasR ? inR + s : nullptr,
                                      wetL + s, hasR ? wetR + s : nullptr,
                                      d, g, cross, drive, hasR, mask, fade, baseT);
@@ -444,6 +459,8 @@ namespace MarsDSP::Delays {
             fbSm_.reset(sampleRate, 0.020);
             crossSm_.reset(sampleRate, 0.020);
             driveSm_.reset(sampleRate, 0.020);
+            dampGSm_.reset(sampleRate, 0.020);
+            satLatencySm_.reset(sampleRate, 0.010);
             reset();
         }
 
@@ -457,16 +474,17 @@ namespace MarsDSP::Delays {
             const double fc = std::clamp(static_cast<double>(p.dampHz),
                                          20.0, 0.45 * sampleRate_);
             const double gw = std::tan(std::numbers::pi * fc / sampleRate_);
-            dampG_ = static_cast<float>(gw / (1.0 + gw));
+            dampGSm_.setTargetValue(static_cast<float>(gw / (1.0 + gw)));
 
             // DC blocker pole: ~8 Hz, R = exp(-2*pi*fc/fs).
             dcR_ = static_cast<float>(
                 std::exp(-2.0 * std::numbers::pi * 8.0 / sampleRate_));
 
             satOrder_ = std::clamp(p.satOrder, 0, 2);
-            satLatency_ = (satOrder_ == 2) ? 1.0f
-                        : (satOrder_ == 1) ? 0.5f
-                                           : 0.0f;
+            const float newSatLatency = (satOrder_ == 2) ? 1.0f
+                                      : (satOrder_ == 1) ? 0.5f
+                                                         : 0.0f;
+            satLatencySm_.setTargetValue(newSatLatency);
 
             const float clampedDrive = std::clamp(p.loopDrive, 0.1f, 16.0f);
             loopTrim_ = std::pow(rmsRatioForDrive_(clampedDrive), -0.5f);
@@ -557,6 +575,8 @@ namespace MarsDSP::Delays {
         Smoothers::LinearSmoother<float> fbSm_;
         Smoothers::LinearSmoother<float> crossSm_;
         Smoothers::LinearSmoother<float> driveSm_;
+        Smoothers::LinearSmoother<float> dampGSm_;
+        Smoothers::LinearSmoother<float> satLatencySm_;
 
         // block-rate coefficients
         float dampG_ = 0.0f;

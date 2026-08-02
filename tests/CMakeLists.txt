@@ -71,6 +71,14 @@ if(BUILD_TEST_HARNESSES)
     else()
         target_compile_options(long_run_stability_check PRIVATE /O2)
     endif()
+
+    add_executable(automation_sweep_check harnesses/dsp/automation_sweep_check.cpp)
+    target_link_libraries(automation_sweep_check PRIVATE SharedCode)
+    if(NOT MSVC)
+        target_compile_options(automation_sweep_check PRIVATE -O2)
+    else()
+        target_compile_options(automation_sweep_check PRIVATE /O2)
+    endif()
     if(MSVC)
         target_compile_options(crossfade_parity PRIVATE /O2)
     else()
@@ -324,6 +332,7 @@ if(BUILD_TEST_HARNESSES)
     add_test(NAME rt_stack_check         COMMAND rt_stack_check)
     add_test(NAME state_roundtrip_check  COMMAND state_roundtrip_check)
     add_test(NAME long_run_stability_check   COMMAND long_run_stability_check)
+    add_test(NAME automation_sweep_check       COMMAND automation_sweep_check)
 
     # The 6 benchmarks are registered as tests but labeled "bench" so
     # `ctest -LE bench` excludes them. They report numbers, not pass/fail.
