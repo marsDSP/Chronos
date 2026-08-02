@@ -24,6 +24,7 @@ namespace MarsDSP::Delays {
     public:
         static constexpr float kMaxFeedback     = 1.2f;
         static constexpr float kMinLoopDelay    = 4.0f;   // > FracDelayTap's 3.0 contract
+        static constexpr float kMaxGlideStep    = 4.0f;   // maximum delay glide, in samples per sample
 
         static constexpr int   kMaxChunk    = 64;   // max sub-chunk length (ramp-array footprint)
         static constexpr int   kChunkGuard  = 6;    // interpolator window (base = wIdx - i - 3, len 6 ≤ kTail)
@@ -82,7 +83,9 @@ namespace MarsDSP::Delays {
         void resetParams(const Params& p) noexcept
         {
             applyBlockRate_(p);
+            delaySm_.reset(sampleRate_, 0.020);
             delaySm_.setCurrentAndTargetValue(clampDelay_(p.delaySamples));
+            lastGlideRampTime_ = 0.020;
             fbSm_.setCurrentAndTargetValue(std::clamp(p.feedback, 0.0f, kMaxFeedback));
             crossSm_.setCurrentAndTargetValue(std::clamp(p.crossFeed, 0.0f, 1.0f));
             driveSm_.setCurrentAndTargetValue(std::clamp(p.loopDrive, 0.501f, 15.849f));
@@ -102,7 +105,7 @@ namespace MarsDSP::Delays {
         {
             if (firstBlock_) { resetParams(p); return; }
             applyBlockRate_(p);
-            delaySm_.setTargetValue(clampDelay_(p.delaySamples));
+            retargetDelayGlide_(p.delaySamples);
             fbSm_.setTargetValue(std::clamp(p.feedback, 0.0f, kMaxFeedback));
             crossSm_.setTargetValue(std::clamp(p.crossFeed, 0.0f, 1.0f));
             driveSm_.setTargetValue(std::clamp(p.loopDrive, 0.501f, 15.849f));
@@ -354,6 +357,9 @@ namespace MarsDSP::Delays {
         // Return the larger modulation oscillator magnitude.
         [[nodiscard]] double oscillatorMagnitude() const noexcept { return diffuser_.oscillatorMagnitude(); }
 
+        // Return the current delay tap position, in samples.
+        [[nodiscard]] float currentDelaySamples() const noexcept { return delaySm_.getCurrentValue(); }
+
         // RMS ratio of tanh(k * x) to x for a 0.5-amplitude sine reference.
         // The loop output trim is pow(rmsRatio, -0.5). Computed by fixed
         // quadrature over one sine period.
@@ -456,7 +462,8 @@ namespace MarsDSP::Delays {
             maxDelay_ = static_cast<float>(
                 ringL_.getCapacity() - Pow2RingBuffer::kTail - 2);
 
-            delaySm_.reset(sampleRate, 0.050);
+            delaySm_.reset(sampleRate, 0.020);   // 20 ms glide ramp floor
+            lastGlideRampTime_ = 0.020;
             fbSm_.reset(sampleRate, 0.020);
             crossSm_.reset(sampleRate, 0.020);
             driveSm_.reset(sampleRate, 0.020);
@@ -468,6 +475,23 @@ namespace MarsDSP::Delays {
         float clampDelay_(float d) const noexcept
         {
             return std::clamp(d, kMinLoopDelay + 1.5f, maxDelay_);
+        }
+
+        // Limit the delay glide to kMaxGlideStep samples per sample.
+        // Reset the smoother only when the ramp time changes by more than one percent.
+        // This avoids a restart each block.
+        void retargetDelayGlide_(float targetSamples) noexcept
+        {
+            const float target = clampDelay_(targetSamples);
+            const float current = delaySm_.getCurrentValue();
+            const double dist = std::fabs(static_cast<double>(target) - static_cast<double>(current));
+            const double rampTime = std::max(0.020, dist / (static_cast<double>(kMaxGlideStep) * sampleRate_));
+            if (std::fabs(rampTime - lastGlideRampTime_) > 0.01 * std::max(rampTime, lastGlideRampTime_))
+            {
+                delaySm_.reset(sampleRate_, rampTime);
+                lastGlideRampTime_ = rampTime;
+            }
+            delaySm_.setTargetValue(target);
         }
 
         void applyBlockRate_(const Params& p) noexcept
@@ -577,6 +601,9 @@ namespace MarsDSP::Delays {
         Smoothers::LinearSmoother<float> driveSm_;
         Smoothers::LinearSmoother<float> dampGSm_;
         Smoothers::LinearSmoother<float> satLatencySm_;
+
+        // Last glide ramp duration, in seconds.
+        double lastGlideRampTime_ = 0.020;
 
         // block-rate coefficients
         float dampG_ = 0.0f;
