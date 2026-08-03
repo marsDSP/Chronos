@@ -9,6 +9,7 @@
 #include "LinearSmoother.h"
 #include "Pow2RingBuffer.h"
 #include "math/SaturatorMakeup.h"
+#include "math/Trigonometry.h"
 #include "nonlinear/ADAA1.h"
 #include "nonlinear/ADAA2.h"
 #include "nonlinear/Nonlinearities.h"
@@ -80,6 +81,8 @@ namespace MarsDSP::Delays {
             enableDiffuser_ = false;
             diffState_ = DiffuserState::Off;
             diffFade_ = 0.0f;
+            crossCos_ = 1.0f;
+            crossSin_ = 0.0f;
             firstBlock_ = true;
         }
 
@@ -125,6 +128,7 @@ namespace MarsDSP::Delays {
             const bool hasR = (inR != nullptr && wetR != nullptr);
             const int  mask = ringL_.mask();
 
+            updateCrossRotation_();  // block-rate equal-power cross-feed coefficients
             diffuserTransition_();   // block-rate enable edge (primes on rising)
 
             int s = 0;
@@ -261,9 +265,19 @@ namespace MarsDSP::Delays {
                 alignas(16) float vL[kMaxChunk], vR[kMaxChunk];
                 for (int i = 0; i < Lc; ++i)
                 {
-                    const float g = gR[i], cross = crossR[i];
-                    vL[i] = g * ((1.0f - cross) * tapL[i] + cross * tapR[i]);
-                    vR[i] = g * ((1.0f - cross) * tapR[i] + cross * tapL[i]);
+                    const float g = gR[i];
+                    if (hasR)
+                    {
+                        const float mixL = crossCos_ * tapL[i] + crossSin_ * tapR[i];
+                        const float mixR = crossCos_ * tapR[i] + crossSin_ * tapL[i];
+                        vL[i] = g * mixL;
+                        vR[i] = g * mixR;
+                    }
+                    else
+                    {
+                        vL[i] = g * tapL[i];
+                        vR[i] = vL[i];
+                    }
                 }
 
                 alignas(16) float wL[kMaxChunk], wR[kMaxChunk];
@@ -345,6 +359,7 @@ namespace MarsDSP::Delays {
             const bool hasR = (inR != nullptr && wetR != nullptr);
             const int  mask = ringL_.mask();
 
+            updateCrossRotation_();  // block-rate equal-power cross-feed coefficients
             diffuserTransition_();
 
             for (int s = 0; s < n; ++s)
@@ -537,6 +552,16 @@ namespace MarsDSP::Delays {
             loopTrim_ = Math::loopTrim(clampedDrive);
         }
 
+        // Compute the equal-power rotation from the smoothed cross value.
+        // theta = cross * pi/2. cos and sin are evaluated at block rate.
+        void updateCrossRotation_() noexcept
+        {
+            const float cross = std::clamp(crossSm_.getCurrentValue(), 0.0f, 1.0f);
+            const float theta = cross * (std::numbers::pi_v<float> * 0.5f);
+            crossCos_ = mmCos(theta);
+            crossSin_ = mmSin(theta);
+        }
+
         float saturate_(Nonlinear::ADAA1<Nonlinear::TanhNL>& a1,
                         Nonlinear::ADAA2<Nonlinear::TanhNL>& a2,
                         float x) noexcept
@@ -575,9 +600,11 @@ namespace MarsDSP::Delays {
                     tapR = tapL;   // mono: mirror the blended L
             }
 
-            // cross and gain run before the saturator.
-            const float vL = g * ((1.0f - cross) * tapL + cross * tapR);
-            const float vR = g * ((1.0f - cross) * tapR + cross * tapL);
+            // Equal-power cross-feed rotation. Block-rate coefficients.
+            const float mixL = hasR ? (crossCos_ * tapL + crossSin_ * tapR) : tapL;
+            const float mixR = hasR ? (crossCos_ * tapR + crossSin_ * tapL) : tapL;
+            const float vL = g * mixL;
+            const float vR = g * mixR;
 
             const float sL = saturate_(adaa1L_, adaa2L_, drive * vL) * makeup;
             const float sR = hasR
@@ -641,6 +668,8 @@ namespace MarsDSP::Delays {
         int   satOrder_ = 2;
         float satLatency_ = 1.0f;
         float loopTrim_ = 1.0f;
+        float crossCos_ = 1.0f;   // block-rate rotation cos(theta)
+        float crossSin_ = 0.0f;   // block-rate rotation sin(theta)
 
         // per-channel loop state
         float dampL_ = 0.0f;

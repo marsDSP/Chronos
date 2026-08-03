@@ -127,6 +127,14 @@ if(BUILD_TEST_HARNESSES)
     else()
         target_compile_options(loop_dc_check PRIVATE /O2)
     endif()
+
+    add_executable(crossfeed_power_check harnesses/dsp/crossfeed_power_check.cpp)
+    target_link_libraries(crossfeed_power_check PRIVATE SharedCode)
+    if(NOT MSVC)
+        target_compile_options(crossfeed_power_check PRIVATE -O2)
+    else()
+        target_compile_options(crossfeed_power_check PRIVATE /O2)
+    endif()
     if(MSVC)
         target_compile_options(crossfade_parity PRIVATE /O2)
     else()
@@ -391,6 +399,7 @@ if(BUILD_TEST_HARNESSES)
     add_test(NAME glide_rate_check              COMMAND glide_rate_check)
     add_test(NAME drive_loudness_check          COMMAND drive_loudness_check)
     add_test(NAME loop_dc_check                  COMMAND loop_dc_check)
+    add_test(NAME crossfeed_power_check           COMMAND crossfeed_power_check)
 
     # The 6 benchmarks are registered as tests but labeled "bench" so
     # `ctest -LE bench` excludes them. They report numbers, not pass/fail.
