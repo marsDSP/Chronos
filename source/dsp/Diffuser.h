@@ -18,7 +18,6 @@
 #include <numbers>
 
 namespace MarsDSP::Diffusion {
-
     class Diffuser {
     public:
         static constexpr int   kNumSections    = 8;
@@ -33,10 +32,29 @@ namespace MarsDSP::Diffusion {
         static constexpr float kDetuneRatio    = 1.317f;
         static constexpr int   kRenormInterval = 4096; // samples between amplitude corrections
 
-        static constexpr std::array<float, kNumSections> kPathMetersL{
-            4.54125f, 3.93375f, 3.19125f, 2.92875f, 2.32875f, 2.01000f, 1.18875f, 0.82875f };
-        static constexpr std::array<float, kNumSections> kPathMetersR{
-            4.53000f, 3.92625f, 3.18375f, 2.91375f, 2.33625f, 1.99875f, 1.39125f, 0.79500f };
+        static constexpr std::array<float, kNumSections> kPathMetersL
+        {
+            4.54125f,
+            3.93375f,
+            3.19125f,
+            2.92875f,
+            2.32875f,
+            2.01000f,
+            1.18875f,
+            0.82875f
+        };
+
+        static constexpr std::array<float, kNumSections> kPathMetersR
+        {
+            4.53000f,
+            3.92625f,
+            3.18375f,
+            2.91375f,
+            2.33625f,
+            1.99875f,
+            1.39125f,
+            0.79500f
+        };
 
         void prepare(double sampleRate) noexcept
         {
@@ -56,15 +74,14 @@ namespace MarsDSP::Diffusion {
         static std::size_t ringStorageFloats(double sampleRate) noexcept
         {
             const int headroom = modHeadroomFor(sampleRate);
-            int lenL[kNumSections], lenR[kNumSections];
+            int lenL[kNumSections];
+            int lenR[kNumSections];
             computeSectionLens(sampleRate, lenL, lenR);
             std::size_t total = 0;
             for (int i = 0; i < kNumSections; ++i)
             {
-                total += Delays::Pow2RingBuffer::arenaFloatsFor(
-                    lenL[i] + headroom + Delays::Pow2RingBuffer::kTail + 8);
-                total += Delays::Pow2RingBuffer::arenaFloatsFor(
-                    lenR[i] + headroom + Delays::Pow2RingBuffer::kTail + 8);
+                total += Delays::Pow2RingBuffer::arenaFloatsFor(lenL[i] + headroom + Delays::Pow2RingBuffer::kTail + 8);
+                total += Delays::Pow2RingBuffer::arenaFloatsFor(lenR[i] + headroom + Delays::Pow2RingBuffer::kTail + 8);
             }
             return total;
         }
@@ -99,16 +116,14 @@ namespace MarsDSP::Diffusion {
 
         void setModDepthSamples(float depth) noexcept
         {
-            depthSm_.setTargetValue(
-                std::clamp(depth, 0.0f, static_cast<float>(kModHeadroom_ - 2)));
+            depthSm_.setTargetValue(std::clamp(depth, 0.0f, static_cast<float>(kModHeadroom_ - 2)));
         }
 
         void setModRateHz(float hz) noexcept
         {
             const double f = std::clamp(static_cast<double>(hz), 0.0, 8.0);
             oscAk_ = 2.0 * std::sin(std::numbers::pi * f / sampleRate_);
-            oscBk_ = 2.0 * std::sin(std::numbers::pi * f
-                                    * static_cast<double>(kDetuneRatio) / sampleRate_);
+            oscBk_ = 2.0 * std::sin(std::numbers::pi * f * static_cast<double>(kDetuneRatio) / sampleRate_);
         }
 
         void processBlock(float* left, float* right, int n) noexcept
@@ -121,8 +136,7 @@ namespace MarsDSP::Diffusion {
                 for (int j = 0; j < m; ++j)
                 {
                     sizeRamp_[static_cast<std::size_t>(j)] = sizeSm_.getNextValue();
-                    gRamp_[static_cast<std::size_t>(j)] =
-                        std::clamp(coefSm_.getNextValue(), -kMaxCoefficient, kMaxCoefficient);
+                    gRamp_[static_cast<std::size_t>(j)] = std::clamp(coefSm_.getNextValue(), -kMaxCoefficient, kMaxCoefficient);
                     const float depth = depthSm_.getNextValue();
 
                     oscAs_ += oscAk_ * oscAc_;
@@ -137,12 +151,10 @@ namespace MarsDSP::Diffusion {
                     modBR_[static_cast<std::size_t>(j)] = depth * static_cast<float>(oscBs_);
                 }
 
-                const bool settled =
-                    (sizeRamp_[0] == sizeRamp_[static_cast<std::size_t>(m - 1)]);
+                const bool settled = (sizeRamp_[0] == sizeRamp_[static_cast<std::size_t>(m - 1)]);
 
                 chunk_(secL_, left + off, m, settled, modAL_.data(), modBL_.data());
-                if (right != nullptr)
-                    chunk_(secR_, right + off, m, settled, modAR_.data(), modBR_.data());
+                if (right != nullptr) chunk_(secR_, right + off, m, settled, modAR_.data(), modBR_.data());
             }
         }
 
@@ -152,8 +164,7 @@ namespace MarsDSP::Diffusion {
             for (int s = 0; s < n; ++s)
             {
                 const float size  = sizeSm_.getNextValue();
-                const float g     = std::clamp(coefSm_.getNextValue(),
-                                               -kMaxCoefficient, kMaxCoefficient);
+                const float g     = std::clamp(coefSm_.getNextValue(), -kMaxCoefficient, kMaxCoefficient);
                 const float depth = depthSm_.getNextValue();
 
                 oscAs_ += oscAk_ * oscAc_;
@@ -168,8 +179,7 @@ namespace MarsDSP::Diffusion {
                 const float modBR = depth * static_cast<float>(oscBs_);
 
                 left[s] = chain_(secL_, left[s], size, g, modAL, modBL);
-                if (right != nullptr)
-                    right[s] = chain_(secR_, right[s], size, g, modAR, modBR);
+                if (right != nullptr) right[s] = chain_(secR_, right[s], size, g, modAR, modBR);
             }
         }
 
@@ -202,15 +212,9 @@ namespace MarsDSP::Diffusion {
 
         [[nodiscard]] int sectionLenL(int i) const noexcept { return secL_[static_cast<std::size_t>(i)].len; }
         [[nodiscard]] int sectionLenR(int i) const noexcept { return secR_[static_cast<std::size_t>(i)].len; }
-
         [[nodiscard]] float getSizeCurrent() const noexcept { return sizeSm_.getCurrentValue(); }
-
         [[nodiscard]] float getCoefCurrent() const noexcept { return coefSm_.getCurrentValue(); }
-
-        [[nodiscard]] float transportSamples() const noexcept
-        {
-            return baseTransportSamples(getSizeCurrent());
-        }
+        [[nodiscard]] float transportSamples() const noexcept { return baseTransportSamples(getSizeCurrent()); }
 
         static constexpr float sectionSign(int i) noexcept
         {
@@ -263,10 +267,8 @@ namespace MarsDSP::Diffusion {
             sectionLenCache_.used.reset();
             for (int i = 0; i < kNumSections; ++i)
             {
-                const int wantL = static_cast<int>(
-                    std::lround(static_cast<double>(kPathMetersL[static_cast<std::size_t>(i)]) * samplesPerMeter));
-                const int wantR = static_cast<int>(
-                    std::lround(static_cast<double>(kPathMetersR[static_cast<std::size_t>(i)]) * samplesPerMeter));
+                const int wantL = static_cast<int>(std::lround(static_cast<double>(kPathMetersL[static_cast<std::size_t>(i)]) * samplesPerMeter));
+                const int wantR = static_cast<int>(std::lround(static_cast<double>(kPathMetersR[static_cast<std::size_t>(i)]) * samplesPerMeter));
                 sectionLenCache_.lenL[i] = distinctPrimeNear_(wantL, sectionLenCache_.used);
                 sectionLenCache_.lenR[i] = distinctPrimeNear_(wantR, sectionLenCache_.used);
             }
@@ -281,7 +283,8 @@ namespace MarsDSP::Diffusion {
             assert(sampleRate > 0.0);
             sampleRate_ = sampleRate;
 
-            int lenL[kNumSections], lenR[kNumSections];
+            int lenL[kNumSections];
+            int lenR[kNumSections];
             computeSectionLens(sampleRate, lenL, lenR);
             for (int i = 0; i < kNumSections; ++i)
             {
@@ -330,10 +333,9 @@ namespace MarsDSP::Diffusion {
             {
                 for (const int cand : { want + d, want - d })
                 {
-                    if (cand >= 5 && cand < kMaxPrimeScan
-                        && isPrime_(cand) && !used.test(cand))
+                    if (cand >= 5 && cand < kMaxPrimeScan && isPrime_(cand) && !used.test(static_cast<size_t>(cand)))
                     {
-                        used.set(cand);
+                        used.set(static_cast<size_t>(cand));
                         return cand;
                     }
                 }

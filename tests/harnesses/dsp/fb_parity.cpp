@@ -35,7 +35,8 @@
 //   scalar path and the Lc boundary), feedback ∈ {0, 0.5, 0.95, 1.2}, cross ∈
 //   {0, 0.37, 1}, block ∈ {1, 17, 64, 256, 512}, mono + stereo. Plus a
 //   delay-automation ramp (sweep delay across blocks → mid-ramp smoother,
-//   crossing chunk boundaries) and a dampHz/crossFeed automation case.
+//   crossing chunk boundaries) and a dampHz/loopCutHz/crossFeed automation
+//   case.
 //
 // C7c in-loop diffuser section: the diffuser is enabled via Params on BOTH
 // instances (the loop tap reads at d − satLatency − fade·baseTransport, the
@@ -165,9 +166,12 @@ void runOne(const Cfg& c, bool automateDelay, bool automateDampCross)
         }
         if (automateDampCross)
         {
-            // Oscillate dampHz and crossFeed across blocks.
+            // Oscillate dampHz, loopCutHz, and crossFeed across blocks. The
+            // loopCut sweep catches a reference path that fails to advance
+            // the low-cut coefficient smoother.
             const float frac = static_cast<float>(off) / static_cast<float>(kTotal);
             p.dampHz    = 3000.0f + 6000.0f * (0.5f + 0.5f * std::sin(2.0f * std::numbers::pi_v<float> * frac));
+            p.loopCutHz = 40.0f + 800.0f * (0.5f + 0.5f * std::sin(2.0f * std::numbers::pi_v<float> * frac * 0.7f));
             p.crossFeed = 0.5f + 0.5f * std::sin(2.0f * std::numbers::pi_v<float> * frac * 1.3f);
             p.crossFeed = std::clamp(p.crossFeed, 0.0f, 1.0f);
             fast.setParams(p);
@@ -286,7 +290,7 @@ int main()
         ++configs;
     }
 
-    // dampHz/crossFeed automation (block-rate coefficient changes).
+    // dampHz/loopCutHz/crossFeed automation (block-rate coefficient changes).
     g_section = "damp/cross-automation";
     for (int sat : sats)
     for (int blk : { 64, 256, 512 })

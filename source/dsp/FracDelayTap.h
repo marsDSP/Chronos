@@ -63,9 +63,7 @@ namespace MarsDSP::Delays {
             return MM(cvtss_f32)(sh2);
         }
 
-        [[nodiscard]] static float readRef(const Pow2RingBuffer& rb,
-                                           int writeIdx,
-                                           float delaySamples) noexcept
+        [[nodiscard]] static float readRef(const Pow2RingBuffer& rb, int writeIdx, float delaySamples) noexcept
         {
             const auto  i = static_cast<int>(std::floor(delaySamples));
             const float f = delaySamples - static_cast<float>(i);

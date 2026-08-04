@@ -66,7 +66,9 @@ double ChronosProcessor::getTailLengthSeconds() const
 {
     const double sr = getSampleRate();
     if (sr <= 0.0) return 0.0;
-    const double delaySeconds = static_cast<double>(parameters.getDelayMs()) * 0.001;
+    // Use the synced delay when tempo sync is on. The knob value alone
+    // truncates the tail.
+    const double delaySeconds = static_cast<double>(computeDelaySamples_()) / sr;
     // Clamp the feedback before the logarithm to stay finite at zero.
     const double g = std::max(static_cast<double>(parameters.getRawFeedback()), 1e-4);
     const double n = (g >= 1.0)
@@ -143,10 +145,8 @@ void ChronosProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 
 float ChronosProcessor::computeDelaySamples_() const
 {
-    if (! parameters.getRawDelaySync())
-        return parameters.getDelaySamples();
-    const double ms = MarsDSP::Utils::Helpers::TempoSync::convertChoiceIndexToMilliseconds(
-        parameters.getRawDelayDivision(), cachedBpm_);
+    if (! parameters.getRawDelaySync()) return parameters.getDelaySamples();
+    const double ms = MarsDSP::Utils::Helpers::TempoSync::convertChoiceIndexToMilliseconds(parameters.getRawDelayDivision(), cachedBpm_);
     const double clamped = std::clamp(ms, 1.0, 5000.0);
     return static_cast<float>(clamped * 0.001 * getSampleRate());
 }
@@ -258,17 +258,15 @@ void ChronosProcessor::getStateInformation(MemoryBlock &destData)
 void ChronosProcessor::setStateInformation(const void *data, int sizeInBytes)
 {
     std::unique_ptr xml(getXmlFromBinary(data, sizeInBytes));
-    if (xml == nullptr || !xml->hasTagName(apvts.state.getType()))
-        return;
+    if (xml == nullptr || !xml->hasTagName(apvts.state.getType())) return;
     ValueTree state(ValueTree::fromXml(*xml));
-    const int fileVersion = static_cast<int>(state.getProperty("version"));
-    if (fileVersion < kStateVersion)
-        migrateState_(state, fileVersion);
+    const int fileVersion = state.getProperty("version");
+    if (fileVersion < kStateVersion) migrateState_(state, fileVersion);
     state.setProperty("version", kStateVersion, nullptr);
     apvts.replaceState(state);
 }
 
-void ChronosProcessor::migrateState_(ValueTree& state, int fromVersion)
+void ChronosProcessor::migrateState_(ValueTree& state, int fromVersion) /*const*/
 {
     if (fromVersion < 2)
     {
@@ -278,18 +276,21 @@ void ChronosProcessor::migrateState_(ValueTree& state, int fromVersion)
             const String id = child.getProperty("id").toString();
             if (id == "feedback")
             {
-                const float v = static_cast<float>(child.getProperty("value"));
+                const float v = child.getProperty("value");
                 child.setProperty("value", std::clamp(v, 0.0f, 1.15f), nullptr);
             }
             else if (id == "drive")
             {
-                const float v = static_cast<float>(child.getProperty("value"));
+                const float v = child.getProperty("value");
                 child.setProperty("value", std::clamp(v, 0.0f, 24.0f), nullptr);
             }
             else if (id == "diffModDepth")
             {
-                const float samples = static_cast<float>(child.getProperty("value"));
-                const float ms = samples / static_cast<float>(getSampleRate()) * 1000.0f;
+                // The host can load the state before prepare. Use a safe rate then.
+                const double sr = getSampleRate();
+                const float safeSr = sr > 0.0 ? static_cast<float>(sr) : 48000.0f;
+                const float samples = child.getProperty("value");
+                const float ms = samples / safeSr * 1000.0f;
                 child.setProperty("value", std::clamp(ms, 0.0f, 1.5f), nullptr);
             }
             else if (id == "interpolation")

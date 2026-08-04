@@ -8,7 +8,6 @@
 
 namespace MarsDSP::Nonlinear {
     constexpr double kLn2 = 0.6931471805599453;
-
     struct TanhNL
     {
         static constexpr const char *name = "tanh";

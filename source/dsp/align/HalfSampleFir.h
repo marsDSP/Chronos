@@ -11,8 +11,7 @@ namespace MarsDSP::Align {
     inline constexpr int kHalfSampleTaps = 16; // must be even, >= 4, power of two
     static_assert(kHalfSampleTaps % 2 == 0, "half-sample FIR tap count must be even");
     static_assert(kHalfSampleTaps >= 4, "half-sample FIR needs at least 4 taps");
-    static_assert((kHalfSampleTaps & (kHalfSampleTaps - 1)) == 0,
-                  "half-sample FIR tap count must be a power of two for the ring mask");
+    static_assert((kHalfSampleTaps & (kHalfSampleTaps - 1)) == 0, "half-sample FIR tap count must be a power of two for the ring mask");
 
     inline constexpr std::array kHalfSampleCoeffs = {
         -0.00530111231f,
@@ -45,8 +44,7 @@ namespace MarsDSP::Align {
 
             alignas(16) float pairs[8];
             for (int j = 0; j < 8; ++j)
-                pairs[j] = z_[(w_ - 1 - j + kHalfSampleTaps) & kMask]
-                         + z_[(w_ + j) & kMask];
+                pairs[j] = z_[(w_ - 1 - j + kHalfSampleTaps) & kMask] + z_[(w_ + j) & kMask];
 
             const M128 vPairs0 = MM(loadu_ps)(pairs);
             const M128 vCoeff0 = MM(loadu_ps)(kHalfSampleCoeffs.data());

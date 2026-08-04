@@ -6,7 +6,10 @@
 // the processor getStateInformation / setStateInformation path. It links the
 // JUCE processor modules with SharedCode, and needs no JucePlugin macros.
 
-#include <JuceHeader.h>
+#include <juce_audio_processors/juce_audio_processors.h>
+
+using namespace juce;
+
 #include "ChronosParameters.h"
 
 #include <cstdint>

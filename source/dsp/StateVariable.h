@@ -265,7 +265,6 @@ namespace MarsDSP::Filters {
                     m2 = MM(sub_ps)(MM(div_ps)(one, vA), vA);
                     break;
             }
-
             gk = MM(add_ps)(g, k);
             a1 = MM(div_ps)(one, MM(add_ps)(one, MM(mul_ps)(g, gk)));
             a2 = MM(mul_ps)(g, a1);

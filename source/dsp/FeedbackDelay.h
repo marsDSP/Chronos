@@ -42,7 +42,7 @@ namespace MarsDSP::Delays {
             int   satOrder     = 2;       // 0 hard, 1 ADAA1, 2 ADAA2
             float diffusion      = 0.7f;  // 0..1 -> allpass coeff 0..0.92
             float diffuserSize   = 0.5f;  // 0..1 (1 = full path length)
-            float diffModDepth   = 16.0f; // samples, 0..62
+            float diffModDepth   = 0.30f; // milliseconds, 0..1.5
             float diffModRateHz  = 0.5f;  // 0..8
             bool  enableDiffuser = false; // off by default
         };
@@ -172,9 +172,14 @@ namespace MarsDSP::Delays {
                     continue;
                 }
 
-                alignas(16) float dR[kMaxChunk], gR[kMaxChunk],
-                                 crossR[kMaxChunk], driveR[kMaxChunk], fadeR[kMaxChunk],
-                                 dampGR[kMaxChunk], satLatR[kMaxChunk], cutGR[kMaxChunk];
+                alignas(16) float dR[kMaxChunk];
+                alignas(16) float gR[kMaxChunk];
+                alignas(16) float crossR[kMaxChunk];
+                alignas(16) float driveR[kMaxChunk];
+                alignas(16) float fadeR[kMaxChunk];
+                alignas(16) float dampGR[kMaxChunk];
+                alignas(16) float satLatR[kMaxChunk];
+                alignas(16) float cutGR[kMaxChunk];
                 const bool wasRunning = (diffState_ != DiffuserState::Off);
                 for (int i = 0; i < Lc; ++i)
                 {
@@ -189,15 +194,15 @@ namespace MarsDSP::Delays {
                 }
                 const bool runDiff = wasRunning || (diffState_ != DiffuserState::Off);
 
-                alignas(16) float tapL[kMaxChunk], tapR[kMaxChunk];
+                alignas(16) float tapL[kMaxChunk];
+                alignas(16) float tapR[kMaxChunk];
                 const bool settled = (dR[0] == dR[Lc - 1])
                                      && (fadeR[0] == fadeR[Lc - 1])
                                      && (satLatR[0] == satLatR[Lc - 1]);
 
                 if (settled)
                 {
-                    const float readDelay = std::max(kMinLoopDelay,
-                        dR[0] - satLatR[0] - fadeR[0] * baseT);
+                    const float readDelay = std::max(kMinLoopDelay, dR[0] - satLatR[0] - fadeR[0] * baseT);
                     const auto  iInt = static_cast<int>(readDelay);
                     const float f = readDelay - static_cast<float>(iInt);
                     const FracDelayTap::Coeffs4 k = FracDelayTap::lagrange3(f);
@@ -247,7 +252,8 @@ namespace MarsDSP::Delays {
 
                 if (runDiff)
                 {
-                    alignas(16) float rawL[kMaxChunk], rawR[kMaxChunk];
+                    alignas(16) float rawL[kMaxChunk];
+                    alignas(16) float rawR[kMaxChunk];
                     std::memcpy(rawL, tapL, static_cast<std::size_t>(Lc) * sizeof(float));
                     std::memcpy(rawR, tapR, static_cast<std::size_t>(Lc) * sizeof(float));
                     diffuser_.processBlock(tapL, hasR ? tapR : nullptr, Lc);
@@ -262,7 +268,8 @@ namespace MarsDSP::Delays {
                     }
                 }
 
-                alignas(16) float vL[kMaxChunk], vR[kMaxChunk];
+                alignas(16) float vL[kMaxChunk];
+                alignas(16) float vR[kMaxChunk];
                 for (int i = 0; i < Lc; ++i)
                 {
                     const float g = gR[i];
@@ -280,7 +287,8 @@ namespace MarsDSP::Delays {
                     }
                 }
 
-                alignas(16) float wL[kMaxChunk], wR[kMaxChunk];
+                alignas(16) float wL[kMaxChunk];
+                alignas(16) float wR[kMaxChunk];
                 if (satOrder_ == 0)
                 {
                     for (int i = 0; i < Lc; ++i)
@@ -296,8 +304,8 @@ namespace MarsDSP::Delays {
                     for (int i = 0; i < Lc; ++i)
                     {
                         const float makeup = 1.0f / driveR[i];
-                        vL[i] = static_cast<float>(adaa1L_.process(static_cast<double>(driveR[i] * vL[i]))) * makeup;
-                        if (hasR) vR[i] = static_cast<float>(adaa1R_.process(static_cast<double>(driveR[i] * vR[i]))) * makeup;
+                        vL[i] = static_cast<float>(adaa1L_.process(driveR[i] * vL[i])) * makeup;
+                        if (hasR) vR[i] = static_cast<float>(adaa1R_.process(driveR[i] * vR[i])) * makeup;
                         else vR[i] = vL[i];
                     }
                 }
@@ -306,8 +314,8 @@ namespace MarsDSP::Delays {
                     for (int i = 0; i < Lc; ++i)
                     {
                         const float makeup = 1.0f / driveR[i];
-                        vL[i] = static_cast<float>(adaa2L_.process(static_cast<double>(driveR[i] * vL[i]))) * makeup;
-                        if (hasR) vR[i] = static_cast<float>(adaa2R_.process(static_cast<double>(driveR[i] * vR[i]))) * makeup;
+                        vL[i] = static_cast<float>(adaa2L_.process(driveR[i] * vL[i])) * makeup;
+                        if (hasR) vR[i] = static_cast<float>(adaa2R_.process(driveR[i] * vR[i])) * makeup;
                         else vR[i] = vL[i];
                     }
                 }
@@ -346,14 +354,12 @@ namespace MarsDSP::Delays {
                     wetL[s + i] = tapL[i] * loopTrim_;
                     if (hasR) wetR[s + i] = tapR[i] * loopTrim_;
                 }
-
                 s += Lc;
             }
         }
 
         // reference only -- do not optimize, do not delete.
-        void processRef(const float* inL, const float* inR,
-                        float* wetL, float* wetR, int n) noexcept
+        void processRef(const float* inL, const float* inR, float* wetL, float* wetR, int n) noexcept
         {
             assert(inL != nullptr && wetL != nullptr);
             const bool hasR = (inR != nullptr && wetR != nullptr);
@@ -364,14 +370,14 @@ namespace MarsDSP::Delays {
 
             for (int s = 0; s < n; ++s)
             {
-                const float baseT = (diffState_ != DiffuserState::Off)
-                    ? diffuser_.transportSamples() : 0.0f;
+                const float baseT = (diffState_ != DiffuserState::Off) ? diffuser_.transportSamples() : 0.0f;
                 const float d     = delaySm_.getNextValue();
                 const float g     = fbSm_.getNextValue();
                 const float cross = crossSm_.getNextValue();
                 const float drive = driveSm_.getNextValue();
                 const float fade  = fadeStep_();
                 dampG_      = dampGSm_.getNextValue();
+                cutG_       = cutGSm_.getNextValue();
                 satLatency_ = satLatencySm_.getNextValue();
                 processSampleScalar_(inL + s, hasR ? inR + s : nullptr,
                                      wetL + s, hasR ? wetR + s : nullptr,
@@ -381,11 +387,7 @@ namespace MarsDSP::Delays {
 
         [[nodiscard]] static constexpr int latencySamples() noexcept { return 0; }
         [[nodiscard]] float getMaxDelay() const noexcept { return maxDelay_; }
-
-        // Return the larger modulation oscillator magnitude.
         [[nodiscard]] double oscillatorMagnitude() const noexcept { return diffuser_.oscillatorMagnitude(); }
-
-        // Return the current delay tap position, in samples.
         [[nodiscard]] float currentDelaySamples() const noexcept { return delaySm_.getCurrentValue(); }
 
         // RMS ratio of tanh(k * x) to x for a 0.5-amplitude sine reference.
@@ -395,7 +397,7 @@ namespace MarsDSP::Delays {
         {
             constexpr int N = 128;
             constexpr double kPi = 3.14159265358979323846;
-            const double kd = static_cast<double>(k);
+            const double kd = k;
             double sum = 0.0;
             for (int i = 0; i < N; ++i)
             {
@@ -412,8 +414,7 @@ namespace MarsDSP::Delays {
     private:
         enum class DiffuserState { Off, FadingIn, On, FadingOut };
         static constexpr int   kDiffuserFadeSamples = 480;  // ~10 ms @48 kHz
-        static constexpr float kDiffuserFadeInc =
-            1.0f / static_cast<float>(kDiffuserFadeSamples);
+        static constexpr float kDiffuserFadeInc = 1.0f / static_cast<float>(kDiffuserFadeSamples);
 
         void diffuserTransition_() noexcept
         {
@@ -501,7 +502,7 @@ namespace MarsDSP::Delays {
             reset();
         }
 
-        float clampDelay_(float d) const noexcept
+        [[nodiscard]] float clampDelay_(float d) const noexcept
         {
             return std::clamp(d, kMinLoopDelay + 1.5f, maxDelay_);
         }
@@ -525,20 +526,17 @@ namespace MarsDSP::Delays {
 
         void applyBlockRate_(const Params& p) noexcept
         {
-            const double fc = std::clamp(static_cast<double>(p.dampHz),
-                                         20.0, 0.45 * sampleRate_);
+            const double fc = std::clamp(static_cast<double>(p.dampHz), 20.0, 0.45 * sampleRate_);
             const double gw = std::tan(std::numbers::pi * fc / sampleRate_);
             dampGSm_.setTargetValue(static_cast<float>(gw / (1.0 + gw)));
 
             // DC blocker pole: 5 Hz. The blocker sits after the saturator
             // and compounds over more passes. The 5 Hz corner keeps the
             // loss at 40 Hz under 2 dB over 20 passes.
-            dcR_ = static_cast<float>(
-                std::exp(-2.0 * std::numbers::pi * 5.0 / sampleRate_));
+            dcR_ = static_cast<float>(std::exp(-2.0 * std::numbers::pi * 5.0 / sampleRate_));
 
             // Low cut: one-pole highpass, same topology as the damp filter.
-            const double fcCut = std::clamp(static_cast<double>(p.loopCutHz),
-                                            20.0, 0.45 * sampleRate_);
+            const double fcCut = std::clamp(static_cast<double>(p.loopCutHz), 20.0, 0.45 * sampleRate_);
             const double gwCut = std::tan(std::numbers::pi * fcCut / sampleRate_);
             cutGSm_.setTargetValue(static_cast<float>(gwCut / (1.0 + gwCut)));
 
@@ -568,8 +566,8 @@ namespace MarsDSP::Delays {
         {
             switch (satOrder_)
             {
-                case 2:  return static_cast<float>(a2.process(static_cast<double>(x)));
-                case 1:  return static_cast<float>(a1.process(static_cast<double>(x)));
+                case 2:  return static_cast<float>(a2.process(x));
+                case 1:  return static_cast<float>(a1.process(x));
                 default: return std::clamp(x, -1.0f, 1.0f);
             }
         }

@@ -3,7 +3,7 @@
 #ifndef CHRONOS_CHRONOSPARAMETERS_H
 #define CHRONOS_CHRONOSPARAMETERS_H
 
-#include <JuceHeader.h>
+#include <juce_audio_processors/juce_audio_processors.h>
 
 const ParameterID gainParamID{"gain", 1};
 const ParameterID bitsParamID{"bits", 1};
@@ -37,11 +37,9 @@ static void castParameter(const AudioProcessorValueTreeState &apvts, const Param
     jassert(destination);
 }
 
-class ChronosParameters
-{
+class ChronosParameters {
 public:
-    explicit ChronosParameters(const AudioProcessorValueTreeState &apvts)
-    {
+    explicit ChronosParameters(const AudioProcessorValueTreeState &apvts) {
         castParameter(apvts, gainParamID, gainParam);
         castParameter(apvts, bitsParamID, bitsParam);
         castParameter(apvts, delayTimeParamID, delayParam);
@@ -76,8 +74,7 @@ public:
 
         layout.add(std::make_unique<AudioParameterFloat>(delayTimeParamID, "Delay Time",
             NormalisableRange{1.0f, 5000.0f, 0.0f, 0.23108f}, 375.0f,
-            Attrs().withStringFromValueFunction(
-                [](float v, int) { return String(v, 1) + " ms"; })));
+            Attrs().withStringFromValueFunction([](float v, int) { return String(v, 1) + " ms"; })));
 
         layout.add(std::make_unique<AudioParameterBool>(delaySyncParamID, "Delay Sync", false));
 
@@ -95,16 +92,15 @@ public:
             constexpr float kFbGMax = 1.15f;
 
             NormalisableRange<float> fbRange(0.0f, kFbGMax,
-                [](float, float, float p) noexcept {
-                    if (p <= kFbKnee)
-                        return std::pow(10.0f, -3.0f / (kFbN0 * std::pow(kFbN1 / kFbN0, p / kFbKnee)));
+                [](float, float, float p) noexcept
+                {
+                    if (p <= kFbKnee) return std::pow(10.0f, -3.0f / (kFbN0 * std::pow(kFbN1 / kFbN0, p / kFbKnee)));
                     return kFbGKnee + (p - kFbKnee) / (1.0f - kFbKnee) * (kFbGMax - kFbGKnee);
                 },
-                [](float, float, float g) noexcept {
+                [](float, float, float g) noexcept
+                {
                     if (g <= 0.01f) return 0.0f;
-                    if (g <= kFbGKnee)
-                        return kFbKnee * std::log((-3.0f / std::log10(g)) / kFbN0)
-                               / std::log(kFbN1 / kFbN0);
+                    if (g <= kFbGKnee) return kFbKnee * std::log((-3.0f / std::log10(g)) / kFbN0) / std::log(kFbN1 / kFbN0);
                     return kFbKnee + (1.0f - kFbKnee) * (g - kFbGKnee) / (kFbGMax - kFbGKnee);
                 });
 

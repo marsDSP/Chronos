@@ -57,7 +57,7 @@ private:
 
     // Bring a stored state up to the current schema version.
     // Fill the body when the parameter ranges change.
-    void migrateState_ (ValueTree& state, int fromVersion);
+    void migrateState_ (ValueTree& state, int fromVersion) /*const*/;
 
     // The last known host BPM. Held when the host gives no tempo.
     double cachedBpm_ = 120.0;

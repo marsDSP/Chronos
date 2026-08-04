@@ -351,18 +351,13 @@ namespace MarsDSP {
                         {
                             const auto ut = static_cast<std::size_t>(s + t);
                             const float bypassAmt = bypassSmoother_.getNextValue();
-                            bl[t] = data0[offset + s + t] * (1.0f - bypassAmt)
-                                  + bypassDryL_.process(bypassDryInL_[ut]) * bypassAmt;
+                            bl[t] = data0[offset + s + t] * (1.0f - bypassAmt) + bypassDryL_.process(bypassDryInL_[ut]) * bypassAmt;
                             if (hasR)
-                                br[t] = data1[offset + s + t] * (1.0f - bypassAmt)
-                                      + bypassDryR_.process(bypassDryInR_[ut]) * bypassAmt;
+                                br[t] = data1[offset + s + t] * (1.0f - bypassAmt) + bypassDryR_.process(bypassDryInR_[ut]) * bypassAmt;
                         }
                         const M128 vGain = MM(loadu_ps)(gainRamp_.data() + s);
-                        MM(storeu_ps)(data0 + offset + s,
-                            MM(mul_ps)(MM(load_ps)(bl), vGain));
-                        if (hasR)
-                            MM(storeu_ps)(data1 + offset + s,
-                                MM(mul_ps)(MM(load_ps)(br), vGain));
+                        MM(storeu_ps)(data0 + offset + s, MM(mul_ps)(MM(load_ps)(bl), vGain));
+                        if (hasR) MM(storeu_ps)(data1 + offset + s, MM(mul_ps)(MM(load_ps)(br), vGain));
                     }
                     for (int s = jFull; s < chunk; ++s)
                     {
@@ -374,8 +369,7 @@ namespace MarsDSP {
                         data0[offset + s] = blend * gainLin;
                         if (hasR)
                         {
-                            const float blendR = data1[offset + s] * (1.0f - bypassAmt)
-                                               + bypassDryR_.process(bypassDryInR_[u]) * bypassAmt;
+                            const float blendR = data1[offset + s] * (1.0f - bypassAmt) + bypassDryR_.process(bypassDryInR_[u]) * bypassAmt;
                             data1[offset + s] = blendR * gainLin;
                         }
                     }
@@ -388,7 +382,8 @@ namespace MarsDSP {
                     const M128 vSignMask = MM(set1_ps)(-0.0f);
                     for (int s = 0; s + 4 <= chunk; s += 4)
                     {
-                        alignas(16) float bl[4], br[4];
+                        alignas(16) float bl[4];
+                        alignas(16) float br[4];
                         for (int t = 0; t < 4; ++t)
                         {
                             const auto ut = static_cast<std::size_t>(s + t);
