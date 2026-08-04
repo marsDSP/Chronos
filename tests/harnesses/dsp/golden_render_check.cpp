@@ -1,6 +1,6 @@
 // tests/harnesses/dsp/golden_render_check.cpp
 //
-// Golden render harness. Renders 12 fixed configurations against 3 fixed
+// Golden render harness. Renders 13 fixed configurations against 3 fixed
 // inputs and hashes the interleaved stereo float output with FNV-1a 64. The
 // hash and three audible metrics (peak dBFS, integrated RMS dBFS, decay time
 // to -30 dBFS) are stored in tests/golden/hashes.txt.
@@ -164,7 +164,8 @@ StereoBuffer makeBurst()
 // ── Configurations ───────────────────────────────────────────────────────
 // Columns: delayMs, feedback, dampHz, crossFeed, loopDriveDb,
 // loopSatOrder, driveDb, adaaOrder, mixPercent, enableDiffuser,
-// diffusion, diffuserSize, diffModDepthMs, diffModRateHz.
+// diffusion, diffuserSize, diffModDepthMs, diffModRateHz,
+// delayModDepthCents, delayModRateHz.
 struct Config
 {
     int id;
@@ -182,11 +183,13 @@ struct Config
     float diffuserSize;
     float diffModDepthMs;
     float diffModRateHz;
+    float delayModDepthCents = 0.0f;
+    float delayModRateHz = 0.35f;
 };
 
-const std::array<Config, 12>& configs()
+const std::array<Config, 13>& configs()
 {
-    static constexpr std::array<Config, 12> kConfigs{ {
+    static constexpr std::array<Config, 13> kConfigs{ {
         { 1,  500.0f, 0.00f, 6000.0f, 0.0f,  0.0f, 2,  0.0f, 2, 100.0f, false, 0.7f, 0.5f, 16.0f/48.0f, 0.5f },
         { 2,  500.0f, 0.50f, 6000.0f, 0.0f,  0.0f, 2,  0.0f, 2, 100.0f, false, 0.7f, 0.5f, 16.0f/48.0f, 0.5f },
         { 3,  500.0f, 0.90f, 6000.0f, 0.0f,  0.0f, 2,  0.0f, 2, 100.0f, false, 0.7f, 0.5f, 16.0f/48.0f, 0.5f },
@@ -199,6 +202,7 @@ const std::array<Config, 12>& configs()
         { 10, 500.0f, 0.60f, 6000.0f, 0.0f,  0.0f, 0,  0.0f, 0, 100.0f, false, 0.7f, 0.5f, 16.0f/48.0f, 0.5f },
         { 11, 500.0f, 0.60f, 6000.0f, 0.0f,  0.0f, 2,  0.0f, 2, 100.0f, true,  0.7f, 0.5f, 16.0f/48.0f, 0.5f },
         { 12, 500.0f, 0.60f, 6000.0f, 0.3f,  6.02f, 2,  6.0f, 2,  45.0f, true,  0.9f, 0.8f, 32.0f/48.0f, 1.7f },
+        { 13, 500.0f, 0.60f, 6000.0f, 0.3f,  6.02f, 2,  6.0f, 2,  45.0f, true,  0.9f, 0.8f, 32.0f/48.0f, 1.7f, 18.0f, 0.8f },
     } };
     return kConfigs;
 }
@@ -227,8 +231,8 @@ MarsDSP::ChronosEngine::Params buildParams(const Config& c)
     p.enableDiffuser = c.enableDiffuser;
     p.delaySync      = false;
     p.delayDivision  = 11;
-    p.delayModDepth  = 0.0f;
-    p.delayModRateHz = 0.35f;
+    p.delayModDepth  = c.delayModDepthCents;
+    p.delayModRateHz = c.delayModRateHz;
     return p;
 }
 

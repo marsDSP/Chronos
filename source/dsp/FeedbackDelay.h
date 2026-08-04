@@ -7,6 +7,7 @@
 #include "Diffuser.h"
 #include "FracDelayTap.h"
 #include "LinearSmoother.h"
+#include "Modulation.h"
 #include "Pow2RingBuffer.h"
 #include "math/SaturatorMakeup.h"
 #include "math/Trigonometry.h"
@@ -19,6 +20,7 @@
 #include <array>
 #include <cassert>
 #include <cmath>
+#include <cstdint>
 #include <numbers>
 
 namespace MarsDSP::Delays {
@@ -30,6 +32,7 @@ namespace MarsDSP::Delays {
 
         static constexpr int   kMaxChunk    = 64;   // max sub-chunk length (ramp-array footprint)
         static constexpr int   kChunkGuard  = 6;    // interpolator window (base = wIdx - i - 3, len 6 ≤ kTail)
+        static constexpr std::uint64_t kModSeed = 0xC47051D5ull; // modulation RNG seed constant
 
         struct Params
         {
@@ -45,6 +48,8 @@ namespace MarsDSP::Delays {
             float diffModDepth   = 0.30f; // milliseconds, 0..1.5
             float diffModRateHz  = 0.5f;  // 0..8
             bool  enableDiffuser = false; // off by default
+            float delayModDepth  = 0.0f;  // cents, 0..50
+            float delayModRateHz = 0.35f; // Hz, 0.01..10
         };
 
         void prepare(double sampleRate, int maxBlockSize, int maxDelaySamples) noexcept
@@ -83,6 +88,10 @@ namespace MarsDSP::Delays {
             diffFade_ = 0.0f;
             crossCos_ = 1.0f;
             crossSin_ = 0.0f;
+            ouL_.reset();
+            ouR_.reset();
+            rngL_.seed(kModSeed, 1);
+            rngR_.seed(kModSeed, 2);
             firstBlock_ = true;
         }
 
@@ -101,6 +110,7 @@ namespace MarsDSP::Delays {
             cutG_ = cutGSm_.getCurrentValue();
             satLatencySm_.setCurrentAndTargetValue(satLatencySm_.getTargetValue());
             satLatency_ = satLatencySm_.getCurrentValue();
+            modKSm_.setCurrentAndTargetValue(modKSm_.getTargetValue());
             applyDiffuserParams_(p);
             diffuser_.prime();
             enableDiffuser_ = p.enableDiffuser;
@@ -143,8 +153,13 @@ namespace MarsDSP::Delays {
                 const float dTgt = delaySm_.getTargetValue();
                 const float satLatMax = std::max(satLatencySm_.getCurrentValue(),
                                                  satLatencySm_.getTargetValue());
+                // The OU state stays inside kClamp sigmas. The guard covers
+                // the largest deviation the modulation can apply.
+                const float modGuard = static_cast<float>(Mod::OrnsteinUhlenbeck::kClamp)
+                                     * std::max(modKSm_.getCurrentValue(),
+                                                modKSm_.getTargetValue());
                 const float dMin = std::max(kMinLoopDelay,
-                    std::min(dCur, dTgt) - satLatMax - baseT);
+                    std::min(dCur, dTgt) - satLatMax - baseT - modGuard);
 
                 int Lc = static_cast<int>(std::floor(dMin)) - kChunkGuard;
                 Lc = std::clamp(Lc, 1, std::min(kMaxChunk, remaining));
@@ -163,10 +178,13 @@ namespace MarsDSP::Delays {
                         dampG_      = dampGSm_.getNextValue();
                         cutG_       = cutGSm_.getNextValue();
                         satLatency_ = satLatencySm_.getNextValue();
+                        const float modK = modKSm_.getNextValue();
+                        const float modL = modK * ouL_.next(rngL_);
+                        const float modR = hasR ? modK * ouR_.next(rngR_) : 0.0f;
                         processSampleScalar_(inL + s + i, hasR ? inR + s + i : nullptr,
                                              wetL + s + i, hasR ? wetR + s + i : nullptr,
                                              d, g, cross, drive, hasR, mask,
-                                             fade, runDiff ? baseT : 0.0f);
+                                             fade, runDiff ? baseT : 0.0f, modL, modR);
                     }
                     s += Lc;
                     continue;
@@ -180,6 +198,8 @@ namespace MarsDSP::Delays {
                 alignas(16) float dampGR[kMaxChunk];
                 alignas(16) float satLatR[kMaxChunk];
                 alignas(16) float cutGR[kMaxChunk];
+                alignas(16) float modLR[kMaxChunk];
+                alignas(16) float modRR[kMaxChunk];
                 const bool wasRunning = (diffState_ != DiffuserState::Off);
                 for (int i = 0; i < Lc; ++i)
                 {
@@ -191,14 +211,22 @@ namespace MarsDSP::Delays {
                     dampGR[i]  = dampGSm_.getNextValue();
                     cutGR[i]   = cutGSm_.getNextValue();
                     satLatR[i] = satLatencySm_.getNextValue();
+                    const float modK = modKSm_.getNextValue();
+                    modLR[i] = modK * ouL_.next(rngL_);
+                    modRR[i] = hasR ? modK * ouR_.next(rngR_) : 0.0f;
                 }
                 const bool runDiff = wasRunning || (diffState_ != DiffuserState::Off);
 
                 alignas(16) float tapL[kMaxChunk];
                 alignas(16) float tapR[kMaxChunk];
+                // The settled bulk read needs a constant tap. It stays off
+                // until the modulation depth reaches zero and stays there.
+                const bool modOff = (modKSm_.getCurrentValue() == 0.0f
+                                     && modKSm_.getTargetValue() == 0.0f);
                 const bool settled = (dR[0] == dR[Lc - 1])
                                      && (fadeR[0] == fadeR[Lc - 1])
-                                     && (satLatR[0] == satLatR[Lc - 1]);
+                                     && (satLatR[0] == satLatR[Lc - 1])
+                                     && modOff;
 
                 if (settled)
                 {
@@ -239,11 +267,15 @@ namespace MarsDSP::Delays {
                 {
                     for (int i = 0; i < Lc; ++i)
                     {
-                        const float readDelay = std::max(kMinLoopDelay,
-                            dR[i] - satLatR[i] - fadeR[i] * baseT);
-                        tapL[i] = FracDelayTap::read(ringL_, writeIdx_ + i, readDelay);
+                        const float readDelayL = std::max(kMinLoopDelay,
+                            dR[i] + modLR[i] - satLatR[i] - fadeR[i] * baseT);
+                        tapL[i] = FracDelayTap::read(ringL_, writeIdx_ + i, readDelayL);
                         if (hasR)
-                            tapR[i] = FracDelayTap::read(ringR_, writeIdx_ + i, readDelay);
+                        {
+                            const float readDelayR = std::max(kMinLoopDelay,
+                                dR[i] + modRR[i] - satLatR[i] - fadeR[i] * baseT);
+                            tapR[i] = FracDelayTap::read(ringR_, writeIdx_ + i, readDelayR);
+                        }
                     }
                 }
 
@@ -379,9 +411,13 @@ namespace MarsDSP::Delays {
                 dampG_      = dampGSm_.getNextValue();
                 cutG_       = cutGSm_.getNextValue();
                 satLatency_ = satLatencySm_.getNextValue();
+                const float modK = modKSm_.getNextValue();
+                const float modL = modK * ouL_.next(rngL_);
+                const float modR = hasR ? modK * ouR_.next(rngR_) : 0.0f;
                 processSampleScalar_(inL + s, hasR ? inR + s : nullptr,
                                      wetL + s, hasR ? wetR + s : nullptr,
-                                     d, g, cross, drive, hasR, mask, fade, baseT);
+                                     d, g, cross, drive, hasR, mask, fade, baseT,
+                                     modL, modR);
             }
         }
 
@@ -499,6 +535,7 @@ namespace MarsDSP::Delays {
             dampGSm_.reset(sampleRate, 0.020);
             cutGSm_.reset(sampleRate, 0.020);
             satLatencySm_.reset(sampleRate, 0.010);
+            modKSm_.reset(sampleRate, 0.020);
             reset();
         }
 
@@ -548,6 +585,20 @@ namespace MarsDSP::Delays {
 
             const float clampedDrive = std::clamp(p.loopDrive, 0.1f, 16.0f);
             loopTrim_ = Math::loopTrim(clampedDrive);
+
+            const float modRate = std::clamp(p.delayModRateHz, 0.01f, 10.0f);
+            ouL_.setRate(sampleRate_, modRate);
+            ouR_.setRate(sampleRate_, modRate);
+
+            const float cents = std::clamp(p.delayModDepth, 0.0f, 50.0f);
+            // Map the depth in cents to an RMS delay slope. A pitch reading
+            // averages the slope over the tone period, so the scale uses the
+            // windowed increment RMS of the OU process. The reference window
+            // is 1 ms, the period of a 1 kHz tone.
+            const double slopeTarget = static_cast<double>(cents) * (std::numbers::ln2 / 1200.0);
+            const double tRef = std::max(1.0, std::round(sampleRate_ * 0.001));
+            const double incRms = ouL_.windowedIncrementRms(tRef);
+            modKSm_.setTargetValue(static_cast<float>(incRms > 0.0 ? slopeTarget / incRms : 0.0));
         }
 
         // Compute the equal-power rotation from the smoothed cross value.
@@ -576,14 +627,16 @@ namespace MarsDSP::Delays {
                                    float* wet, float* wetR,
                                    float d, float g, float cross, float drive,
                                    bool hasR, int mask,
-                                   float fade, float baseT) noexcept
+                                   float fade, float baseT,
+                                   float modL, float modR) noexcept
         {
             const float makeup = 1.0f / drive;
-            const float readDelay = std::max(kMinLoopDelay, d - satLatency_ - fade * baseT);
+            const float readDelayL = std::max(kMinLoopDelay, d + modL - satLatency_ - fade * baseT);
+            const float readDelayR = std::max(kMinLoopDelay, d + modR - satLatency_ - fade * baseT);
 
-            float tapL = FracDelayTap::read(ringL_, writeIdx_, readDelay);
+            float tapL = FracDelayTap::read(ringL_, writeIdx_, readDelayL);
             float tapR = hasR
-                ? FracDelayTap::read(ringR_, writeIdx_, readDelay)
+                ? FracDelayTap::read(ringR_, writeIdx_, readDelayR)
                 : tapL;
 
             if (baseT > 0.0f)   // diffuser running: diffuse, then fade-blend
@@ -691,6 +744,14 @@ namespace MarsDSP::Delays {
         bool enableDiffuser_ = false;
         DiffuserState diffState_ = DiffuserState::Off;
         float diffFade_ = 0.0f;   // 0 = raw tap, 1 = diffused tap
+
+        // Per-channel modulation states. The generators share one seed
+        // constant and differ by the stream index.
+        Mod::OrnsteinUhlenbeck ouL_;
+        Mod::OrnsteinUhlenbeck ouR_;
+        Mod::Pcg32 rngL_;
+        Mod::Pcg32 rngR_;
+        Smoothers::LinearSmoother<float> modKSm_;
     };
 }
 #endif

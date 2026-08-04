@@ -112,6 +112,14 @@ if(BUILD_TEST_HARNESSES)
         target_compile_options(glide_rate_check PRIVATE /O2)
     endif()
 
+    add_executable(delay_mod_check harnesses/dsp/delay_mod_check.cpp)
+    target_link_libraries(delay_mod_check PRIVATE SharedCode)
+    if(NOT MSVC)
+        target_compile_options(delay_mod_check PRIVATE -O2)
+    else()
+        target_compile_options(delay_mod_check PRIVATE /O2)
+    endif()
+
     add_executable(drive_loudness_check harnesses/dsp/drive_loudness_check.cpp)
     target_link_libraries(drive_loudness_check PRIVATE SharedCode)
     if(NOT MSVC)
@@ -397,6 +405,7 @@ if(BUILD_TEST_HARNESSES)
     add_test(NAME prepare_bench               COMMAND prepare_bench)
     add_test(NAME tempo_sync_check             COMMAND tempo_sync_check)
     add_test(NAME glide_rate_check              COMMAND glide_rate_check)
+    add_test(NAME delay_mod_check               COMMAND delay_mod_check)
     add_test(NAME drive_loudness_check          COMMAND drive_loudness_check)
     add_test(NAME loop_dc_check                  COMMAND loop_dc_check)
     add_test(NAME crossfeed_power_check           COMMAND crossfeed_power_check)
@@ -416,10 +425,10 @@ if(BUILD_TEST_HARNESSES)
     # committed baselines in tests/baselines/ via scripts/bench_gate.py. CI runs
     # at 25% tolerance. The owner runs 15% locally on a pinned core:
     #   <bench> --json current.json
-    #   python scripts/bench_gate.py tests/baselines/<bench>.json current.json --tolerance 15
+    #   python scripts/python/bench_gate.py tests/baselines/<bench>.json current.json --tolerance 15
     file(MAKE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/baselines")
     add_test(NAME bench_gate
-        COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/scripts/bench_gate.py"
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/scripts/python/bench_gate.py"
                 --ci --baselines "${CMAKE_CURRENT_SOURCE_DIR}/baselines"
                 --bindir "${CMAKE_CURRENT_BINARY_DIR}" --tolerance 25)
 

@@ -163,6 +163,8 @@ MarsDSP::ChronosEngine::Params sweptParams(int i) noexcept
     p.diffModDepth   = lerpF(0.0f, 1.5f, osc(1900.0, 0.0));
     p.diffModRateHz  = lerpF(0.01f, 8.0f, osc(3100.0, 1.0));
     p.enableDiffuser = ((i / 1200) % 2) == 1;
+    p.delayModDepth  = lerpF(0.0f, 50.0f, osc(2300.0, 1.0));
+    p.delayModRateHz = lerpF(0.01f, 10.0f, osc(2900.0, 0.0));
     return p;
 }
 

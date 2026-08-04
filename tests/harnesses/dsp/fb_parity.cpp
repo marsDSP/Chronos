@@ -102,6 +102,8 @@ struct Cfg
     bool  diffOn    = false;  // C7c: in-loop diffuser enabled
     float diffusion = 0.7f;   // allpass coefficient 0..0.92
     float diffSize  = 0.5f;   // section length scale
+    float delayModDepth  = 0.0f;  // cents; 0 keeps the settled path reachable
+    float delayModRateHz = 1.0f;  // Hz
 };
 
 // Per-1024-sample RMS of a buffer, in dB relative to a reference RMS.
@@ -132,6 +134,8 @@ void runOne(const Cfg& c, bool automateDelay, bool automateDampCross)
     p.diffuserSize   = c.diffSize;
     p.diffModDepth   = 0.0f;   // deterministic (no LFO walk across instances)
     p.diffModRateHz  = 0.5f;
+    p.delayModDepth  = c.delayModDepth;
+    p.delayModRateHz = c.delayModRateHz;
     fast.resetParams(p);
     ref.resetParams(p);   // resetParams snaps: diffuser state On/Off, no fade
 
@@ -297,6 +301,24 @@ int main()
     for (bool stereo : stereos)
     {
         runOne({ 480, 0.95f, 0.0f, sat, blk, stereo, false }, false, true);
+        ++configs;
+    }
+
+    // Delay-modulation cells: the OU stream must advance identically in both
+    // paths, once per sample per channel, independent of the block size.
+    // Modulation forces the per-sample tap walk in the chunked path.
+    g_section = "delay-mod";
+    for (int sat : { 0, 2 })
+    for (int blk : { 1, 17, 64, 256, 512 })
+    for (bool stereo : stereos)
+    {
+        runOne({ 4800, 0.5f, 0.37f, sat, blk, stereo, false, 0.7f, 0.5f, 25.0f, 1.5f }, false, false);
+        ++configs;
+    }
+    for (int blk : { 64, 256 })
+    for (bool stereo : stereos)
+    {
+        runOne({ 4800, 0.95f, 0.37f, 2, blk, stereo, false, 0.7f, 0.5f, 25.0f, 1.5f }, false, false);
         ++configs;
     }
 

@@ -515,6 +515,8 @@ namespace MarsDSP {
             fp.diffuserSize   = p.diffuserSize;
             fp.diffModDepth   = p.diffModDepth;
             fp.diffModRateHz  = p.diffModRateHz;
+            fp.delayModDepth  = p.delayModDepth;
+            fp.delayModRateHz = p.delayModRateHz;
             if (snap) fbDelay_.resetParams(fp);
             else      fbDelay_.setParams(fp);
         }
