@@ -37,8 +37,7 @@ namespace MarsDSP::Memory {
             free_();
             if (bytes > 0)
             {
-                data_ = static_cast<std::byte*>(
-                    operator new[](bytes, std::align_val_t{ kBaseAlignment }));
+                data_ = static_cast<std::byte*>(operator new[](bytes, std::align_val_t{ kBaseAlignment }));
                 total_ = bytes;
             }
         }
@@ -52,7 +51,7 @@ namespace MarsDSP::Memory {
             used_ = 0;
         }
 
-        [[nodiscard]] void* allocate_bytes(std::size_t n, std::size_t align) noexcept
+        [[nodiscard]] std::byte* allocate_bytes(std::size_t n, std::size_t align) noexcept
         {
             assert(align > 0 && (align & (align - 1)) == 0 && "align must be a power of two");
             assert(align <= kBaseAlignment && "base region is only kBaseAlignment-aligned");
@@ -63,10 +62,13 @@ namespace MarsDSP::Memory {
             return data_ + start;
         }
 
+        // The arena aligns the base to kBaseAlignment. This exceeds
+        // alignof(T) for every supported type. reinterpret_cast converts
+        // std::byte* to T*.
         template<class T>
         [[nodiscard]] T* allocate(std::size_t n, std::size_t align = alignof(T)) noexcept
         {
-            return static_cast<T*>(allocate_bytes(n * sizeof(T), align));
+            return reinterpret_cast<T*>(allocate_bytes(n * sizeof(T), align));
         }
 
         [[nodiscard]] std::size_t get_bytes_used() const noexcept { return used_; }
@@ -75,6 +77,8 @@ namespace MarsDSP::Memory {
     private:
         static std::size_t align_up_(std::size_t v, std::size_t align) noexcept
         {
+            // can theoretically overflow;
+            // assert align - 1 > SIZE_MAX - v ?
             return (v + align - 1) & ~(align - 1);
         }
 

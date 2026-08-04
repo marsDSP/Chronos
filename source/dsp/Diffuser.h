@@ -21,7 +21,11 @@ namespace MarsDSP::Diffusion {
     class Diffuser {
     public:
         static constexpr int   kNumSections    = 8;
-        static constexpr float kMaxCoefficient = 0.92f;
+        static constexpr float kMaxCoefficient = 0.78f;
+        // Per-section coefficient taper. Each section scales the master
+        // coefficient. The effective coefficient stays below the maximum.
+        static constexpr std::array<float, kNumSections> kSectionGain{
+            1.00f, 0.97f, 0.94f, 0.91f, 0.88f, 0.85f, 0.82f, 0.79f };
         static constexpr float kMaxSizeCut     = 0.55f; // size 0 cuts the path by 55%; size 1 is the full path
         static constexpr int   kChunk          = 16;    // block-vectorized chunk
         static constexpr float kMinDelay       = 32.0f; // MUST exceed kChunk: a chunk's
@@ -355,6 +359,7 @@ namespace MarsDSP::Diffusion {
                 const float lenF = static_cast<float>(sec.len);
                 const bool  isMod = (i == kModSectionA || i == kModSectionB);
                 const float sgn = sectionSign(i);
+                const float secGain = kSectionGain[static_cast<std::size_t>(i)];
 
                 if (settled && !isMod)
                 {
@@ -371,7 +376,7 @@ namespace MarsDSP::Diffusion {
                         d = rd_.data();
                     }
 
-                    const M128 sgnv = MM(set1_ps)(sgn);
+                    const M128 sgnv = MM(set1_ps)(sgn * secGain);
                     const int mv = m & ~3;
                     for (int j = 0; j < mv; j += 4)
                     {
@@ -386,7 +391,7 @@ namespace MarsDSP::Diffusion {
                     for (int j = mv; j < m; ++j)
                     {
                         const float dj = d[j];
-                        const float gj = sgn * gRamp_[static_cast<std::size_t>(j)];
+                        const float gj = sgn * secGain * gRamp_[static_cast<std::size_t>(j)];
                         const float vj = tmp_[static_cast<std::size_t>(j)] - gj * dj;
                         wr_[static_cast<std::size_t>(j)] = vj;
                         tmp_[static_cast<std::size_t>(j)] = dj + gj * vj;
@@ -404,7 +409,7 @@ namespace MarsDSP::Diffusion {
                     // ---- exact path: per-sample fractional read ----
                     for (int j = 0; j < m; ++j)
                     {
-                        const float gj = sgn * gRamp_[static_cast<std::size_t>(j)];
+                        const float gj = sgn * secGain * gRamp_[static_cast<std::size_t>(j)];
                         float eff = effLen(lenF, sizeRamp_[static_cast<std::size_t>(j)]);
                         const float mm = (i == kModSectionA) ? modA[j]
                                        : (i == kModSectionB) ? modB[j]
@@ -448,7 +453,7 @@ namespace MarsDSP::Diffusion {
                 eff = std::clamp(eff, kMinDelay, lenF);
 
                 // canonical Schroeder: v = x - g*d ; y = d + g*v ; write v.
-                const float gs = sectionSign(i) * g;
+                const float gs = sectionSign(i) * kSectionGain[static_cast<std::size_t>(i)] * g;
                 const float d = Delays::FracDelayTap::read(sec.ring, sec.w, eff);
                 float v = x - gs * d;
                 if (!std::isfinite(v)) v = 0.0f; // scrub before it recirculates
