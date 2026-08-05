@@ -423,7 +423,7 @@ namespace MarsDSP::Delays {
 
         [[nodiscard]] static constexpr int latencySamples() noexcept { return 0; }
         [[nodiscard]] float getMaxDelay() const noexcept { return maxDelay_; }
-        [[nodiscard]] double oscillatorMagnitude() const noexcept { return diffuser_.oscillatorMagnitude(); }
+        [[nodiscard]] float ouStateMaxSigma() const noexcept { return diffuser_.ouStateMaxSigma(); }
         [[nodiscard]] float currentDelaySamples() const noexcept { return delaySm_.getCurrentValue(); }
 
         // RMS ratio of tanh(k * x) to x for a 0.5-amplitude sine reference.

@@ -60,6 +60,8 @@ namespace MarsDSP::Mod {
 
         void reset() noexcept { x_ = 0.0; }
 
+        [[nodiscard]] double state() const noexcept { return x_; }
+
         // Advance the process once per sample. The state stays inside
         // kClamp sigmas so the delay read guard has a finite bound.
         float next(Pcg32& rng) noexcept

@@ -5,6 +5,7 @@
 
 #include "FracDelayTap.h"
 #include "LinearSmoother.h"
+#include "Modulation.h"
 #include "Pow2RingBuffer.h"
 #include "simd/Config.h"
 #include "utils/memory/BumpArena.h"
@@ -26,15 +27,16 @@ namespace MarsDSP::Diffusion {
         // coefficient. The effective coefficient stays below the maximum.
         static constexpr std::array<float, kNumSections> kSectionGain{
             1.00f, 0.97f, 0.94f, 0.91f, 0.88f, 0.85f, 0.82f, 0.79f };
+        // Per-section rate spread. Each section runs at a distinct fraction
+        // of the user rate. This decorrelates the sections.
+        static constexpr std::array<float, kNumSections> kRateSpread{
+            1.000f, 0.773f, 1.317f, 0.618f, 1.129f, 0.874f, 1.481f, 0.702f };
+        static constexpr std::uint64_t kModSeed = 0x9E3779B97F4A7C15ull;
         static constexpr float kMaxSizeCut     = 0.55f; // size 0 cuts the path by 55%; size 1 is the full path
         static constexpr int   kChunk          = 16;    // block-vectorized chunk
         static constexpr float kMinDelay       = 32.0f; // MUST exceed kChunk: a chunk's
                                                         // reads must not touch that same
                                                         // chunk's writes.
-        static constexpr int   kModSectionA    = 2;
-        static constexpr int   kModSectionB    = 5;
-        static constexpr float kDetuneRatio    = 1.317f;
-        static constexpr int   kRenormInterval = 4096; // samples between amplitude corrections
 
         static constexpr std::array<float, kNumSections> kPathMetersL
         {
@@ -92,12 +94,18 @@ namespace MarsDSP::Diffusion {
 
         void prime() noexcept
         {
-            for (auto* bank : { &secL_, &secR_ })
-                for (auto& s : *bank) { s.ring.clear(); s.w = 0; }
-
-            oscAc_ = 1.0; oscAs_ = 0.0;
-            oscBc_ = 0.0; oscBs_ = 1.0;
-            oscCount_ = 0;
+            for (int b = 0; b < 2; ++b)
+            {
+                auto& bank = (b == 0) ? secL_ : secR_;
+                for (int i = 0; i < kNumSections; ++i)
+                {
+                    auto& s = bank[static_cast<std::size_t>(i)];
+                    s.ring.clear();
+                    s.w = 0;
+                    s.ou.reset();
+                    s.rng.seed(kModSeed, static_cast<std::uint64_t>(b * kNumSections + i + 1));
+                }
+            }
             sizeSm_.setCurrentAndTargetValue(sizeSm_.getTargetValue());
             coefSm_.setCurrentAndTargetValue(coefSm_.getTargetValue());
             depthSm_.setCurrentAndTargetValue(depthSm_.getTargetValue());
@@ -126,8 +134,10 @@ namespace MarsDSP::Diffusion {
         void setModRateHz(float hz) noexcept
         {
             const double f = std::clamp(static_cast<double>(hz), 0.0, 8.0);
-            oscAk_ = 2.0 * std::sin(std::numbers::pi * f / sampleRate_);
-            oscBk_ = 2.0 * std::sin(std::numbers::pi * f * static_cast<double>(kDetuneRatio) / sampleRate_);
+            for (auto* bank : { &secL_, &secR_ })
+                for (int i = 0; i < kNumSections; ++i)
+                    (*bank)[static_cast<std::size_t>(i)].ou.setRate(
+                        sampleRate_, f * static_cast<double>(kRateSpread[static_cast<std::size_t>(i)]));
         }
 
         void processBlock(float* left, float* right, int n) noexcept
@@ -141,24 +151,11 @@ namespace MarsDSP::Diffusion {
                 {
                     sizeRamp_[static_cast<std::size_t>(j)] = sizeSm_.getNextValue();
                     gRamp_[static_cast<std::size_t>(j)] = std::clamp(coefSm_.getNextValue(), -kMaxCoefficient, kMaxCoefficient);
-                    const float depth = depthSm_.getNextValue();
-
-                    oscAs_ += oscAk_ * oscAc_;
-                    oscAc_ -= oscAk_ * oscAs_;
-                    oscBs_ += oscBk_ * oscBc_;
-                    oscBc_ -= oscBk_ * oscBs_;
-                    if (++oscCount_ >= kRenormInterval) { oscCount_ = 0; renormaliseOsc_(); }
-
-                    modAL_[static_cast<std::size_t>(j)] = depth * static_cast<float>(oscAc_);
-                    modBL_[static_cast<std::size_t>(j)] = depth * static_cast<float>(oscBc_);
-                    modAR_[static_cast<std::size_t>(j)] = depth * static_cast<float>(oscAs_);
-                    modBR_[static_cast<std::size_t>(j)] = depth * static_cast<float>(oscBs_);
+                    depthRamp_[static_cast<std::size_t>(j)] = depthSm_.getNextValue();
                 }
 
-                const bool settled = (sizeRamp_[0] == sizeRamp_[static_cast<std::size_t>(m - 1)]);
-
-                chunk_(secL_, left + off, m, settled, modAL_.data(), modBL_.data());
-                if (right != nullptr) chunk_(secR_, right + off, m, settled, modAR_.data(), modBR_.data());
+                chunk_(secL_, left + off, m);
+                if (right != nullptr) chunk_(secR_, right + off, m);
             }
         }
 
@@ -171,19 +168,8 @@ namespace MarsDSP::Diffusion {
                 const float g     = std::clamp(coefSm_.getNextValue(), -kMaxCoefficient, kMaxCoefficient);
                 const float depth = depthSm_.getNextValue();
 
-                oscAs_ += oscAk_ * oscAc_;
-                oscAc_ -= oscAk_ * oscAs_;
-                oscBs_ += oscBk_ * oscBc_;
-                oscBc_ -= oscBk_ * oscBs_;
-                if (++oscCount_ >= kRenormInterval) { oscCount_ = 0; renormaliseOsc_(); }
-
-                const float modAL = depth * static_cast<float>(oscAc_);
-                const float modBL = depth * static_cast<float>(oscBc_);
-                const float modAR = depth * static_cast<float>(oscAs_);
-                const float modBR = depth * static_cast<float>(oscBs_);
-
-                left[s] = chain_(secL_, left[s], size, g, modAL, modBL);
-                if (right != nullptr) right[s] = chain_(secR_, right[s], size, g, modAR, modBR);
+                left[s] = chain_(secL_, left[s], size, g, depth);
+                if (right != nullptr) right[s] = chain_(secR_, right[s], size, g, depth);
             }
         }
 
@@ -232,27 +218,22 @@ namespace MarsDSP::Diffusion {
             return lenF * (1.0f - kMaxSizeCut * (1.0f - size01));
         }
 
-        // Return the larger oscillator magnitude. Both pairs stay near one.
-        [[nodiscard]] double oscillatorMagnitude() const noexcept
+        // Return the largest OU state in sigmas across all sections.
+        // The state stays inside kClamp sigmas by construction.
+        [[nodiscard]] float ouStateMaxSigma() const noexcept
         {
-            const double a = oscAc_ * oscAc_ + oscAs_ * oscAs_;
-            const double b = oscBc_ * oscBc_ + oscBs_ * oscBs_;
-            return std::sqrt(std::max(a, b));
+            float maxSig = 0.0f;
+            for (const auto& s : secL_)
+                maxSig = std::max(maxSig, static_cast<float>(std::fabs(s.ou.state())));
+            for (const auto& s : secR_)
+                maxSig = std::max(maxSig, static_cast<float>(std::fabs(s.ou.state())));
+            return maxSig;
         }
 
     private:
         static constexpr double kSpeedOfSoundMps = 343.0;
         static constexpr int    kMaxPrimeScan    = 1 << 16;
         int    kModHeadroom_  = 128;
-
-        // Hold the oscillator amplitude at one.
-        void renormaliseOsc_() noexcept
-        {
-            const double nA = (3.0 - (oscAc_ * oscAc_ + oscAs_ * oscAs_)) * 0.5;
-            oscAc_ *= nA; oscAs_ *= nA;
-            const double nB = (3.0 - (oscBc_ * oscBc_ + oscBs_ * oscBs_)) * 0.5;
-            oscBc_ *= nB; oscBs_ *= nB;
-        }
 
         // Compute the section lengths from the acoustic path tables.
         // The prepare path and the arena size query call this function.
@@ -315,6 +296,8 @@ namespace MarsDSP::Diffusion {
         struct Section
         {
             Delays::Pow2RingBuffer ring;
+            Mod::OrnsteinUhlenbeck ou;
+            Mod::Pcg32 rng;
             int len = 0;
             int w   = 0;
         };
@@ -347,8 +330,7 @@ namespace MarsDSP::Diffusion {
             return want | 1; // unreachable at sane rates
         }
 
-        void chunk_(Bank& bank, float* io, int m, bool settled,
-                    const float* modA, const float* modB) noexcept
+        void chunk_(Bank& bank, float* io, int m) noexcept
         {
             std::memcpy(tmp_.data(), io, static_cast<std::size_t>(m) * sizeof(float));
 
@@ -357,76 +339,30 @@ namespace MarsDSP::Diffusion {
                 auto& sec = bank[static_cast<std::size_t>(i)];
                 const int   mask = sec.ring.mask();
                 const float lenF = static_cast<float>(sec.len);
-                const bool  isMod = (i == kModSectionA || i == kModSectionB);
                 const float sgn = sectionSign(i);
                 const float secGain = kSectionGain[static_cast<std::size_t>(i)];
 
-                if (settled && !isMod)
+                // Every section takes the exact fractional path. The OU
+                // modulates the tap per sample.
+                for (int j = 0; j < m; ++j)
                 {
-                    // ---- fast path: constant integer tap, 4-wide ----
-                    float eff = effLen(lenF, sizeRamp_[0]);
-                    eff = std::clamp(std::nearbyintf(eff), kMinDelay, lenF);
-                    const int D = static_cast<int>(eff);
-                    const int base = (sec.w - D) & mask;
+                    const float gj = sgn * secGain * gRamp_[static_cast<std::size_t>(j)];
+                    float eff = effLen(lenF, sizeRamp_[static_cast<std::size_t>(j)]);
+                    const float depth = depthRamp_[static_cast<std::size_t>(j)];
+                    const float peak = std::min(depth, 0.25f * eff);
+                    const float mm = peak * sec.ou.next(sec.rng);
+                    if (mm == 0.0f) eff = std::nearbyintf(eff);
+                    else            eff += mm;
+                    eff = std::clamp(eff, kMinDelay, lenF);
 
-                    const float* d = sec.ring.windowPtr(base, m);
-                    if (d == nullptr)
-                    {
-                        sec.ring.readWindow(rd_.data(), base, m);
-                        d = rd_.data();
-                    }
+                    const float dj = Delays::FracDelayTap::read(sec.ring, sec.w, eff);
+                    float vj = tmp_[static_cast<std::size_t>(j)] - gj * dj;
+                    if (!std::isfinite(vj)) vj = 0.0f;
+                    tmp_[static_cast<std::size_t>(j)] = dj + gj * vj;
 
-                    const M128 sgnv = MM(set1_ps)(sgn * secGain);
-                    const int mv = m & ~3;
-                    for (int j = 0; j < mv; j += 4)
-                    {
-                        const M128 dv = MM(loadu_ps)(d + j);
-                        const M128 gv = MM(mul_ps)(sgnv, MM(load_ps)(gRamp_.data() + j));
-                        const M128 xv = MM(load_ps)(tmp_.data() + j);
-                        const M128 vv = MM(sub_ps)(xv, MM(mul_ps)(gv, dv));
-                        const M128 yv = MM(add_ps)(dv, MM(mul_ps)(gv, vv));
-                        MM(store_ps)(wr_.data() + j, vv);
-                        MM(store_ps)(tmp_.data() + j, yv);
-                    }
-                    for (int j = mv; j < m; ++j)
-                    {
-                        const float dj = d[j];
-                        const float gj = sgn * secGain * gRamp_[static_cast<std::size_t>(j)];
-                        const float vj = tmp_[static_cast<std::size_t>(j)] - gj * dj;
-                        wr_[static_cast<std::size_t>(j)] = vj;
-                        tmp_[static_cast<std::size_t>(j)] = dj + gj * vj;
-                    }
-                    for (int j = 0; j < m; ++j)
-                        if (!std::isfinite(wr_[static_cast<std::size_t>(j)]))
-                            wr_[static_cast<std::size_t>(j)] = 0.0f;
-
-                    sec.ring.writeBlock(wr_.data(), sec.w, m);
-                    sec.ring.refreshMirror(sec.w, m);
-                    sec.w = (sec.w + m) & mask;
-                }
-                else
-                {
-                    // ---- exact path: per-sample fractional read ----
-                    for (int j = 0; j < m; ++j)
-                    {
-                        const float gj = sgn * secGain * gRamp_[static_cast<std::size_t>(j)];
-                        float eff = effLen(lenF, sizeRamp_[static_cast<std::size_t>(j)]);
-                        const float mm = (i == kModSectionA) ? modA[j]
-                                       : (i == kModSectionB) ? modB[j]
-                                                             : 0.0f;
-                        if (mm == 0.0f) eff = std::nearbyintf(eff);
-                        else            eff += mm;
-                        eff = std::clamp(eff, kMinDelay, lenF);
-
-                        const float dj = Delays::FracDelayTap::read(sec.ring, sec.w, eff);
-                        float vj = tmp_[static_cast<std::size_t>(j)] - gj * dj;
-                        if (!std::isfinite(vj)) vj = 0.0f;
-                        tmp_[static_cast<std::size_t>(j)] = dj + gj * vj;
-
-                        sec.ring.writeBlock(&vj, sec.w, 1);
-                        sec.ring.refreshMirror(sec.w, 1);
-                        sec.w = (sec.w + 1) & mask;
-                    }
+                    sec.ring.writeBlock(&vj, sec.w, 1);
+                    sec.ring.refreshMirror(sec.w, 1);
+                    sec.w = (sec.w + 1) & mask;
                 }
             }
 
@@ -434,22 +370,19 @@ namespace MarsDSP::Diffusion {
         }
 
         // reference only -- do not optimize, do not delete.
-        float chain_(Bank& bank, float x, float size, float g,
-                     float modA, float modB) noexcept
+        float chain_(Bank& bank, float x, float size, float g, float depth) noexcept
         {
             for (int i = 0; i < kNumSections; ++i)
             {
                 auto& sec = bank[static_cast<std::size_t>(i)];
                 const float lenF = static_cast<float>(sec.len);
                 float eff = effLen(lenF, size);
-
-                const float m = (i == kModSectionA) ? modA
-                              : (i == kModSectionB) ? modB
-                                                    : 0.0f;
-                if (m == 0.0f)
+                const float peak = std::min(depth, 0.25f * eff);
+                const float mm = peak * sec.ou.next(sec.rng);
+                if (mm == 0.0f)
                     eff = std::nearbyintf(eff);
                 else
-                    eff += m;
+                    eff += mm;
                 eff = std::clamp(eff, kMinDelay, lenF);
 
                 // canonical Schroeder: v = x - g*d ; y = d + g*v ; write v.
@@ -469,14 +402,9 @@ namespace MarsDSP::Diffusion {
 
         // chunk scratch, 16-byte aligned for load_ps/store_ps
         alignas(16) std::array<float, kChunk> tmp_{};
-        alignas(16) std::array<float, kChunk> wr_{};
-        alignas(16) std::array<float, kChunk> rd_{};
         alignas(16) std::array<float, kChunk> gRamp_{};
         alignas(16) std::array<float, kChunk> sizeRamp_{};
-        alignas(16) std::array<float, kChunk> modAL_{};
-        alignas(16) std::array<float, kChunk> modBL_{};
-        alignas(16) std::array<float, kChunk> modAR_{};
-        alignas(16) std::array<float, kChunk> modBR_{};
+        alignas(16) std::array<float, kChunk> depthRamp_{};
 
         Bank secL_{};
         Bank secR_{};
@@ -485,15 +413,6 @@ namespace MarsDSP::Diffusion {
         Smoothers::LinearSmoother<float> sizeSm_;
         Smoothers::LinearSmoother<float> coefSm_;
         Smoothers::LinearSmoother<float> depthSm_;
-
-        // quadrature LFOs: double state (see header note 6), (c, s) pairs.
-        double oscAc_ = 1.0;
-        double oscAs_ = 0.0;
-        double oscAk_ = 0.0;
-        double oscBc_ = 0.0;
-        double oscBs_ = 1.0;
-        double oscBk_ = 0.0;
-        int    oscCount_ = 0;
 
         // Cache for the section length prime scan. Holds the result per
         // sample rate so the scan runs once. The bitset replaces the old

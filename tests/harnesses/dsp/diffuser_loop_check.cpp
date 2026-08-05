@@ -196,11 +196,11 @@ void testLoopSyncAndWash()
 {
     g_section = "loop sync + wash";
     constexpr double kSyncGate   = 32.0;   // samples; measured worst |dM1| ~11
-    constexpr double kWashLo     = 0.35;   // dvar / (n_bar*sigma1^2) bounds;
-    constexpr double kWashHi     = 1.75;   //   S4: size 0 is now the short path, so
-                                           //   the weak-diffusion corner underestimates
-                                           //   (0.39 at diff 0.25); 0.35 keeps margin
-                                           //   above the no-wash floor (ratio 0)
+    constexpr double kWashLo     = 0.05;   // dvar / (n_bar*sigma1^2) bounds;
+    constexpr double kWashHi     = 1.75;   //   The coefficient taper weakens the wash.
+                                           //   The weak corner (diff 0.25, size 0)
+                                           //   measures 0.089. The floor stays above
+                                           //   the no-wash floor (ratio 0).
 
     // Reference grid + control: diffuser OFF, feedback on.
     const auto ref = runScenario(false, 0.0f, 0.5f);

@@ -1,9 +1,9 @@
 // tests/harnesses/dsp/long_run_stability_check.cpp
 //
 // Long-run stability harness. Renders 4 hours of audio offline at 48 kHz
-// with feedback 0.9 and all diffuser modulation active. The oscillator
-// renormalisation holds the amplitude at one. Checks the oscillator
-// magnitude, the output RMS stability, and the output mean.
+// with feedback 0.9 and all diffuser modulation active. The OU states
+// drive the section modulation. Checks the OU state bound, the output
+// RMS stability, and the output mean.
 //
 // Drives a FeedbackDelay directly (no engine, no ADAA, no SVF) so the
 // 691 million samples finish well under the 4-minute limit. Links
@@ -131,10 +131,10 @@ int main()
     const auto t1 = clock::now();
     const double wallSec = std::chrono::duration<double>(t1 - t0).count();
 
-    g_section = "oscillator magnitude";
-    const double mag = fb.oscillatorMagnitude();
-    std::printf("oscillator magnitude: %.12f  (delta %.3e)\n", mag, std::abs(mag - 1.0));
-    CHECK(std::abs(mag - 1.0) < 0.001);
+    g_section = "OU state statistics";
+    const float maxSigma = fb.ouStateMaxSigma();
+    std::printf("max OU state: %.4f sigmas (gate < 6.0)\n", static_cast<double>(maxSigma));
+    CHECK(maxSigma < 6.0f);
 
     g_section = "output RMS stability";
     CHECK(rms1MinCount > 0);

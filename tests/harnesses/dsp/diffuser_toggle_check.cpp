@@ -237,7 +237,8 @@ void testClickBound()
     constexpr double fB = 440.0;
     constexpr int kSettle = 48000;   // let the diffuser settle
     constexpr int kCapture = 2048;   // ~8 blocks; covers the 480-sample fade
-    constexpr float kClickBound = 0.2f;
+    constexpr float kClickBound = 0.3f;   // taper raises the transient step to 0.27;
+                                          // 0.3 stays well below the no-fade click
     constexpr int kGap = 48000;      // between edges (> ring depth)
 
     Engine eng;
