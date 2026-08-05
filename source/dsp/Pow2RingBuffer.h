@@ -45,8 +45,7 @@ namespace MarsDSP::Delays {
 
             const int need = newCapacity + kTail;
             storage_.reset();   // release any owned storage
-            data_ = arena.allocate<float>(arenaFloatsFor(minimumCapacity),
-                                          Memory::BumpArena::kBaseAlignment);
+            data_ = arena.allocate<float>(arenaFloatsFor(minimumCapacity), Memory::BumpArena::kBaseAlignment);
             assert(data_ != nullptr && "arena under-sized for this ring (see arenaFloatsFor)");
             allocated_ = need;
             capacity_ = newCapacity;

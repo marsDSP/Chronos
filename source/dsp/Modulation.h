@@ -31,9 +31,9 @@ namespace MarsDSP::Mod {
         std::uint32_t next() noexcept
         {
             const std::uint64_t old = state_;
-            state_ = old * 6364136223846793005ull + inc_;
-            const std::uint32_t xorshifted = static_cast<std::uint32_t>(((old >> 18u) ^ old) >> 27u);
-            const std::uint32_t rot = static_cast<std::uint32_t>(old >> 59u);
+            state_ = old * 6364136223846793005uLL + inc_;
+            const auto xorshifted = static_cast<std::uint32_t>(((old >> 18u) ^ old) >> 27u);
+            const auto rot = static_cast<std::uint32_t>(old >> 59u);
             return (xorshifted >> rot) | (xorshifted << ((0u - rot) & 31u));
         }
 

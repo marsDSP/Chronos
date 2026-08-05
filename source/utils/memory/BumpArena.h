@@ -5,7 +5,7 @@
 
 #include <cassert>
 #include <cstddef>
-#include <cstdint>
+#include <bit>
 #include <cstring>
 #include <new>
 
@@ -68,7 +68,7 @@ namespace MarsDSP::Memory {
         template<class T>
         [[nodiscard]] T* allocate(std::size_t n, std::size_t align = alignof(T)) noexcept
         {
-            return reinterpret_cast<T*>(allocate_bytes(n * sizeof(T), align));
+            return std::bit_cast<T*>(allocate_bytes(n * sizeof(T), align));
         }
 
         [[nodiscard]] std::size_t get_bytes_used() const noexcept { return used_; }

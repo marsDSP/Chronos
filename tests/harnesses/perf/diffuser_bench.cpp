@@ -308,8 +308,8 @@ int main(int argc, char** argv)
         const std::string cfg = "size=" + std::to_string(size) + ",modDepth=" +
             std::to_string(modDepth) + ",block=" + std::to_string(block) +
             ",ramp=" + rampStr;
-        for (const auto& pp : { std::pair<const char*, double>{ "processBlock", nsFast },
-                                std::pair<const char*, double>{ "processBlockRef", nsRef } })
+        for (const auto& pp : { std::pair{ "processBlock", nsFast },
+                                std::pair{ "processBlockRef", nsRef } })
         {
             csv += archName(); csv += ",";
             csv += std::to_string(size); csv += ",";

@@ -260,8 +260,8 @@ void ChronosProcessor::setStateInformation(const void *data, int sizeInBytes)
     std::unique_ptr xml(getXmlFromBinary(data, sizeInBytes));
     if (xml == nullptr || !xml->hasTagName(apvts.state.getType())) return;
     ValueTree state(ValueTree::fromXml(*xml));
-    const int fileVersion = state.getProperty("version");
-    if (fileVersion < kStateVersion) migrateState_(state, fileVersion);
+    if (const int fileVersion = state.getProperty("version"); fileVersion < kStateVersion)
+        migrateState_(state, fileVersion);
     state.setProperty("version", kStateVersion, nullptr);
     apvts.replaceState(state);
 }

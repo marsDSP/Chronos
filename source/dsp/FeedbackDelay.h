@@ -32,7 +32,7 @@ namespace MarsDSP::Delays {
 
         static constexpr int   kMaxChunk    = 64;   // max sub-chunk length (ramp-array footprint)
         static constexpr int   kChunkGuard  = 6;    // interpolator window (base = wIdx - i - 3, len 6 ≤ kTail)
-        static constexpr std::uint64_t kModSeed = 0xC47051D5ull; // modulation RNG seed constant
+        static constexpr std::uint64_t kModSeed = 0xC47051D5uLL; // modulation RNG seed constant
 
         struct Params
         {

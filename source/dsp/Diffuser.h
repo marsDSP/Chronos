@@ -3,6 +3,7 @@
 #ifndef CHRONOS_DIFFUSER_H
 #define CHRONOS_DIFFUSER_H
 
+
 #include "FracDelayTap.h"
 #include "LinearSmoother.h"
 #include "Modulation.h"
@@ -18,25 +19,29 @@
 #include <cstring>
 #include <numbers>
 
-namespace MarsDSP::Diffusion {
-    class Diffuser {
+namespace MarsDSP::Diffusion
+{
+    class Diffuser
+    {
     public:
-        static constexpr int   kNumSections    = 8;
+        static constexpr int kNumSections = 8;
         static constexpr float kMaxCoefficient = 0.78f;
         // Per-section coefficient taper. Each section scales the master
         // coefficient. The effective coefficient stays below the maximum.
         static constexpr std::array<float, kNumSections> kSectionGain{
-            1.00f, 0.97f, 0.94f, 0.91f, 0.88f, 0.85f, 0.82f, 0.79f };
+            1.00f, 0.97f, 0.94f, 0.91f, 0.88f, 0.85f, 0.82f, 0.79f
+        };
         // Per-section rate spread. Each section runs at a distinct fraction
         // of the user rate. This decorrelates the sections.
         static constexpr std::array<float, kNumSections> kRateSpread{
-            1.000f, 0.773f, 1.317f, 0.618f, 1.129f, 0.874f, 1.481f, 0.702f };
-        static constexpr std::uint64_t kModSeed = 0x9E3779B97F4A7C15ull;
-        static constexpr float kMaxSizeCut     = 0.55f; // size 0 cuts the path by 55%; size 1 is the full path
-        static constexpr int   kChunk          = 16;    // block-vectorized chunk
-        static constexpr float kMinDelay       = 32.0f; // MUST exceed kChunk: a chunk's
-                                                        // reads must not touch that same
-                                                        // chunk's writes.
+            1.000f, 0.773f, 1.317f, 0.618f, 1.129f, 0.874f, 1.481f, 0.702f
+        };
+        static constexpr std::uint64_t kModSeed = 0x9E3779B97F4A7C15uLL;
+        static constexpr float kMaxSizeCut = 0.55f; // size 0 cuts the path by 55%; size 1 is the full path
+        static constexpr int kChunk = 16; // block-vectorized chunk
+        static constexpr float kMinDelay = 32.0f; // MUST exceed kChunk: a chunk's
+        // reads must not touch that same
+        // chunk's writes.
 
         static constexpr std::array<float, kNumSections> kPathMetersL
         {
@@ -67,7 +72,7 @@ namespace MarsDSP::Diffusion {
             prepareImpl_(sampleRate, nullptr);
         }
 
-        void prepare(double sampleRate, Memory::BumpArena& arena) noexcept
+        void prepare(double sampleRate, Memory::BumpArena &arena) noexcept
         {
             prepareImpl_(sampleRate, &arena);
         }
@@ -80,9 +85,11 @@ namespace MarsDSP::Diffusion {
         static std::size_t ringStorageFloats(double sampleRate) noexcept
         {
             const int headroom = modHeadroomFor(sampleRate);
-            int lenL[kNumSections];
-            int lenR[kNumSections];
-            computeSectionLens(sampleRate, lenL, lenR);
+
+            std::array<int, kNumSections> lenL {};
+            std::array<int, kNumSections> lenR {};
+
+            computeSectionLens(sampleRate, lenL.data(), lenR.data());
             std::size_t total = 0;
             for (int i = 0; i < kNumSections; ++i)
             {
@@ -96,14 +103,18 @@ namespace MarsDSP::Diffusion {
         {
             for (int b = 0; b < 2; ++b)
             {
-                auto& bank = (b == 0) ? secL_ : secR_;
+                auto &bank = (b == 0) ? secL_ : secR_;
                 for (int i = 0; i < kNumSections; ++i)
                 {
-                    auto& s = bank[static_cast<std::size_t>(i)];
+                    auto &s = bank[static_cast<std::size_t>(i)];
                     s.ring.clear();
                     s.w = 0;
                     s.ou.reset();
-                    s.rng.seed(kModSeed, static_cast<std::uint64_t>(b * kNumSections + i + 1));
+
+                    const std::uint64_t stream =
+                        static_cast<std::uint64_t>(b) * kNumSections +
+                        static_cast<std::uint64_t>(i) + 1u;
+                    s.rng.seed(kModSeed, stream);
                 }
             }
             sizeSm_.setCurrentAndTargetValue(sizeSm_.getTargetValue());
@@ -134,13 +145,13 @@ namespace MarsDSP::Diffusion {
         void setModRateHz(float hz) noexcept
         {
             const double f = std::clamp(static_cast<double>(hz), 0.0, 8.0);
-            for (auto* bank : { &secL_, &secR_ })
+            for (auto *bank: {&secL_, &secR_})
                 for (int i = 0; i < kNumSections; ++i)
                     (*bank)[static_cast<std::size_t>(i)].ou.setRate(
                         sampleRate_, f * static_cast<double>(kRateSpread[static_cast<std::size_t>(i)]));
         }
 
-        void processBlock(float* left, float* right, int n) noexcept
+        void processBlock(float *left, float *right, int n) noexcept
         {
             assert(left != nullptr);
             for (int off = 0; off < n; off += kChunk)
@@ -159,13 +170,13 @@ namespace MarsDSP::Diffusion {
             }
         }
 
-        void processBlockRef(float* left, float* right, int n) noexcept
+        void processBlockRef(float *left, float *right, int n) noexcept
         {
             assert(left != nullptr);
             for (int s = 0; s < n; ++s)
             {
-                const float size  = sizeSm_.getNextValue();
-                const float g     = std::clamp(coefSm_.getNextValue(), -kMaxCoefficient, kMaxCoefficient);
+                const float size = sizeSm_.getNextValue();
+                const float g = std::clamp(coefSm_.getNextValue(), -kMaxCoefficient, kMaxCoefficient);
                 const float depth = depthSm_.getNextValue();
 
                 left[s] = chain_(secL_, left[s], size, g, depth);
@@ -184,12 +195,12 @@ namespace MarsDSP::Diffusion {
         [[nodiscard]] std::array<float, 2> baseTransportSamplesLR(float size01) const noexcept
         {
             const float s = std::clamp(size01, 0.0f, 1.0f);
-            auto sumBank = [&](const Bank& bank) noexcept -> float
+            auto sumBank = [&](const Bank &bank) noexcept
             {
                 float sum = 0.0f;
                 for (int i = 0; i < kNumSections; ++i)
                 {
-                    const float lenF = static_cast<float>(bank[static_cast<std::size_t>(i)].len);
+                    const auto lenF = static_cast<float>(bank[static_cast<std::size_t>(i)].len);
                     float eff = effLen(lenF, s);
                     eff = std::nearbyintf(eff);
                     eff = std::clamp(eff, kMinDelay, lenF);
@@ -197,7 +208,7 @@ namespace MarsDSP::Diffusion {
                 }
                 return sum;
             };
-            return { sumBank(secL_), sumBank(secR_) };
+            return {sumBank(secL_), sumBank(secR_)};
         }
 
         [[nodiscard]] int sectionLenL(int i) const noexcept { return secL_[static_cast<std::size_t>(i)].len; }
@@ -223,28 +234,27 @@ namespace MarsDSP::Diffusion {
         [[nodiscard]] float ouStateMaxSigma() const noexcept
         {
             float maxSig = 0.0f;
-            for (const auto& s : secL_)
+            for (const auto &s: secL_)
                 maxSig = std::max(maxSig, static_cast<float>(std::fabs(s.ou.state())));
-            for (const auto& s : secR_)
+            for (const auto &s: secR_)
                 maxSig = std::max(maxSig, static_cast<float>(std::fabs(s.ou.state())));
             return maxSig;
         }
 
     private:
         static constexpr double kSpeedOfSoundMps = 343.0;
-        static constexpr int    kMaxPrimeScan    = 1 << 16;
-        int    kModHeadroom_  = 128;
+        static constexpr int kMaxPrimeScan = 1 << 16;
+        int kModHeadroom_ = 128;
 
         // Compute the section lengths from the acoustic path tables.
         // The prepare path and the arena size query call this function.
         // The cache holds the result so the prime scan runs once per rate.
-        static void computeSectionLens(double sampleRate,
-                                       int* outL, int* outR) noexcept
+        static void computeSectionLens(double sampleRate, int *outL, int *outR) noexcept
         {
             if (sectionLenCache_.valid && sectionLenCache_.sr == sampleRate)
             {
-                std::copy_n(sectionLenCache_.lenL, kNumSections, outL);
-                std::copy_n(sectionLenCache_.lenR, kNumSections, outR);
+                std::copy_n(sectionLenCache_.lenL.data(), kNumSections, outL);
+                std::copy_n(sectionLenCache_.lenR.data(), kNumSections, outR);
                 return;
             }
 
@@ -252,18 +262,20 @@ namespace MarsDSP::Diffusion {
             sectionLenCache_.used.reset();
             for (int i = 0; i < kNumSections; ++i)
             {
-                const int wantL = static_cast<int>(std::lround(static_cast<double>(kPathMetersL[static_cast<std::size_t>(i)]) * samplesPerMeter));
-                const int wantR = static_cast<int>(std::lround(static_cast<double>(kPathMetersR[static_cast<std::size_t>(i)]) * samplesPerMeter));
+                const auto wantL = static_cast<int>(std::lround(
+                    static_cast<double>(kPathMetersL[static_cast<std::size_t>(i)]) * samplesPerMeter));
+                const auto wantR = static_cast<int>(std::lround(
+                    static_cast<double>(kPathMetersR[static_cast<std::size_t>(i)]) * samplesPerMeter));
                 sectionLenCache_.lenL[i] = distinctPrimeNear_(wantL, sectionLenCache_.used);
                 sectionLenCache_.lenR[i] = distinctPrimeNear_(wantR, sectionLenCache_.used);
             }
             sectionLenCache_.sr = sampleRate;
             sectionLenCache_.valid = true;
-            std::copy_n(sectionLenCache_.lenL, kNumSections, outL);
-            std::copy_n(sectionLenCache_.lenR, kNumSections, outR);
+            std::copy_n(sectionLenCache_.lenL.data(), kNumSections, outL);
+            std::copy_n(sectionLenCache_.lenR.data(), kNumSections, outR);
         }
 
-        void prepareImpl_(double sampleRate, Memory::BumpArena* arena) noexcept
+        void prepareImpl_(double sampleRate, Memory::BumpArena *arena) noexcept
         {
             assert(sampleRate > 0.0);
             sampleRate_ = sampleRate;
@@ -278,12 +290,12 @@ namespace MarsDSP::Diffusion {
             }
 
             kModHeadroom_ = modHeadroomFor(sampleRate);
-            for (auto* bank : { &secL_, &secR_ })
-                for (auto& s : *bank)
+            for (auto *bank: {&secL_, &secR_})
+                for (auto &s: *bank)
                 {
                     const int minCap = s.len + kModHeadroom_ + Delays::Pow2RingBuffer::kTail + 8;
                     if (arena != nullptr) s.ring.prepare(minCap, *arena);
-                    else                  s.ring.prepare(minCap);
+                    else s.ring.prepare(minCap);
                 }
 
             sizeSm_.reset(sampleRate, 0.050);
@@ -299,8 +311,9 @@ namespace MarsDSP::Diffusion {
             Mod::OrnsteinUhlenbeck ou;
             Mod::Pcg32 rng;
             int len = 0;
-            int w   = 0;
+            int w = 0;
         };
+
         using Bank = std::array<Section, kNumSections>;
 
         static bool isPrime_(int v) noexcept
@@ -313,12 +326,12 @@ namespace MarsDSP::Diffusion {
         }
 
         // Find the nearest unused prime to the given length.
-        static int distinctPrimeNear_(int want, std::bitset<kMaxPrimeScan>& used) noexcept
+        static int distinctPrimeNear_(int want, std::bitset<kMaxPrimeScan> &used) noexcept
         {
             want = std::clamp(want, 5, kMaxPrimeScan - 2);
             for (int d = 0; d < kMaxPrimeScan; ++d)
             {
-                for (const int cand : { want + d, want - d })
+                for (const int cand: {want + d, want - d})
                 {
                     if (cand >= 5 && cand < kMaxPrimeScan && isPrime_(cand) && !used.test(static_cast<size_t>(cand)))
                     {
@@ -330,15 +343,15 @@ namespace MarsDSP::Diffusion {
             return want | 1; // unreachable at sane rates
         }
 
-        void chunk_(Bank& bank, float* io, int m) noexcept
+        void chunk_(Bank &bank, float *io, int m) noexcept
         {
             std::memcpy(tmp_.data(), io, static_cast<std::size_t>(m) * sizeof(float));
 
             for (int i = 0; i < kNumSections; ++i)
             {
-                auto& sec = bank[static_cast<std::size_t>(i)];
-                const int   mask = sec.ring.mask();
-                const float lenF = static_cast<float>(sec.len);
+                auto &sec = bank[static_cast<std::size_t>(i)];
+                const int mask = sec.ring.mask();
+                const auto lenF = static_cast<float>(sec.len);
                 const float sgn = sectionSign(i);
                 const float secGain = kSectionGain[static_cast<std::size_t>(i)];
 
@@ -350,9 +363,8 @@ namespace MarsDSP::Diffusion {
                     float eff = effLen(lenF, sizeRamp_[static_cast<std::size_t>(j)]);
                     const float depth = depthRamp_[static_cast<std::size_t>(j)];
                     const float peak = std::min(depth, 0.25f * eff);
-                    const float mm = peak * sec.ou.next(sec.rng);
-                    if (mm == 0.0f) eff = std::nearbyintf(eff);
-                    else            eff += mm;
+                    if (const float mm = peak * sec.ou.next(sec.rng); mm == 0.0f) eff = std::nearbyintf(eff);
+                    else eff += mm;
                     eff = std::clamp(eff, kMinDelay, lenF);
 
                     const float dj = Delays::FracDelayTap::read(sec.ring, sec.w, eff);
@@ -370,16 +382,15 @@ namespace MarsDSP::Diffusion {
         }
 
         // reference only -- do not optimize, do not delete.
-        float chain_(Bank& bank, float x, float size, float g, float depth) noexcept
+        float chain_(Bank &bank, float x, float size, float g, float depth) noexcept
         {
             for (int i = 0; i < kNumSections; ++i)
             {
-                auto& sec = bank[static_cast<std::size_t>(i)];
-                const float lenF = static_cast<float>(sec.len);
+                auto &sec = bank[static_cast<std::size_t>(i)];
+                const auto lenF = static_cast<float>(sec.len);
                 float eff = effLen(lenF, size);
                 const float peak = std::min(depth, 0.25f * eff);
-                const float mm = peak * sec.ou.next(sec.rng);
-                if (mm == 0.0f)
+                if (const float mm = peak * sec.ou.next(sec.rng); mm == 0.0f)
                     eff = std::nearbyintf(eff);
                 else
                     eff += mm;
@@ -417,13 +428,16 @@ namespace MarsDSP::Diffusion {
         // Cache for the section length prime scan. Holds the result per
         // sample rate so the scan runs once. The bitset replaces the old
         // 64 kB stack array. The prepare path is single-threaded.
-        struct SectionLenCache {
+        struct SectionLenCache
+        {
+            SectionLenCache() noexcept : sr{0.0}, lenL{}, lenR{}, valid{false} {}
             double sr;
-            int lenL[kNumSections];
-            int lenR[kNumSections];
+            std::array<int, kNumSections> lenL;
+            std::array<int, kNumSections> lenR;
             std::bitset<kMaxPrimeScan> used;
             bool valid;
         };
+
         static inline SectionLenCache sectionLenCache_{};
     };
 }

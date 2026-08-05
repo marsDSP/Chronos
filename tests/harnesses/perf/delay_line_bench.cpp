@@ -111,21 +111,22 @@ double runSimdDelayLine(const std::vector<float>& inL, const std::vector<float>&
                         Interpolation mode)
 {
     SimdDelayLine dl;
-    dl.prepare(kFs, static_cast<int>(kBlock), 5000.0f);
+    dl.prepare(kFs, kBlock, 5000.0f);
     dl.setInterpolation(mode);
     dl.reset();
-    std::vector<float> wetL(kBlock), wetR(kBlock);
+    std::vector<float> wetL(kBlock);
+    std::vector<float> wetR(kBlock);
     double acc = 0.0;
     for (std::size_t b = 0; b < kBlocks; ++b)
     {
         const std::size_t off = b * kBlock;
         if constexpr (UseSimd)
             dl.process(inL.data() + off, inR.data() + off,
-                       wetL.data(), wetR.data(), static_cast<int>(kBlock),
+                       wetL.data(), wetR.data(), kBlock,
                        kDelaySamples, kDelaySamples);
         else
             dl.processScalar(inL.data() + off, inR.data() + off,
-                             wetL.data(), wetR.data(), static_cast<int>(kBlock),
+                             wetL.data(), wetR.data(), kBlock,
                              kDelaySamples, kDelaySamples);
         for (std::size_t i = 0; i < kBlock; ++i)
         {
@@ -193,10 +194,9 @@ int main(int argc, char** argv)
     const std::vector<float> inL = makeRampL();
     const std::vector<float> inR = makeRampR();
 
-    std::printf("=== Chronos delay-line throughput benchmark ===\n");
-    std::printf("sr=%.0f  block=%zu  total=%zu samples  delay=%.1f smp  reps=%zu\n",
-                kFs, kBlock, kTotal, (double)kDelaySamples, kReps);
-    std::printf("(min of %zu reps; sink accumulators keep loops live)\n\n", kReps);
+    std::print("=== Chronos delay-line throughput benchmark ===\n");
+    std::print("sr=%.0f  block=%zu  total=%zu samples  delay=%.1f smp  reps=%zu\n", kFs, kBlock, kTotal, static_cast<double>(kDelaySamples), kReps);
+    std::print("(min of %zu reps; sink accumulators keep loops live)\n\n", kReps);
 
     double sink = 0.0;
 
@@ -205,16 +205,14 @@ int main(int argc, char** argv)
     const double nsScalar = benchNsPerSample([&]{ return runSimdDelayLine<false>(inL, inR, Interpolation::Lagrange5th); }, sink);
     const double nsJuce   = benchNsPerSample([&]{ return runJuceDelayLine(inL, inR); }, sink);
 
-    std::printf("[delay] ns/sample, stereo (min of %zu reps):\n", kReps);
-    std::printf("       SimdDelayLine  SIMD   (Lag5) : %7.3f ns/sample\n", nsSimd);
-    std::printf("       SimdDelayLine  scalar (Lag5) : %7.3f ns/sample  (%.2fx vs scalar)\n",
-                nsScalar, nsScalar / nsSimd);
-    std::printf("       juce::dsp::DelayLine per-smp : %7.3f ns/sample  (%.2fx vs juce)\n",
-                nsJuce, nsJuce / nsSimd);
-    std::printf("       (timing gate moved to scripts/bench_gate.py)\n\n");
+    std::print("[delay] ns/sample, stereo (min of %zu reps):\n", kReps);
+    std::print("       SimdDelayLine  SIMD   (Lag5) : %7.3f ns/sample\n", nsSimd);
+    std::print("       SimdDelayLine  scalar (Lag5) : %7.3f ns/sample  (%.2fx vs scalar)\n", nsScalar, nsScalar / nsSimd);
+    std::print("       juce::dsp::DelayLine per-smp : %7.3f ns/sample  (%.2fx vs juce)\n", nsJuce, nsJuce / nsSimd);
+    std::print("       (timing gate moved to scripts/bench_gate.py)\n\n");
 
     // ---- 4. Per-mode SIMD throughput (zero-padded Linear cost check) ----
-    std::printf("[per-mode] SIMD ns/sample (min of %zu reps):\n", kReps);
+    std::print("[per-mode] SIMD ns/sample (min of %zu reps):\n", kReps);
     const Interpolation modes[] = { Interpolation::Linear, Interpolation::Lagrange3rd, Interpolation::Lagrange5th };
     double minNs = std::numeric_limits<double>::infinity(), maxNs = 0.0;
     double perModeNs[3] = {};
@@ -223,24 +221,24 @@ int main(int argc, char** argv)
     {
         const double n = benchNsPerSample([&]{ return runSimdDelayLine<true>(inL, inR, m); }, sink);
         perModeNs[mi++] = n;
-        std::printf("       %-12s : %7.3f ns/sample\n", modeName(m), n);
+        std::print("       %-12s : %7.3f ns/sample\n", modeName(m), n);
         minNs = std::min(minNs, n);
         maxNs = std::max(maxNs, n);
     }
-    std::printf("       (max/min = %.2fx — Linear's zero-padded 6-MAC path vs Lag5)\n\n", maxNs / minNs);
+    std::print("       (max/min = %.2fx — Linear's zero-padded 6-MAC path vs Lag5)\n\n", maxNs / minNs);
 
     std::vector<bench::Record> records;
-    records.push_back({"SimdDelayLine",       "SIMD,Lag5",     nsSimd});
-    records.push_back({"SimdDelayLine",       "scalar,Lag5",   nsScalar});
-    records.push_back({"juce::dsp::DelayLine", "per-sample",    nsJuce});
-    records.push_back({"SimdDelayLine",       "SIMD,Linear",   perModeNs[0]});
-    records.push_back({"SimdDelayLine",       "SIMD,Lag3",     perModeNs[1]});
+    records.emplace_back("SimdDelayLine", "SIMD,Lag5", nsSimd);
+    records.emplace_back("SimdDelayLine", "scalar,Lag5", nsScalar);
+    records.emplace_back("juce::dsp::DelayLine", "per-sample", nsJuce);
+    records.emplace_back("SimdDelayLine", "SIMD,Linear", perModeNs[0]);
+    records.emplace_back("SimdDelayLine", "SIMD,Lag3", perModeNs[1]);
 
-    std::printf("(sink=%f)\n", sink);
+    std::print("(sink=%f)\n", sink);
 
     if (!jsonPath.empty())
         bench::writeJson(jsonPath, records, provisional);
 
-    std::printf("=== DONE (informational only, gate moved to scripts/bench_gate.py) ===\n");
+    std::print("=== DONE (informational only, gate moved to scripts/bench_gate.py) ===\n");
     return 0;
 }
