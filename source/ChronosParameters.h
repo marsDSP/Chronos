@@ -107,7 +107,7 @@ public:
             layout.add(std::make_unique<AudioParameterFloat>(feedbackParamID, "Feedback",
                 std::move(fbRange), 0.42f,
                 Attrs().withStringFromValueFunction(
-                    [](float g, int) {
+                [](float g, int) {
                         if (g >= 1.0f) return String("self-osc");
                         if (g < 0.01f) return String("0 repeats");
                         const float repeats = -30.0f / (20.0f * std::log10(g));
@@ -117,38 +117,31 @@ public:
 
         layout.add(std::make_unique<AudioParameterFloat>(dampHzParamID, "Repeat Damp",
             NormalisableRange{200.0f, 20000.0f, 0.0f, 0.32198f}, 8000.0f,
-            Attrs().withStringFromValueFunction(
-                [](float v, int) {
-                    return v >= 1000.0f ? String(v * 0.001f, 1) + " kHz" : String(v, 1) + " Hz";
-                })));
+            Attrs().withStringFromValueFunction([](float v, int) {
+                    return v >= 1000.0f ? String(v * 0.001f, 1) + " kHz" : String(v, 1) + " Hz"; })));
 
         layout.add(std::make_unique<AudioParameterFloat>(loopCutHzParamID, "Repeat Cut",
             NormalisableRange{20.0f, 2000.0f, 0.0f, 0.25452f}, 40.0f,
-            Attrs().withStringFromValueFunction(
-                [](float v, int) {
-                    return v >= 1000.0f ? String(v * 0.001f, 1) + " kHz" : String(v, 1) + " Hz";
-                })));
+            Attrs().withStringFromValueFunction([](float v, int) {
+                    return v >= 1000.0f ? String(v * 0.001f, 1) + " kHz" : String(v, 1) + " Hz"; })));
 
         layout.add(std::make_unique<AudioParameterFloat>(crossFeedParamID, "Cross Feed",
             NormalisableRange{0.0f, 1.0f}, 0.0f));
 
         layout.add(std::make_unique<AudioParameterFloat>(loopDriveParamID, "Repeat Drive",
             NormalisableRange{-6.0f, 24.0f}, 0.0f,
-            Attrs().withStringFromValueFunction(
-                [](float v, int) { return String(v, 1) + " dB"; })));
+            Attrs().withStringFromValueFunction([](float v, int) { return String(v, 1) + " dB"; })));
 
         layout.add(std::make_unique<AudioParameterChoice>(loopSatOrderParamID, "Repeat Sat",
             StringArray{"Off", "1st", "2nd"}, 2));
 
         layout.add(std::make_unique<AudioParameterFloat>(delayModDepthParamID, "Delay Mod Depth",
             NormalisableRange{0.0f, 50.0f, 0.0f, 0.37824f}, 0.0f,
-            Attrs().withStringFromValueFunction(
-                [](float v, int) { return String(v, 1) + " cents"; })));
+            Attrs().withStringFromValueFunction([](float v, int) { return String(v, 1) + " cents"; })));
 
         layout.add(std::make_unique<AudioParameterFloat>(delayModRateHzParamID, "Delay Mod Rate",
             NormalisableRange{0.01f, 10.0f, 0.0f, 0.22990f}, 0.35f,
-            Attrs().withStringFromValueFunction(
-                [](float v, int) { return String(v, 2) + " Hz"; })));
+            Attrs().withStringFromValueFunction([](float v, int) { return String(v, 2) + " Hz"; })));
 
         layout.add(std::make_unique<AudioParameterBool>(enableDiffuserParamID, "Diffuser", false));
 

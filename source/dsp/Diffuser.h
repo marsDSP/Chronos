@@ -36,6 +36,7 @@ namespace MarsDSP::Diffusion
         static constexpr std::array<float, kNumSections> kRateSpread{
             1.000f, 0.773f, 1.317f, 0.618f, 1.129f, 0.874f, 1.481f, 0.702f
         };
+
         static constexpr std::uint64_t kModSeed = 0x9E3779B97F4A7C15uLL;
         static constexpr float kMaxSizeCut = 0.55f; // size 0 cuts the path by 55%; size 1 is the full path
         static constexpr int kChunk = 16; // block-vectorized chunk
