@@ -77,8 +77,7 @@ namespace MarsDSP::Memory {
     private:
         static std::size_t align_up_(std::size_t v, std::size_t align) noexcept
         {
-            // can theoretically overflow;
-            // assert align - 1 > SIZE_MAX - v ?
+            assert(!(align - 1 > SIZE_MAX - v));
             return (v + align - 1) & ~(align - 1);
         }
 
