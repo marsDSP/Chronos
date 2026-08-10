@@ -84,7 +84,7 @@ namespace MarsDSP::Memory {
 
         void free_() noexcept
         {
-            if (data_ != nullptr) operator delete[](data_, std::align_val_t{ kBaseAlignment });
+            operator delete[](data_, std::align_val_t{ kBaseAlignment });
             data_ = nullptr;
             total_ = 0;
             used_ = 0;
