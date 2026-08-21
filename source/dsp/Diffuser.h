@@ -44,28 +44,23 @@ namespace MarsDSP::Diffusion
         // reads must not touch that same
         // chunk's writes.
 
-        static constexpr std::array<float, kNumSections> kPathMetersL
-        {
-            4.54125f,
-            3.93375f,
-            3.19125f,
-            2.92875f,
-            2.32875f,
-            2.01000f,
-            1.18875f,
-            0.82875f
-        };
+        static constexpr float kTotalMetersL = 20.95125f;
+        static constexpr float kTotalMetersR = 21.07500f;
+        static constexpr int kNumDelaysPerBank = 9;
 
-        static constexpr std::array<float, kNumSections> kPathMetersR
-        {
-            4.53000f,
-            3.92625f,
-            3.18375f,
-            2.91375f,
-            2.33625f,
-            1.99875f,
-            1.39125f,
-            0.79500f
+        // Ratio table for acoustic budget partition.
+        // Slots 0..2 are plain allpass sections.
+        // Slots 3..8 are nested allpass pairs (outer, inner).
+        static constexpr std::array<float, kNumDelaysPerBank> kPathRatios{
+            0.0396f, // 0: plain
+            0.0567f, // 1: plain
+            0.0787f, // 2: plain
+            0.1002f, // 3: nest 0 outer
+            0.0620f, // 4: nest 0 inner
+            0.1456f, // 5: nest 1 outer
+            0.0883f, // 6: nest 1 inner
+            0.2649f, // 7: nest 2 outer
+            0.1640f  // 8: nest 2 inner
         };
 
         void prepare(double sampleRate) noexcept
@@ -87,15 +82,15 @@ namespace MarsDSP::Diffusion
         {
             const int headroom = modHeadroomFor(sampleRate);
 
-            std::array<int, kNumSections> lenL {};
-            std::array<int, kNumSections> lenR {};
+            std::array<int, kNumDelaysPerBank> lenL{};
+            std::array<int, kNumDelaysPerBank> lenR{};
 
             computeSectionLens(sampleRate, lenL.data(), lenR.data());
             std::size_t total = 0;
-            for (int i = 0; i < kNumSections; ++i)
+            for (int i = 0; i < kNumDelaysPerBank; ++i)
             {
-                total += Delays::Pow2RingBuffer::arenaFloatsFor(lenL[i] + headroom + Delays::Pow2RingBuffer::kTail + 8);
-                total += Delays::Pow2RingBuffer::arenaFloatsFor(lenR[i] + headroom + Delays::Pow2RingBuffer::kTail + 8);
+                total += Delays::Pow2RingBuffer::arenaFloatsFor(lenL[static_cast<std::size_t>(i)] + headroom + Delays::Pow2RingBuffer::kTail + 8);
+                total += Delays::Pow2RingBuffer::arenaFloatsFor(lenR[static_cast<std::size_t>(i)] + headroom + Delays::Pow2RingBuffer::kTail + 8);
             }
             return total;
         }
@@ -187,36 +182,10 @@ namespace MarsDSP::Diffusion
 
         [[nodiscard]] static constexpr int latencySamples() noexcept { return 0; }
 
-        [[nodiscard]] float baseTransportSamples(float size01) const noexcept
-        {
-            const auto lr = baseTransportSamplesLR(size01);
-            return 0.5f * (lr[0] + lr[1]);
-        }
-
-        [[nodiscard]] std::array<float, 2> baseTransportSamplesLR(float size01) const noexcept
-        {
-            const float s = std::clamp(size01, 0.0f, 1.0f);
-            auto sumBank = [&](const Bank &bank) noexcept
-            {
-                float sum = 0.0f;
-                for (int i = 0; i < kNumSections; ++i)
-                {
-                    const auto lenF = static_cast<float>(bank[static_cast<std::size_t>(i)].len);
-                    float eff = effLen(lenF, s);
-                    eff = std::nearbyintf(eff);
-                    eff = std::clamp(eff, kMinDelay, lenF);
-                    sum += eff;
-                }
-                return sum;
-            };
-            return {sumBank(secL_), sumBank(secR_)};
-        }
-
         [[nodiscard]] int sectionLenL(int i) const noexcept { return secL_[static_cast<std::size_t>(i)].len; }
         [[nodiscard]] int sectionLenR(int i) const noexcept { return secR_[static_cast<std::size_t>(i)].len; }
         [[nodiscard]] float getSizeCurrent() const noexcept { return sizeSm_.getCurrentValue(); }
         [[nodiscard]] float getCoefCurrent() const noexcept { return coefSm_.getCurrentValue(); }
-        [[nodiscard]] float transportSamples() const noexcept { return baseTransportSamples(getSizeCurrent()); }
 
         static constexpr float sectionSign(int i) noexcept
         {
@@ -247,6 +216,34 @@ namespace MarsDSP::Diffusion
         static constexpr int kMaxPrimeScan = 1 << 16;
         int kModHeadroom_ = 128;
 
+        static bool isPrime_(int v) noexcept
+        {
+            if (v < 2) return false;
+            if (v % 2 == 0) return v == 2;
+            for (int d = 3; d * d <= v; d += 2)
+                if (v % d == 0) return false;
+            return true;
+        }
+
+        // Find the nearest unused prime to the given length.
+        static int distinctPrimeNear_(int want, std::bitset<kMaxPrimeScan> &used) noexcept
+        {
+            want = std::clamp(want, 5, kMaxPrimeScan - 2);
+            for (int d = 0; d < kMaxPrimeScan; ++d)
+            {
+                for (const int cand: {want - d, want + d})
+                {
+                    if (cand >= 5 && cand < kMaxPrimeScan && isPrime_(cand) && !used.test(static_cast<size_t>(cand)))
+                    {
+                        used.set(static_cast<size_t>(cand));
+                        return cand;
+                    }
+                }
+            }
+            return want | 1; // unreachable at sane rates
+        }
+
+    public:
         // Compute the section lengths from the acoustic path tables.
         // The prepare path and the arena size query call this function.
         // The cache holds the result so the prime scan runs once per rate.
@@ -254,35 +251,37 @@ namespace MarsDSP::Diffusion
         {
             if (sectionLenCache_.valid && sectionLenCache_.sr == sampleRate)
             {
-                std::copy_n(sectionLenCache_.lenL.data(), kNumSections, outL);
-                std::copy_n(sectionLenCache_.lenR.data(), kNumSections, outR);
+                std::copy_n(sectionLenCache_.lenL.data(), kNumDelaysPerBank, outL);
+                std::copy_n(sectionLenCache_.lenR.data(), kNumDelaysPerBank, outR);
                 return;
             }
 
             const double samplesPerMeter = sampleRate / kSpeedOfSoundMps;
             sectionLenCache_.used.reset();
-            for (int i = 0; i < kNumSections; ++i)
+            for (int i = 0; i < kNumDelaysPerBank; ++i)
             {
                 const auto wantL = static_cast<int>(std::lround(
-                    static_cast<double>(kPathMetersL[static_cast<std::size_t>(i)]) * samplesPerMeter));
+                    static_cast<double>(kTotalMetersL * kPathRatios[static_cast<std::size_t>(i)]) * samplesPerMeter));
                 const auto wantR = static_cast<int>(std::lround(
-                    static_cast<double>(kPathMetersR[static_cast<std::size_t>(i)]) * samplesPerMeter));
-                sectionLenCache_.lenL[i] = distinctPrimeNear_(wantL, sectionLenCache_.used);
-                sectionLenCache_.lenR[i] = distinctPrimeNear_(wantR, sectionLenCache_.used);
+                    static_cast<double>(kTotalMetersR * kPathRatios[static_cast<std::size_t>(i)]) * samplesPerMeter));
+                sectionLenCache_.lenL[static_cast<std::size_t>(i)] = distinctPrimeNear_(wantL, sectionLenCache_.used);
+                sectionLenCache_.lenR[static_cast<std::size_t>(i)] = distinctPrimeNear_(wantR, sectionLenCache_.used);
             }
             sectionLenCache_.sr = sampleRate;
             sectionLenCache_.valid = true;
-            std::copy_n(sectionLenCache_.lenL.data(), kNumSections, outL);
-            std::copy_n(sectionLenCache_.lenR.data(), kNumSections, outR);
+            std::copy_n(sectionLenCache_.lenL.data(), kNumDelaysPerBank, outL);
+            std::copy_n(sectionLenCache_.lenR.data(), kNumDelaysPerBank, outR);
         }
+
+    private:
 
         void prepareImpl_(double sampleRate, Memory::BumpArena *arena) noexcept
         {
             assert(sampleRate > 0.0);
             sampleRate_ = sampleRate;
 
-            int lenL[kNumSections];
-            int lenR[kNumSections];
+            int lenL[kNumDelaysPerBank];
+            int lenR[kNumDelaysPerBank];
             computeSectionLens(sampleRate, lenL, lenR);
             for (int i = 0; i < kNumSections; ++i)
             {
@@ -317,32 +316,35 @@ namespace MarsDSP::Diffusion
 
         using Bank = std::array<Section, kNumSections>;
 
-        static bool isPrime_(int v) noexcept
+    public:
+        [[nodiscard]] std::array<float, 2> baseTransportSamplesLR(float size01) const noexcept
         {
-            if (v < 2) return false;
-            if (v % 2 == 0) return v == 2;
-            for (int d = 3; d * d <= v; d += 2)
-                if (v % d == 0) return false;
-            return true;
+            const float s = std::clamp(size01, 0.0f, 1.0f);
+            auto sumBank = [&](const Bank &bank) noexcept
+            {
+                float sum = 0.0f;
+                for (int i = 0; i < kNumSections; ++i)
+                {
+                    const auto lenF = static_cast<float>(bank[static_cast<std::size_t>(i)].len);
+                    float eff = effLen(lenF, s);
+                    eff = std::nearbyintf(eff);
+                    eff = std::clamp(eff, kMinDelay, lenF);
+                    sum += eff;
+                }
+                return sum;
+            };
+            return {sumBank(secL_), sumBank(secR_)};
         }
 
-        // Find the nearest unused prime to the given length.
-        static int distinctPrimeNear_(int want, std::bitset<kMaxPrimeScan> &used) noexcept
+        [[nodiscard]] float baseTransportSamples(float size01) const noexcept
         {
-            want = std::clamp(want, 5, kMaxPrimeScan - 2);
-            for (int d = 0; d < kMaxPrimeScan; ++d)
-            {
-                for (const int cand: {want + d, want - d})
-                {
-                    if (cand >= 5 && cand < kMaxPrimeScan && isPrime_(cand) && !used.test(static_cast<size_t>(cand)))
-                    {
-                        used.set(static_cast<size_t>(cand));
-                        return cand;
-                    }
-                }
-            }
-            return want | 1; // unreachable at sane rates
+            const auto lr = baseTransportSamplesLR(size01);
+            return 0.5f * (lr[0] + lr[1]);
         }
+
+        [[nodiscard]] float transportSamples() const noexcept { return baseTransportSamples(getSizeCurrent()); }
+
+    private:
 
         void chunk_(Bank &bank, float *io, int m) noexcept
         {
@@ -433,8 +435,8 @@ namespace MarsDSP::Diffusion
         {
             SectionLenCache() noexcept : sr{0.0}, lenL{}, lenR{}, valid{false} {}
             double sr;
-            std::array<int, kNumSections> lenL;
-            std::array<int, kNumSections> lenR;
+            std::array<int, kNumDelaysPerBank> lenL;
+            std::array<int, kNumDelaysPerBank> lenR;
             std::bitset<kMaxPrimeScan> used;
             bool valid;
         };
