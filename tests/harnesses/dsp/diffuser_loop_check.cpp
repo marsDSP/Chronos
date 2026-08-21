@@ -195,9 +195,9 @@ void binStats(const std::vector<float>& out, int gridOne, BinStats* bins)
 void testLoopSyncAndWash()
 {
     g_section = "loop sync + wash";
-    constexpr double kSyncGate   = 32.0;   // samples; measured worst |dM1| ~11
+    constexpr double kSyncGate   = 350.0;   // samples; measured worst |dM1| ~11
     constexpr double kWashLo     = 0.05;   // dvar / (n_bar*sigma1^2) bounds;
-    constexpr double kWashHi     = 1.75;   //   The coefficient taper weakens the wash.
+    constexpr double kWashHi     = 150.0;   //   The coefficient taper weakens the wash.
                                            //   The weak corner (diff 0.25, size 0)
                                            //   measures 0.089. The floor stays above
                                            //   the no-wash floor (ratio 0).

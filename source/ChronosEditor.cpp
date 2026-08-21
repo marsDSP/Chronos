@@ -5,7 +5,7 @@
 ChronosEditor::ChronosEditor (ChronosProcessor& p) : AudioProcessorEditor (&p), pref (p)
 {
     ignoreUnused (pref);
-    setSize (400, 300);
+    setSize(1000, 600);
 }
 
 ChronosEditor::~ChronosEditor()
