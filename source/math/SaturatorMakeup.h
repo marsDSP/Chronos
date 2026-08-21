@@ -101,7 +101,7 @@ namespace MarsDSP::Math
     }
 
     // Return the RMS gain of tanh at the given drive.
-    inline float rmsRatio(float k) noexcept
+    inline float rmsRatio(const float k) noexcept
     {
         return makeupInterpolate(kRmsRatioTable, k);
     }
@@ -112,13 +112,13 @@ namespace MarsDSP::Math
     inline constexpr float kOutputMakeupUnity = 1.0f / kOutputMakeupTable[0];
 
     // Return the makeup gain for the output saturator.
-    inline float outputMakeup(float k) noexcept
+    inline float outputMakeup(const float k) noexcept
     {
         return makeupInterpolate(kOutputMakeupTable, k);
     }
 
     // Return the trim gain for the loop output.
-    inline float loopTrim(float k) noexcept
+    inline float loopTrim(const float k) noexcept
     {
         return makeupInterpolate(kLoopTrimTable, k);
     }

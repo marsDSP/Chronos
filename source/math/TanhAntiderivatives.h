@@ -195,7 +195,7 @@ namespace MarsDSP::Math
     } // namespace detail
 
     // F2(x) = int_0^x ln cosh(u) du. Odd. F2(0) == 0.0 exactly.
-    inline double f2Tanh(double x) noexcept
+    inline double f2Tanh(const double x) noexcept
     {
         const double a = std::fabs(x);
         if (a <= kTanA0)
@@ -220,7 +220,7 @@ namespace MarsDSP::Math
 
     // F1(x) = ln cosh(x). Even. F1(0) == 0.0 exactly, and F1 >= 0 for all x
     // (S(u) > 0 on [0, 1]; h + t*L(t) > 0 for a > 1; h > 0 for a >= 19).
-    inline double f1Tanh(double x) noexcept
+    inline double f1Tanh(const double x) noexcept
     {
         const double a = std::fabs(x);
         if (a <= kTanA0)
@@ -242,20 +242,20 @@ namespace MarsDSP::Math
     namespace Ref
     {
         // reference only — do not optimize, do not delete
-        inline double signRef(double x) noexcept
+        inline double signRef(const double x) noexcept
         {
             return x > 0.0 ? 1.0 : (x < 0.0 ? -1.0 : 0.0);
         }
 
         // reference only — do not optimize, do not delete
-        inline double f1TanhRef(double x) noexcept
+        inline double f1TanhRef(const double x) noexcept
         {
             const double a = std::fabs(x);
             return a - 0.6931471805599453 + std::log1p(std::exp(-2.0 * a));
         }
 
         // reference only — do not optimize, do not delete
-        inline double f2TanhRef(double x) noexcept
+        inline double f2TanhRef(const double x) noexcept
         {
             const double a = std::fabs(x);
             const double t = std::exp(-2.0 * a);
