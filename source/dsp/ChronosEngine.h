@@ -28,35 +28,37 @@
 #include <span>
 #include <vector>
 
-namespace MarsDSP {
-    class ChronosEngine {
+namespace MarsDSP
+{
+    class ChronosEngine
+    {
     public:
         struct Params
         {
-            float delaySamples;
-            float driveLin;
-            float mix;
-            float gainLin;
-            float hpfHz;
-            float lpfHz;
-            int bits;
-            int adaaOrder;
+            float delaySamples = 0.0f;
+            float driveLin = 1.0f;
+            float mix = 100.0f;
+            float gainLin = 1.0f;
+            float hpfHz = 20.0f;
+            float lpfHz = 20000.0f;
+            int bits = 32;
+            int adaaOrder = 2;
             // --- feedback / diffusion ---
-            float feedback       = 0.0f;
-            float dampHz         = 6000.0f;
-            float loopCutHz      = 40.0f;
-            float crossFeed      = 0.0f;
-            float loopDrive      = 1.0f;
-            int   loopSatOrder   = 2;
-            float diffusion      = 0.7f;
-            float diffuserSize   = 0.5f;
-            float diffModDepth   = 0.30f;
-            float diffModRateHz  = 0.5f;
-            bool  enableDiffuser = false;
+            float feedback = 0.0f;
+            float dampHz = 6000.0f;
+            float loopCutHz = 40.0f;
+            float crossFeed = 0.0f;
+            float loopDrive = 1.0f;
+            int loopSatOrder = 2;
+            float diffusion = 0.7f;
+            float diffuserSize = 0.5f;
+            float diffModDepth = 0.30f;
+            float diffModRateHz = 0.5f;
+            bool enableDiffuser = false;
             // --- tempo sync / delay mod ---
-            bool  delaySync      = false;
-            int   delayDivision  = 11;
-            float delayModDepth  = 0.0f;
+            bool delaySync = false;
+            int delayDivision = 11;
+            float delayModDepth = 0.0f;
             float delayModRateHz = 0.35f;
         };
 
@@ -78,30 +80,38 @@ namespace MarsDSP {
             const std::size_t strideFloats = (cap + 15u) & ~static_cast<std::size_t>(15u);
 
             const int maxDelaySamp =
-                Delays::SimdDelayLine::maxDelaySamplesFor(sampleRate, 5000.0f);
+                    Delays::SimdDelayLine::maxDelaySamplesFor(sampleRate, 5000.0f);
 
             const std::size_t ringFloats =
-                Delays::FeedbackDelay::ringStorageFloats(sampleRate, wetBufCapacity_, maxDelaySamp);
+                    Delays::FeedbackDelay::ringStorageFloats(sampleRate, wetBufCapacity_, maxDelaySamp);
             arena_.reset(static_cast<std::size_t>(kNumScratch) * strideFloats * sizeof(float)
                          + ringFloats * sizeof(float));
 
             fbDelay_.prepare(sampleRate, wetBufCapacity_, maxDelaySamp, arena_);
             assert(fbDelay_.getMaxDelay() >= static_cast<float>(maxDelaySamp));
 
-            auto take = [&](std::span<float>& s)
+            auto take = [&](std::span<float> &s)
             {
-                float* q = arena_.allocate<float>(strideFloats, Memory::BumpArena::kBaseAlignment);
-                assert(q != nullptr);   // sized by construction; cannot exhaust
+                auto *q = arena_.allocate<float>(strideFloats, Memory::BumpArena::kBaseAlignment);
+                assert(q != nullptr); // sized by construction; cannot exhaust
                 std::memset(q, 0, cap * sizeof(float));
-                s = { q, cap };
+                s = {q, cap};
             };
-            take(wetBufL_);      take(wetBufR_);
-            take(driveRamp_);    take(hpfRamp_);    take(lpfRamp_);
-            take(thetaRamp_);    take(gainRamp_);
-            take(satL_);         take(satR_);
-            take(alignedDryL_);  take(alignedDryR_);
-            take(wetPostSvfL_);  take(wetPostSvfR_);
-            take(bypassDryInL_); take(bypassDryInR_);
+            take(wetBufL_);
+            take(wetBufR_);
+            take(driveRamp_);
+            take(hpfRamp_);
+            take(lpfRamp_);
+            take(thetaRamp_);
+            take(gainRamp_);
+            take(satL_);
+            take(satR_);
+            take(alignedDryL_);
+            take(alignedDryR_);
+            take(wetPostSvfL_);
+            take(wetPostSvfR_);
+            take(bypassDryInL_);
+            take(bypassDryInR_);
 
             bypassSmoother_.reset(sampleRate, 0.01);
             bypassDryL_.reset();
@@ -124,10 +134,14 @@ namespace MarsDSP {
             fbDelay_.reset();
             hpf_.reset();
             lpf_.reset();
-            adaa1L_.reset(); adaa1R_.reset();
-            adaa2L_.reset(); adaa2R_.reset();
-            alignL_.reset(); alignR_.reset();
-            bypassDryL_.reset(); bypassDryR_.reset();
+            adaa1L_.reset();
+            adaa1R_.reset();
+            adaa2L_.reset();
+            adaa2R_.reset();
+            alignL_.reset();
+            alignR_.reset();
+            bypassDryL_.reset();
+            bypassDryR_.reset();
             bypassDryL_.setDelay(latencySamples());
             bypassDryR_.setDelay(latencySamples());
             bypassSmoother_.setCurrentAndTargetValue(0.0f);
@@ -212,7 +226,7 @@ namespace MarsDSP {
                     hpfRamp_[static_cast<std::size_t>(s)] = smoothedHpf_;
                     lpfRamp_[static_cast<std::size_t>(s)] = smoothedLpf_;
                     thetaRamp_[static_cast<std::size_t>(s)] =
-                        (smoothedMix_ * 0.01f) * (std::numbers::pi_v<float> * 0.5f);
+                            (smoothedMix_ * 0.01f) * (std::numbers::pi_v<float> * 0.5f);
                     gainRamp_[static_cast<std::size_t>(s)] = smoothedGain_;
                 }
 
@@ -259,7 +273,7 @@ namespace MarsDSP {
                     if (adaaOrder_ > 0)
                     {
                         const float makeup = Math::outputMakeup(driveRamp_[u])
-                                           * Math::kOutputMakeupUnity;
+                                             * Math::kOutputMakeupUnity;
                         sat0 *= makeup;
                         if (hasR) sat1 *= makeup;
                     }
@@ -273,10 +287,10 @@ namespace MarsDSP {
                 {
                     const auto u = static_cast<std::size_t>(s);
                     const M128 wetV = MM(set_ps)(0.0f, 0.0f,
-                                                  hasR ? satR_[u] : 0.0f, satL_[u]);
+                                                 hasR ? satR_[u] : 0.0f, satL_[u]);
                     const M128 hpV = hpf_.processBlockStep(wetV);
                     const M128 lpV = lpf_.processBlockStep(hpV);
-                    alignas(16) std::array<float, 4> out;
+                    alignas(16) std::array<float, 4> out{};
                     MM(store_ps)(out.data(), lpV);
                     wetPostSvfL_[u] = out[0];
                     if (hasR) wetPostSvfR_[u] = out[1];
@@ -284,7 +298,7 @@ namespace MarsDSP {
 
                 // ── 8. Crossfade stage (stateless) ────────────────────────
                 const float mixVal = mixSmoother_.getCurrentValue();
-                const bool settled = ! mixSmoother_.isSmoothing();
+                const bool settled = !mixSmoother_.isSmoothing();
                 const bool fullDry = settled && mixVal <= 0.0f;
                 const bool fullWet = settled && mixVal >= 100.0f;
 
@@ -296,8 +310,7 @@ namespace MarsDSP {
                         data0[offset + s] = alignedDryL_[u];
                         if (hasR) data1[offset + s] = alignedDryR_[u];
                     }
-                }
-                else if (fullWet)
+                } else if (fullWet)
                 {
                     for (int s = 0; s < chunk; ++s)
                     {
@@ -305,8 +318,7 @@ namespace MarsDSP {
                         data0[offset + s] = wetPostSvfL_[u];
                         if (hasR) data1[offset + s] = wetPostSvfR_[u];
                     }
-                }
-                else
+                } else
                 {
                     // SIMD path
                     const int jFull = chunk & ~3;
@@ -351,13 +363,16 @@ namespace MarsDSP {
                         {
                             const auto ut = static_cast<std::size_t>(s + t);
                             const float bypassAmt = bypassSmoother_.getNextValue();
-                            bl[t] = data0[offset + s + t] * (1.0f - bypassAmt) + bypassDryL_.process(bypassDryInL_[ut]) * bypassAmt;
+                            bl[t] = data0[offset + s + t] * (1.0f - bypassAmt) + bypassDryL_.process(bypassDryInL_[ut])
+                                    * bypassAmt;
                             if (hasR)
-                                br[t] = data1[offset + s + t] * (1.0f - bypassAmt) + bypassDryR_.process(bypassDryInR_[ut]) * bypassAmt;
+                                br[t] = data1[offset + s + t] * (1.0f - bypassAmt) + bypassDryR_.process(
+                                            bypassDryInR_[ut]) * bypassAmt;
                         }
                         const M128 vGain = MM(loadu_ps)(gainRamp_.data() + s);
                         MM(storeu_ps)(data0 + offset + s, MM(mul_ps)(MM(load_ps)(bl), vGain));
-                        if (hasR) MM(storeu_ps)(data1 + offset + s, MM(mul_ps)(MM(load_ps)(br), vGain));
+                        if (hasR)
+                            MM(storeu_ps)(data1 + offset + s, MM(mul_ps)(MM(load_ps)(br), vGain));
                     }
                     for (int s = jFull; s < chunk; ++s)
                     {
@@ -365,16 +380,16 @@ namespace MarsDSP {
                         const float gainLin = gainRamp_[u];
                         const float bypassAmt = bypassSmoother_.getNextValue();
                         const float blend = data0[offset + s] * (1.0f - bypassAmt)
-                                          + bypassDryL_.process(bypassDryInL_[u]) * bypassAmt;
+                                            + bypassDryL_.process(bypassDryInL_[u]) * bypassAmt;
                         data0[offset + s] = blend * gainLin;
                         if (hasR)
                         {
-                            const float blendR = data1[offset + s] * (1.0f - bypassAmt) + bypassDryR_.process(bypassDryInR_[u]) * bypassAmt;
+                            const float blendR = data1[offset + s] * (1.0f - bypassAmt) + bypassDryR_.process(
+                                                     bypassDryInR_[u]) * bypassAmt;
                             data1[offset + s] = blendR * gainLin;
                         }
                     }
-                }
-                else
+                } else
                 {
                     const M128 vLsb = MM(set1_ps)(blockLsb);
                     const M128 vInvLsb = MM(set1_ps)(1.0f / blockLsb);
@@ -389,10 +404,10 @@ namespace MarsDSP {
                             const auto ut = static_cast<std::size_t>(s + t);
                             const float bypassAmt = bypassSmoother_.getNextValue();
                             bl[t] = data0[offset + s + t] * (1.0f - bypassAmt)
-                                  + bypassDryL_.process(bypassDryInL_[ut]) * bypassAmt;
+                                    + bypassDryL_.process(bypassDryInL_[ut]) * bypassAmt;
                             if (hasR)
                                 br[t] = data1[offset + s + t] * (1.0f - bypassAmt)
-                                      + bypassDryR_.process(bypassDryInR_[ut]) * bypassAmt;
+                                        + bypassDryR_.process(bypassDryInR_[ut]) * bypassAmt;
                         }
                         // L
                         {
@@ -432,10 +447,9 @@ namespace MarsDSP {
                     {
                         const auto u = static_cast<std::size_t>(s);
                         const float gainLin = gainRamp_[u];
-                        const float bypassAmt = bypassSmoother_.getNextValue();
-                        {
+                        const float bypassAmt = bypassSmoother_.getNextValue(); {
                             const float blend = data0[offset + s] * (1.0f - bypassAmt)
-                                              + bypassDryL_.process(bypassDryInL_[u]) * bypassAmt;
+                                                + bypassDryL_.process(bypassDryInL_[u]) * bypassAmt;
                             const float scaled = blend * gainLin;
                             const float dither = (nextUniform(xorshiftL_) - nextUniform(xorshiftL_)) * blockLsb;
                             data0[offset + s] = std::round((scaled + dither) / blockLsb) * blockLsb;
@@ -443,7 +457,7 @@ namespace MarsDSP {
                         if (hasR)
                         {
                             const float blend = data1[offset + s] * (1.0f - bypassAmt)
-                                              + bypassDryR_.process(bypassDryInR_[u]) * bypassAmt;
+                                                + bypassDryR_.process(bypassDryInR_[u]) * bypassAmt;
                             const float scaled = blend * gainLin;
                             const float dither = (nextUniform(xorshiftR_) - nextUniform(xorshiftR_)) * blockLsb;
                             data1[offset + s] = std::round((scaled + dither) / blockLsb) * blockLsb;
@@ -467,17 +481,17 @@ namespace MarsDSP {
             xorshiftL_ = l;
             xorshiftR_ = r;
 
-            std::uint32_t seedsL[4] = { l, l * 2654435761u + 1u, l * 40503u + 2u, l * 2246822519u + 3u };
-            std::uint32_t seedsR[4] = { r, r * 2654435761u + 1u, r * 40503u + 2u, r * 2246822519u + 3u };
+            std::uint32_t seedsL[4] = {l, l * 2654435761u + 1u, l * 40503u + 2u, l * 2246822519u + 3u};
+            std::uint32_t seedsR[4] = {r, r * 2654435761u + 1u, r * 40503u + 2u, r * 2246822519u + 3u};
             for (int i = 0; i < 4; ++i)
             {
                 if (seedsL[i] == 0u) seedsL[i] = 1u;
                 if (seedsR[i] == 0u) seedsR[i] = 1u;
             }
-            alignas(16) std::uint32_t vL[4] = { seedsL[0], seedsL[1], seedsL[2], seedsL[3] };
-            alignas(16) std::uint32_t vR[4] = { seedsR[0], seedsR[1], seedsR[2], seedsR[3] };
-            xorshiftSimdL_ = MM(load_si128)(reinterpret_cast<const M128I*>(vL));
-            xorshiftSimdR_ = MM(load_si128)(reinterpret_cast<const M128I*>(vR));
+            alignas(16) std::uint32_t vL[4] = {seedsL[0], seedsL[1], seedsL[2], seedsL[3]};
+            alignas(16) std::uint32_t vR[4] = {seedsR[0], seedsR[1], seedsR[2], seedsR[3]};
+            xorshiftSimdL_ = MM(load_si128)(reinterpret_cast<const M128I *>(vL));
+            xorshiftSimdR_ = MM(load_si128)(reinterpret_cast<const M128I *>(vR));
         }
 
         void setBypass(bool bypassed) noexcept
@@ -504,21 +518,21 @@ namespace MarsDSP {
         {
             Delays::FeedbackDelay::Params fp;
             fp.delaySamples = p.delaySamples;
-            fp.feedback     = p.feedback;
-            fp.dampHz       = p.dampHz;
-            fp.loopCutHz    = p.loopCutHz;
-            fp.crossFeed    = p.crossFeed;
-            fp.loopDrive    = p.loopDrive;
-            fp.satOrder     = p.loopSatOrder;
+            fp.feedback = p.feedback;
+            fp.dampHz = p.dampHz;
+            fp.loopCutHz = p.loopCutHz;
+            fp.crossFeed = p.crossFeed;
+            fp.loopDrive = p.loopDrive;
+            fp.satOrder = p.loopSatOrder;
             fp.enableDiffuser = p.enableDiffuser;
-            fp.diffusion      = p.diffusion;
-            fp.diffuserSize   = p.diffuserSize;
-            fp.diffModDepth   = p.diffModDepth;
-            fp.diffModRateHz  = p.diffModRateHz;
-            fp.delayModDepth  = p.delayModDepth;
+            fp.diffusion = p.diffusion;
+            fp.diffuserSize = p.diffuserSize;
+            fp.diffModDepth = p.diffModDepth;
+            fp.diffModRateHz = p.diffModRateHz;
+            fp.delayModDepth = p.delayModDepth;
             fp.delayModRateHz = p.delayModRateHz;
             if (snap) fbDelay_.resetParams(fp);
-            else      fbDelay_.setParams(fp);
+            else fbDelay_.setParams(fp);
         }
 
         Delays::FeedbackDelay fbDelay_;
@@ -527,8 +541,8 @@ namespace MarsDSP {
         int wetBufCapacity_{0};
 
         using SVF = Filters::SimdSVF;
-        SVF hpf_;
-        SVF lpf_;
+        SVF hpf_{};
+        SVF lpf_{};
         static constexpr double svfQ_{0.7071};
 
         Nonlinear::ADAA1<Nonlinear::TanhNL> adaa1L_;
@@ -553,7 +567,7 @@ namespace MarsDSP {
         M128I xorshiftSimdL_{};
         M128I xorshiftSimdR_{};
 
-        static M128 nextUniformSimd_(M128I& state) noexcept
+        static M128 nextUniformSimd_(M128I &state) noexcept
         {
             // xorshift32 on all 4 lanes: x ^= x<<13; x ^= x>>17; x ^= x<<5
             state = MM(xor_si128)(state, MM(slli_epi32)(state, 13));

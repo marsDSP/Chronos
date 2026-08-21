@@ -15,7 +15,7 @@ namespace MarsDSP::Memory {
         static constexpr std::size_t kBaseAlignment = 64;
 
         BumpArena() noexcept = default;
-        explicit BumpArena(std::size_t bytes) { reset(bytes); }
+        explicit BumpArena(const std::size_t bytes) { reset(bytes); }
         ~BumpArena() { free_(); }
 
         BumpArena(const BumpArena&) = delete;

@@ -146,13 +146,15 @@ void ChronosProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 float ChronosProcessor::computeDelaySamples_() const
 {
     if (! parameters.getRawDelaySync()) return parameters.getDelaySamples();
-    const double ms = MarsDSP::Utils::Helpers::TempoSync::convertChoiceIndexToMilliseconds(parameters.getRawDelayDivision(), cachedBpm_);
+    const double ms = MarsDSP::Utils::Helpers::TempoSync::convertChoiceIndexToMilliseconds(
+                        parameters.getRawDelayDivision(), cachedBpm_);
     const double clamped = std::clamp(ms, 1.0, 5000.0);
     return static_cast<float>(clamped * 0.001 * getSampleRate());
 }
 
 void ChronosProcessor::releaseResources()
 {
+    /* let the OS handle this for now */
 }
 
 void ChronosProcessor::reset()
@@ -186,8 +188,8 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
 
     ScopedNoDenormals noDenormals;
 
-    auto totalNumInputChannels = getTotalNumInputChannels();
-    auto totalNumOutputChannels = getTotalNumOutputChannels();
+    const auto totalNumInputChannels = getTotalNumInputChannels();
+    const auto totalNumOutputChannels = getTotalNumOutputChannels();
 
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear(i, 0, buffer.getNumSamples());
@@ -266,6 +268,8 @@ void ChronosProcessor::setStateInformation(const void *data, int sizeInBytes)
     apvts.replaceState(state);
 }
 
+// static analysis says this should be const
+// that won't compile
 void ChronosProcessor::migrateState_(ValueTree& state, int fromVersion) /*const*/
 {
     if (fromVersion < 2)
