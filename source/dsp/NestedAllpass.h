@@ -145,33 +145,33 @@ namespace MarsDSP::Diffusion
                 const auto wPtrOut = Delays::BlockTapReader::acquireWindow(ringOut_, baseOut, winLenOut, tapWinOut_.data());
                 const float *winOut = wPtrOut.ptr;
 
-                alignas(16) float dArr[kChunk];
+                alignas(16) std::array<float, kChunk> dArr{};
                 for (int i = 0; i < m; ++i)
                 {
                     const M128 taps = MM(loadu_ps)(winOut + i + 1);
                     const M128 prod = MM(mul_ps)(taps, cfOut);
                     const M128 sh1 = MM(add_ps)(prod, MM(movehl_ps)(prod, prod));
                     const M128 sh2 = MM(add_ss)(sh1, MM(shuffle_ps)(sh1, sh1, MM_SHUFFLE(0, 0, 0, 1)));
-                    dArr[i] = MM(cvtss_f32)(sh2);
+                    dArr[static_cast<std::size_t>(i)] = MM(cvtss_f32)(sh2);
                 }
 
                 // Compute v = x - g_out * d.
-                alignas(16) float vArr[kChunk];
+                alignas(16) std::array<float, kChunk> vArr{};
                 const int m4 = m & ~3;
                 for (int i = 0; i < m4; i += 4)
                 {
                     const M128 xV = MM(loadu_ps)(io + off + i);
-                    const M128 dV = MM(load_ps)(dArr + i);
+                    const M128 dV = MM(load_ps)(dArr.data() + i);
                     const M128 vV = MM(sub_ps)(xV, MM(mul_ps)(vGOut, dV));
-                    MM(store_ps)(vArr + i, vV);
+                    MM(store_ps)(vArr.data() + i, vV);
                 }
                 for (int i = m4; i < m; ++i)
                 {
-                    vArr[i] = io[off + i] - gOut_ * dArr[i];
+                    vArr[static_cast<std::size_t>(i)] = io[off + i] - gOut_ * dArr[static_cast<std::size_t>(i)];
                 }
                 for (int i = 0; i < m; ++i)
                 {
-                    if (!std::isfinite(vArr[i])) vArr[i] = 0.0f;
+                    if (!std::isfinite(vArr[static_cast<std::size_t>(i)])) vArr[static_cast<std::size_t>(i)] = 0.0f;
                 }
 
                 // Read the inner delay taps.
@@ -180,68 +180,68 @@ namespace MarsDSP::Diffusion
                 const auto wPtrIn = Delays::BlockTapReader::acquireWindow(ringIn_, baseIn, winLenIn, tapWinIn_.data());
                 const float *winIn = wPtrIn.ptr;
 
-                alignas(16) float dInArr[kChunk];
+                alignas(16) std::array<float, kChunk> dInArr{};
                 for (int i = 0; i < m; ++i)
                 {
                     const M128 taps = MM(loadu_ps)(winIn + i + 1);
                     const M128 prod = MM(mul_ps)(taps, cfIn);
                     const M128 sh1 = MM(add_ps)(prod, MM(movehl_ps)(prod, prod));
                     const M128 sh2 = MM(add_ss)(sh1, MM(shuffle_ps)(sh1, sh1, MM_SHUFFLE(0, 0, 0, 1)));
-                    dInArr[i] = MM(cvtss_f32)(sh2);
+                    dInArr[static_cast<std::size_t>(i)] = MM(cvtss_f32)(sh2);
                 }
 
                 // Compute v_in and w.
-                alignas(16) float vInArr[kChunk];
-                alignas(16) float wArr[kChunk];
+                alignas(16) std::array<float, kChunk> vInArr{};
+                alignas(16) std::array<float, kChunk> wArr{};
                 for (int i = 0; i < m4; i += 4)
                 {
-                    const M128 vV = MM(load_ps)(vArr + i);
-                    const M128 dInV = MM(load_ps)(dInArr + i);
+                    const M128 vV = MM(load_ps)(vArr.data() + i);
+                    const M128 dInV = MM(load_ps)(dInArr.data() + i);
                     const M128 vInV = MM(sub_ps)(vV, MM(mul_ps)(vGIn, dInV));
-                    MM(store_ps)(vInArr + i, vInV);
+                    MM(store_ps)(vInArr.data() + i, vInV);
                 }
                 for (int i = m4; i < m; ++i)
                 {
-                    vInArr[i] = vArr[i] - gIn_ * dInArr[i];
+                    vInArr[static_cast<std::size_t>(i)] = vArr[static_cast<std::size_t>(i)] - gIn_ * dInArr[static_cast<std::size_t>(i)];
                 }
                 for (int i = 0; i < m; ++i)
                 {
-                    if (!std::isfinite(vInArr[i])) vInArr[i] = 0.0f;
+                    if (!std::isfinite(vInArr[static_cast<std::size_t>(i)])) vInArr[static_cast<std::size_t>(i)] = 0.0f;
                 }
 
                 for (int i = 0; i < m4; i += 4)
                 {
-                    const M128 dInV = MM(load_ps)(dInArr + i);
-                    const M128 vInV = MM(load_ps)(vInArr + i);
+                    const M128 dInV = MM(load_ps)(dInArr.data() + i);
+                    const M128 vInV = MM(load_ps)(vInArr.data() + i);
                     const M128 wV = MM(add_ps)(dInV, MM(mul_ps)(vGIn, vInV));
-                    MM(store_ps)(wArr + i, wV);
+                    MM(store_ps)(wArr.data() + i, wV);
                 }
                 for (int i = m4; i < m; ++i)
                 {
-                    wArr[i] = dInArr[i] + gIn_ * vInArr[i];
+                    wArr[static_cast<std::size_t>(i)] = dInArr[static_cast<std::size_t>(i)] + gIn_ * vInArr[static_cast<std::size_t>(i)];
                 }
 
                 // Write the inner ring.
-                ringIn_.writeBlock(vInArr, wIn_, m);
+                ringIn_.writeBlock(vInArr.data(), wIn_, m);
                 ringIn_.refreshMirror(wIn_, m);
                 wIn_ = (wIn_ + m) & maskIn;
 
                 // Write the outer ring.
-                ringOut_.writeBlock(wArr, wOut_, m);
+                ringOut_.writeBlock(wArr.data(), wOut_, m);
                 ringOut_.refreshMirror(wOut_, m);
                 wOut_ = (wOut_ + m) & maskOut;
 
                 // Compute y = d + g_out * v.
                 for (int i = 0; i < m4; i += 4)
                 {
-                    const M128 dV = MM(load_ps)(dArr + i);
-                    const M128 vV = MM(load_ps)(vArr + i);
+                    const M128 dV = MM(load_ps)(dArr.data() + i);
+                    const M128 vV = MM(load_ps)(vArr.data() + i);
                     const M128 yV = MM(add_ps)(dV, MM(mul_ps)(vGOut, vV));
                     MM(storeu_ps)(io + off + i, yV);
                 }
                 for (int i = m4; i < m; ++i)
                 {
-                    io[off + i] = dArr[i] + gOut_ * vArr[i];
+                    io[off + i] = dArr[static_cast<std::size_t>(i)] + gOut_ * vArr[static_cast<std::size_t>(i)];
                 }
             }
         }

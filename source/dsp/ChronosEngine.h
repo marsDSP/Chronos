@@ -358,7 +358,8 @@ namespace MarsDSP
                     // No dither, no quantiser. Apply the bypass blend and the gain.
                     for (int s = 0; s + 4 <= chunk; s += 4)
                     {
-                        alignas(16) float bl[4], br[4];
+                        alignas(16) std::array<float, 4> bl{};
+                        alignas(16) std::array<float, 4> br{};
                         for (int t = 0; t < 4; ++t)
                         {
                             const auto ut = static_cast<std::size_t>(s + t);
@@ -370,9 +371,9 @@ namespace MarsDSP
                                             bypassDryInR_[ut]) * bypassAmt;
                         }
                         const M128 vGain = MM(loadu_ps)(gainRamp_.data() + s);
-                        MM(storeu_ps)(data0 + offset + s, MM(mul_ps)(MM(load_ps)(bl), vGain));
+                        MM(storeu_ps)(data0 + offset + s, MM(mul_ps)(MM(load_ps)(bl.data()), vGain));
                         if (hasR)
-                            MM(storeu_ps)(data1 + offset + s, MM(mul_ps)(MM(load_ps)(br), vGain));
+                            MM(storeu_ps)(data1 + offset + s, MM(mul_ps)(MM(load_ps)(br.data()), vGain));
                     }
                     for (int s = jFull; s < chunk; ++s)
                     {
@@ -397,8 +398,8 @@ namespace MarsDSP
                     const M128 vSignMask = MM(set1_ps)(-0.0f);
                     for (int s = 0; s + 4 <= chunk; s += 4)
                     {
-                        alignas(16) float bl[4];
-                        alignas(16) float br[4];
+                        alignas(16) std::array<float, 4> bl{};
+                        alignas(16) std::array<float, 4> br{};
                         for (int t = 0; t < 4; ++t)
                         {
                             const auto ut = static_cast<std::size_t>(s + t);
@@ -411,7 +412,7 @@ namespace MarsDSP
                         }
                         // L
                         {
-                            const M128 vBlend = MM(load_ps)(bl);
+                            const M128 vBlend = MM(load_ps)(bl.data());
                             const M128 vGain = MM(loadu_ps)(gainRamp_.data() + s);
                             const M128 vScaled = MM(mul_ps)(vBlend, vGain);
                             const M128 vD1 = nextUniformSimd_(xorshiftSimdL_);
@@ -428,7 +429,7 @@ namespace MarsDSP
                         }
                         if (hasR)
                         {
-                            const M128 vBlend = MM(load_ps)(br);
+                            const M128 vBlend = MM(load_ps)(br.data());
                             const M128 vGain = MM(loadu_ps)(gainRamp_.data() + s);
                             const M128 vScaled = MM(mul_ps)(vBlend, vGain);
                             const M128 vD1 = nextUniformSimd_(xorshiftSimdR_);
@@ -481,17 +482,17 @@ namespace MarsDSP
             xorshiftL_ = l;
             xorshiftR_ = r;
 
-            std::uint32_t seedsL[4] = {l, l * 2654435761u + 1u, l * 40503u + 2u, l * 2246822519u + 3u};
-            std::uint32_t seedsR[4] = {r, r * 2654435761u + 1u, r * 40503u + 2u, r * 2246822519u + 3u};
+            std::array<std::uint32_t, 4> seedsL = {l, l * 2654435761u + 1u, l * 40503u + 2u, l * 2246822519u + 3u};
+            std::array<std::uint32_t, 4> seedsR = {r, r * 2654435761u + 1u, r * 40503u + 2u, r * 2246822519u + 3u};
             for (int i = 0; i < 4; ++i)
             {
-                if (seedsL[i] == 0u) seedsL[i] = 1u;
-                if (seedsR[i] == 0u) seedsR[i] = 1u;
+                if (seedsL[static_cast<std::size_t>(i)] == 0u) seedsL[static_cast<std::size_t>(i)] = 1u;
+                if (seedsR[static_cast<std::size_t>(i)] == 0u) seedsR[static_cast<std::size_t>(i)] = 1u;
             }
-            alignas(16) std::uint32_t vL[4] = {seedsL[0], seedsL[1], seedsL[2], seedsL[3]};
-            alignas(16) std::uint32_t vR[4] = {seedsR[0], seedsR[1], seedsR[2], seedsR[3]};
-            xorshiftSimdL_ = MM(load_si128)(reinterpret_cast<const M128I *>(vL));
-            xorshiftSimdR_ = MM(load_si128)(reinterpret_cast<const M128I *>(vR));
+            alignas(16) std::array<std::uint32_t, 4> vL = {seedsL[0], seedsL[1], seedsL[2], seedsL[3]};
+            alignas(16) std::array<std::uint32_t, 4> vR = {seedsR[0], seedsR[1], seedsR[2], seedsR[3]};
+            xorshiftSimdL_ = MM(load_si128)(reinterpret_cast<const M128I *>(vL.data()));
+            xorshiftSimdR_ = MM(load_si128)(reinterpret_cast<const M128I *>(vR.data()));
         }
 
         void setBypass(bool bypassed) noexcept

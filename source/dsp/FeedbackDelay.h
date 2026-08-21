@@ -79,9 +79,14 @@ namespace MarsDSP::Delays
             adaa1R_.reset();
             adaa2L_.reset();
             adaa2R_.reset();
-            dampL_ = dampR_ = 0.0f;
-            cutLpL_ = cutLpR_ = 0.0f;
-            dcXL_ = dcXR_ = dcYL_ = dcYR_ = 0.0f;
+            dampL_ = 0.0f;
+            dampR_ = 0.0f;
+            cutLpL_ = 0.0f;
+            cutLpR_ = 0.0f;
+            dcXL_ = 0.0f;
+            dcXR_ = 0.0f;
+            dcYL_ = 0.0f;
+            dcYR_ = 0.0f;
             diffuser_.reset();
             enableDiffuser_ = false;
             diffState_ = DiffuserState::Off;
@@ -219,8 +224,8 @@ namespace MarsDSP::Delays
                 }
                 const bool runDiff = wasRunning || (diffState_ != DiffuserState::Off);
 
-                alignas(16) float tapL[kMaxChunk];
-                alignas(16) float tapR[kMaxChunk];
+                alignas(16) std::array<float, kMaxChunk> tapL{};
+                alignas(16) std::array<float, kMaxChunk> tapR{};
                 // The settled bulk read needs a constant tap. It stays off
                 // until the modulation depth reaches zero and stays there.
                 const bool modOff = (modKSm_.getCurrentValue() == 0.0f
@@ -285,11 +290,11 @@ namespace MarsDSP::Delays
 
                 if (runDiff)
                 {
-                    alignas(16) float rawL[kMaxChunk];
-                    alignas(16) float rawR[kMaxChunk];
-                    std::memcpy(rawL, tapL, static_cast<std::size_t>(Lc) * sizeof(float));
-                    std::memcpy(rawR, tapR, static_cast<std::size_t>(Lc) * sizeof(float));
-                    diffuser_.processBlock(tapL, hasR ? tapR : nullptr, Lc);
+                    alignas(16) std::array<float, kMaxChunk> rawL{};
+                    alignas(16) std::array<float, kMaxChunk> rawR{};
+                    std::memcpy(rawL.data(), tapL.data(), static_cast<std::size_t>(Lc) * sizeof(float));
+                    std::memcpy(rawR.data(), tapR.data(), static_cast<std::size_t>(Lc) * sizeof(float));
+                    diffuser_.processBlock(tapL.data(), hasR ? tapR.data() : nullptr, Lc);
                     for (int i = 0; i < Lc; ++i)
                     {
                         const float a = fadeR[i];
@@ -301,8 +306,8 @@ namespace MarsDSP::Delays
                     }
                 }
 
-                alignas(16) float vL[kMaxChunk];
-                alignas(16) float vR[kMaxChunk];
+                alignas(16) std::array<float, kMaxChunk> vL{};
+                alignas(16) std::array<float, kMaxChunk> vR{};
                 for (int i = 0; i < Lc; ++i)
                 {
                     const float g = gR[i];
@@ -319,8 +324,8 @@ namespace MarsDSP::Delays
                     }
                 }
 
-                alignas(16) float wL[kMaxChunk];
-                alignas(16) float wR[kMaxChunk];
+                alignas(16) std::array<float, kMaxChunk> wL{};
+                alignas(16) std::array<float, kMaxChunk> wR{};
                 if (satOrder_ == 0)
                 {
                     for (int i = 0; i < Lc; ++i)
@@ -376,11 +381,11 @@ namespace MarsDSP::Delays
                     }
                 }
 
-                ringL_.writeBlock(wL, writeIdx_, Lc);
+                ringL_.writeBlock(wL.data(), writeIdx_, Lc);
                 ringL_.refreshMirror(writeIdx_, Lc);
                 if (hasR)
                 {
-                    ringR_.writeBlock(wR, writeIdx_, Lc);
+                    ringR_.writeBlock(wR.data(), writeIdx_, Lc);
                     ringR_.refreshMirror(writeIdx_, Lc);
                 }
                 writeIdx_ = (writeIdx_ + Lc) & mask;

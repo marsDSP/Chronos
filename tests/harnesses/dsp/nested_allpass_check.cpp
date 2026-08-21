@@ -3,9 +3,9 @@
 #include "dsp/Pow2RingBuffer.h"
 
 #include <cmath>
-#include <cstdio>
 #include <cstdlib>
 #include <numbers>
+#include <print>
 #include <random>
 #include <vector>
 
@@ -14,10 +14,10 @@ namespace
     const char *g_section = "(startup)";
 
 #define CHECK(cond) \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
 #define FAIL(fmt, ...) \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+    do { std::println("FAIL [{}] " fmt, g_section, ##__VA_ARGS__); std::exit(1); } while (0)
 
     // Radix-2 in-place FFT for power-of-two size N.
     void fft(std::vector<double> &re, std::vector<double> &im)
@@ -99,7 +99,7 @@ namespace
                 if (err > maxErr) maxErr = err;
                 CHECK(err < 1e-5);
             }
-            std::printf("  coeff %.2f: max |H(w) - 1| = %.2e (gate < 1e-5)\n", static_cast<double>(g), maxErr);
+            std::println("  coeff {:.2f}: max |H(w) - 1| = {:.2e} (gate < 1e-5)", static_cast<double>(g), maxErr);
         }
     }
 
@@ -137,7 +137,7 @@ namespace
             CHECK(energySum > 0.0);
             const double measuredCentroid = weightedTimeSum / energySum;
             const double delta = std::abs(measuredCentroid - expectedCentroid);
-            std::printf("  coeff %.2f: centroid = %.4f samples, expected = %.1f, delta = %.4f (gate <= 0.5)\n",
+            std::println("  coeff {:.2f}: centroid = {:.4f} samples, expected = {:.1f}, delta = {:.4f} (gate <= 0.5)",
                         static_cast<double>(g), measuredCentroid, expectedCentroid, delta);
             CHECK(delta <= 0.5);
         }
@@ -190,7 +190,7 @@ namespace
                 }
             }
             const double rmsLast10s = std::sqrt(energyLast10s / static_cast<double>(10 * kSampleRate));
-            std::printf("  coeff %.2f: peak = %.2f, RMS (final 10 s) = %.4f (all finite, bounded)\n",
+            std::println("  coeff {:.2f}: peak = {:.2f}, RMS (final 10 s) = {:.4f} (all finite, bounded)",
                         static_cast<double>(g), static_cast<double>(maxVal), rmsLast10s);
             CHECK(maxVal < 100.0f);
         }
@@ -238,12 +238,12 @@ namespace
             {
                 if (outRef[static_cast<std::size_t>(i)] != outBlock[static_cast<std::size_t>(i)])
                 {
-                    FAIL("block size %d mismatch at sample %d: ref=%.8f block=%.8f",
+                    FAIL("block size {} mismatch at sample {}: ref={:.8f} block={:.8f}",
                          blockSize, i, static_cast<double>(outRef[static_cast<std::size_t>(i)]),
                          static_cast<double>(outBlock[static_cast<std::size_t>(i)]));
                 }
             }
-            std::printf("  block size %2d: %d samples bit-exact\n", blockSize, kN);
+            std::println("  block size {:2d}: {} samples bit-exact", blockSize, kN);
         }
     }
 
@@ -304,10 +304,10 @@ namespace
         }
 
         const double ratio = static_cast<double>(nestedArrivals) / static_cast<double>(std::max(1, plainArrivals));
-        std::printf("  arrivals above -60 dBFS in %d samples:\n", kN);
-        std::printf("    nested allpass (D_out=%d, D_in=%d): %d\n", dOut, dIn, nestedArrivals);
-        std::printf("    plain allpass  (D=%d):             %d\n", dPlain, plainArrivals);
-        std::printf("    density ratio: %.2fx (gate >= 3.0x)\n", ratio);
+        std::println("  arrivals above -60 dBFS in {} samples:", kN);
+        std::println("    nested allpass (D_out={}, D_in={}): {}", dOut, dIn, nestedArrivals);
+        std::println("    plain allpass  (D={}):             {}", dPlain, plainArrivals);
+        std::println("    density ratio: {:.2f}x (gate >= 3.0x)", ratio);
 
         CHECK(ratio >= 3.0);
         return ratio;
@@ -316,23 +316,23 @@ namespace
 
 int main()
 {
-    std::printf("=== Chronos nested_allpass_check (S22a) ===\n\n");
+    std::println("=== Chronos nested_allpass_check (S22a) ===\n");
 
-    std::printf("1. Allpass Magnitude Check:\n");
+    std::println("1. Allpass Magnitude Check:");
     checkAllpassMagnitude();
 
-    std::printf("\n2. Energy Centroid Check:\n");
+    std::println("\n2. Energy Centroid Check:");
     checkEnergyCentroid();
 
-    std::printf("\n3. Stability Check:\n");
+    std::println("\n3. Stability Check:");
     checkStability();
 
-    std::printf("\n4. Parity Check:\n");
+    std::println("\n4. Parity Check:");
     checkParity();
 
-    std::printf("\n5. Arrival Density Check:\n");
+    std::println("\n5. Arrival Density Check:");
     const double densityRatio = checkDensity();
 
-    std::printf("\n=== ALL PROPERTIES HELD (Measured Density Ratio = %.2fx) ===\n", densityRatio);
+    std::println("\n=== ALL PROPERTIES HELD (Measured Density Ratio = {:.2f}x) ===", densityRatio);
     return 0;
 }

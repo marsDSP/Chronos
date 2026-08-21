@@ -27,12 +27,12 @@ namespace MarsDSP::Align {
             d_ = d;
         }
 
-        float process(float x) noexcept
+        float process(const float x) noexcept
         {
             if (d_ == 0) return x;
 
-            const float y = z_[(w_ - d_ + kCapacity) & kMask];
-            z_[w_] = x;
+            const float y = z_[static_cast<std::size_t>((w_ - d_ + kCapacity) & kMask)];
+            z_[static_cast<std::size_t>(w_)] = x;
             w_ = (w_ + 1) & kMask;
             return y;
         }

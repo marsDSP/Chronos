@@ -38,9 +38,9 @@ message(STATUS "Found Python3: ${Python3_EXECUTABLE}")
 
 # macOS-specific settings
 if(APPLE)
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum OS X deployment version" FORCE)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0" CACHE STRING "Minimum OS X deployment version" FORCE)
     set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64" CACHE STRING "Architectures")
-    set(CMAKE_XCODE_ATTRIBUTE_MACOSX_DEPLOYMENT_TARGET[arch=arm64] "11.0" CACHE STRING "arm 64 minimum deployment target" FORCE)
+    set(CMAKE_XCODE_ATTRIBUTE_MACOSX_DEPLOYMENT_TARGET[arch=arm64] "14.0" CACHE STRING "arm 64 minimum deployment target" FORCE)
 endif()
 
 if(MSVC)

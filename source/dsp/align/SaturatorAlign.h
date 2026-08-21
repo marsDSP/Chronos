@@ -39,10 +39,10 @@ namespace MarsDSP::Align {
             }
         }
 
-        static float scrub(float x) noexcept { return std::isfinite(x) ? x : 0.0f; }
-        float processDry(float x) noexcept { return dry_.process(scrub(x)); }
+        static float scrub(const float x) noexcept { return std::isfinite(x) ? x : 0.0f; }
+        float processDry(const float x) noexcept { return dry_.process(scrub(x)); }
 
-        float processWet(float x) noexcept {
+        float processWet(const float x) noexcept {
             const float w = wetInt_.process(scrub(x));
             if (mode_ == 1)
                 return wetFir_.process(w);

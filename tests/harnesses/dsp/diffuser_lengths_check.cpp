@@ -3,8 +3,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <cstdio>
 #include <cstdlib>
+#include <print>
 #include <set>
 
 namespace
@@ -12,10 +12,10 @@ namespace
     const char *g_section = "(startup)";
 
 #define CHECK(cond) \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
 #define FAIL(fmt, ...) \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+    do { std::println("FAIL [{}] " fmt, g_section, ##__VA_ARGS__); std::exit(1); } while (0)
 
     bool isPrime(int n)
     {
@@ -31,7 +31,7 @@ namespace
 
 int main()
 {
-    std::printf("=== Chronos diffuser_lengths_check (S22b) ===\n\n");
+    std::println("=== Chronos diffuser_lengths_check (S22b) ===\n");
 
     using D = MarsDSP::Diffusion::Diffuser;
 
@@ -47,7 +47,7 @@ int main()
     for (const double sr : kSampleRates)
     {
         g_section = "sample_rate_check";
-        std::printf("--- Sample Rate: %.0f Hz ---\n", sr);
+        std::println("--- Sample Rate: {:.0f} Hz ---", sr);
 
         std::array<int, D::kNumDelaysPerBank> lenL{};
         std::array<int, D::kNumDelaysPerBank> lenR{};
@@ -63,7 +63,7 @@ int main()
             uniqueLengths.insert(lenR[static_cast<std::size_t>(i)]);
         }
         CHECK(uniqueLengths.size() == 2 * D::kNumDelaysPerBank);
-        std::printf("  18 lengths are prime and mutually distinct: PASS\n");
+        std::println("  18 lengths are prime and mutually distinct: PASS");
 
         // 2. Sum within 1% of the old sum.
         const double samplesPerMeter = sr / 343.0;
@@ -85,9 +85,9 @@ int main()
 
         const double errL = std::abs(static_cast<double>(newSumL) - oldSumL) / oldSumL * 100.0;
         const double errR = std::abs(static_cast<double>(newSumR) - oldSumR) / oldSumR * 100.0;
-        std::printf("  Bank L sum = %d (old target = %.1f, diff = %.3f%%, gate < 1%%)\n",
+        std::println("  Bank L sum = {} (old target = {:.1f}, diff = {:.3f}%, gate < 1%)",
                     newSumL, oldSumL, errL);
-        std::printf("  Bank R sum = %d (old target = %.1f, diff = %.3f%%, gate < 1%%)\n",
+        std::println("  Bank R sum = {} (old target = {:.1f}, diff = {:.3f}%, gate < 1%)",
                     newSumR, oldSumR, errR);
         CHECK(errL < 1.0);
         CHECK(errR < 1.0);
@@ -101,7 +101,7 @@ int main()
             CHECK(cutL > minRequired);
             CHECK(cutR > minRequired);
         }
-        std::printf("  All section lengths at size 0 exceed %.1f: PASS\n", static_cast<double>(minRequired));
+        std::println("  All section lengths at size 0 exceed {:.1f}: PASS", static_cast<double>(minRequired));
 
         // 4. No inner or outer delay of a nested pair falls below kChunk + 1.
         for (int i = 3; i < D::kNumDelaysPerBank; ++i)
@@ -109,9 +109,9 @@ int main()
             CHECK(lenL[static_cast<std::size_t>(i)] >= D::kChunk + 1);
             CHECK(lenR[static_cast<std::size_t>(i)] >= D::kChunk + 1);
         }
-        std::printf("  All nested delay lengths >= %d: PASS\n\n", D::kChunk + 1);
+        std::println("  All nested delay lengths >= {}: PASS\n", D::kChunk + 1);
     }
 
-    std::printf("=== ALL PROPERTIES HELD ===\n");
+    std::println("=== ALL PROPERTIES HELD ===");
     return 0;
 }
