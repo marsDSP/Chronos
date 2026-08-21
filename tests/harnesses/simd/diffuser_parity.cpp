@@ -30,8 +30,8 @@
 #include "dsp/Diffuser.h"
 
 #include <cmath>
-#include <cstdio>
 #include <cstdlib>
+#include <print>
 #include <vector>
 
 namespace
@@ -43,10 +43,10 @@ namespace
     const char *g_section = "(startup)";
 
 #define CHECK(cond) \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
 #define FAIL(fmt, ...) \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+    do { std::println("FAIL [{}] " fmt, g_section, ##__VA_ARGS__); std::exit(1); } while (0)
 
     struct Cfg
     {
@@ -214,15 +214,67 @@ namespace
         std::printf("    monotonicity (transport non-decreasing in size): PASS\n");
         std::printf("base-transport unit check: PASS\n");
     }
+    void testSizeRampParity()
+    {
+        g_section = "size-ramp-parity";
+        const int blockSizes[] = {1, 7, 16, 17, 64, 512};
+        for (const int bs : blockSizes)
+        {
+            MarsDSP::Diffusion::Diffuser fast;
+            MarsDSP::Diffusion::Diffuser ref;
+            fast.prepare(kFs);
+            ref.prepare(kFs);
+
+            fast.setDiffusion(0.75f);
+            ref.setDiffusion(0.75f);
+            fast.setSize(0.0f);
+            ref.setSize(0.0f);
+            fast.prime();
+            ref.prime();
+
+            // Drive size ramp across blocks
+            fast.setSize(1.0f);
+            ref.setSize(1.0f);
+
+            constexpr int kTotalSamples = 8192;
+            std::vector<float> inL(kTotalSamples);
+            std::vector<float> inR(kTotalSamples);
+            for (int i = 0; i < kTotalSamples; ++i)
+            {
+                inL[static_cast<std::size_t>(i)] = 0.4f * static_cast<float>(std::sin(0.1 * static_cast<double>(i)));
+                inR[static_cast<std::size_t>(i)] = 0.4f * static_cast<float>(std::cos(0.12 * static_cast<double>(i)));
+            }
+
+            std::vector<float> fL = inL;
+            std::vector<float> fR = inR;
+            std::vector<float> rL = inL;
+            std::vector<float> rR = inR;
+
+            for (int off = 0; off < kTotalSamples; off += bs)
+            {
+                const int n = std::min(bs, kTotalSamples - off);
+                fast.processBlock(fL.data() + off, fR.data() + off, n);
+                ref.processBlockRef(rL.data() + off, rR.data() + off, n);
+            }
+
+            for (int i = 0; i < kTotalSamples; ++i)
+            {
+                const auto u = static_cast<std::size_t>(i);
+                CHECK(fL[u] == rL[u]);
+                CHECK(fR[u] == rR[u]);
+            }
+            std::println("    size ramp block size {:3d}: bit-exact: PASS", bs);
+        }
+    }
 } // namespace
 
 int main()
 {
-    std::printf("=== Chronos diffuser_parity (section-major SIMD vs sample-major ref) ===\n");
-    std::printf("fs=%.0f  tol=%.0e\n\n", kFs, static_cast<double>(kTol));
+    std::println("=== Chronos diffuser_parity (section-major SIMD vs sample-major ref) ===");
+    std::println("fs={:.0f}  tol={:.0e}\n", kFs, static_cast<double>(kTol));
 
     testBaseTransport();
-    std::printf("\n");
+    std::println("");
 
     const int blockSizes[] = {1, 2, 3, 7, 15, 16, 17, 31, 32, 33, 64, 100, 256};
     const float diffs[] = {0.0f, 0.3f, 0.7f, 0.92f};
@@ -242,8 +294,12 @@ int main()
                             ++configs;
                         }
 
-    std::printf("matrix (%ld configs): parity <= %.0e (worst %.3e), finite, bounded: PASS\n",
+    std::println("matrix ({} configs): parity <= {:.0e} (worst {:.3e}), finite, bounded: PASS\n",
                 configs, static_cast<double>(kTol), g_worst);
-    std::printf("\n=== ALL PROPERTIES HELD ===\n");
+
+    std::println("Testing size ramp unsettled parity:");
+    testSizeRampParity();
+
+    std::println("\n=== ALL PROPERTIES HELD ===");
     return 0;
 }

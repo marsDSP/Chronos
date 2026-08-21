@@ -249,6 +249,8 @@ namespace MarsDSP::Diffusion
     private:
         void prepareImpl_(int dOut, int dIn, Memory::BumpArena *arena) noexcept
         {
+            // Both delay lengths must exceed kChunk.
+            // No read in a chunk can touch a write from that chunk.
             assert(dOut > kChunk);
             assert(dIn > kChunk);
             dOut_ = static_cast<float>(dOut);
