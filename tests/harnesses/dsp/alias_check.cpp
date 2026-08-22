@@ -1,7 +1,10 @@
 // tests/harnesses/dsp/alias_check.cpp
+#include <array>
 #include <cmath>
-#include <cstdio>
+#include <format>
+#include <print>
 #include <cstdlib>
+#include <string>
 #include <vector>
 
 #include "dsp/nonlinear/ADAA1.h"
@@ -17,10 +20,10 @@ using MarsDSP::Nonlinear::TanhNL;
 const char* g_section = "(startup)";
 
 #define CHECK(cond) \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
-#define FAIL(fmt, ...) \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...) \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kFs = 48000.0;
@@ -46,10 +49,10 @@ inline double clampFloor(double dbc) noexcept { return dbc < kFloorDbc ? kFloorD
 
 // Format one cell: an explicit "< floor" marker rather than a number we cannot
 // actually support.
-void fmtDbc(char* buf, std::size_t n, double dbc)
+std::string fmtDbc(double dbc)
 {
-    if (atFloor(dbc)) std::snprintf(buf, n, "  < %-6.0f", kFloorDbc);
-    else              std::snprintf(buf, n, "%9.1f", dbc);
+    if (atFloor(dbc)) return std::format("  < {:<6.0f}", kFloorDbc);
+    return std::format("{:9.1f}", dbc);
 }
 
 // Kahan-compensated sum. The alias energy is a difference of two nearly equal
@@ -78,7 +81,8 @@ double goertzelMagSq(const double* x, int N, int k) noexcept
     const double w  = 2.0 * kPi * static_cast<double>(k) / static_cast<double>(N);
     const double cw = std::cos(w);
     const double coeff = 2.0 * cw;
-    double s1 = 0.0, s2 = 0.0;
+    double s1 = 0.0;
+    double s2 = 0.0;
     for (int n = 0; n < N; ++n)
     {
         const double s0 = x[n] + coeff * s1 - s2;
@@ -137,11 +141,12 @@ Analysis analyze(const std::vector<double>& y, int k0)
     return r;
 }
 
-// ── 2x resampling (measurement path only) ─────────────────────────────────
+// 2x resampling (measurement path only)
 
 double besselI0(double x) noexcept
 {
-    double sum = 1.0, term = 1.0;
+    double sum = 1.0;
+    double term = 1.0;
     for (int m = 1; m < 80; ++m)
     {
         const double r = x / (2.0 * static_cast<double>(m));
@@ -217,7 +222,7 @@ std::vector<double> downsample2x(const std::vector<double>& x, const std::vector
     return y;
 }
 
-// ── configurations ────────────────────────────────────────────────────────
+// configurations
 
 enum Config { kNone = 0, kIdentity, kADAA1, kADAA2, kADAA1x2, kIdentityX2 };
 
@@ -308,24 +313,25 @@ int roundToOdd(double v)
 
 int main()
 {
-    const double f0s[]    = { 55.0, 110.0, 220.0, 440.0, 1000.0, 2000.0, 5000.0, 10000.0 };
-    const double drives[] = { 0.0, 6.0, 12.0, 24.0, 40.0 };
+    const std::array<double, 8> f0s { { 55.0, 110.0, 220.0, 440.0, 1000.0, 2000.0, 5000.0, 10000.0 } };
+    const std::array<double, 5> drives { { 0.0, 6.0, 12.0, 24.0, 40.0 } };
     constexpr int kNF = static_cast<int>(sizeof(f0s) / sizeof(f0s[0]));
     constexpr int kND = static_cast<int>(sizeof(drives) / sizeof(drives[0]));
 
     const std::vector<double> h = designLpf(kFirM, 0.25, 14.0);
 
-    std::printf("=== Chronos ADAA aliasing harness ===\n");
-    std::printf("fs=%.0f Hz  N=%d (coherent, odd bin)  warmup=%d  2x FIR: %d taps Kaiser beta=14\n",
+    std::println("=== Chronos ADAA aliasing harness ===");
+    std::println("fs={:.0} Hz  N={} (coherent, odd bin)  warmup={}  2x FIR: {} taps Kaiser beta=14",
                 kFs, kN, kWarmup, kFirM + 1);
-    std::printf("Alias energy = total - masked harmonics, reported in dBc vs the fundamental.\n\n");
+    std::println("Alias energy = total - masked harmonics, reported in dBc vs the fundamental.\n");
 
-    // ── calibration: the measurement's own noise floor ────────────────────
+    // calibration: the measurement's own noise floor
     g_section = "calibration";
     {
-        std::printf("[calibration] identity path (no nonlinearity) - this is the measurement floor:\n");
-        std::printf("        f0 (Hz)   k0   harmonics   direct        via 2x resampler\n");
-        double worstDirect = -999.0, worst2x = -999.0;
+        std::println("[calibration] identity path (no nonlinearity) - this is the measurement floor:");
+        std::println("        f0 (Hz)   k0   harmonics   direct        via 2x resampler");
+        double worstDirect = -999.0;
+        double worst2x = -999.0;
         for (int i = 0; i < kNF; ++i)
         {
             const int k0 = roundToOdd(f0s[i] * static_cast<double>(kN) / kFs);
@@ -334,39 +340,38 @@ int main()
             const Analysis a2 = analyze(render(kIdentityX2, k0, 1.0, h), k0);
             worstDirect = std::fmax(worstDirect, a1.aliasDbc);
             worst2x     = std::fmax(worst2x,     a2.aliasDbc);
-            char c1[32], c2[32];
-            fmtDbc(c1, sizeof c1, a1.aliasDbc);
-            fmtDbc(c2, sizeof c2, a2.aliasDbc);
-            std::printf("      %8.1f  %5d  %9d   %s dB   %s dB\n",
+            const std::string c1 = fmtDbc(a1.aliasDbc);
+            const std::string c2 = fmtDbc(a2.aliasDbc);
+            std::println("      {:8.1}  {:5}  {:9}   {} dB   {} dB",
                         fAct, k0, a1.nHarmonics, c1, c2);
         }
-        std::printf("      worst: direct %.1f dB, 2x %.1f dB\n", worstDirect, worst2x);
+        std::println("      worst: direct {:.1} dB, 2x {:.1} dB", worstDirect, worst2x);
         if (worstDirect > kFloorDbc)
-            FAIL("measurement floor %.1f dB exceeds the declared %.0f dB bar", worstDirect, kFloorDbc);
-        std::printf("      -> PASS (direct floor at or below %.0f dB; the 2x column is\n"
-                    "         resampler-limited, so 2x cells are only trustworthy above it)\n\n",
+            FAIL("measurement floor {:.1} dB exceeds the declared {:.0} dB bar", worstDirect, kFloorDbc);
+        std::println("      -> PASS (direct floor at or below {:.0} dB; the 2x column is\n         resampler-limited, so 2x cells are only trustworthy above it)\n",
                     kFloorDbc);
     }
 
-    // ── the matrix ────────────────────────────────────────────────────────
+    // the matrix
     g_section = "matrix";
-    const Config cfgs[4] = { kNone, kADAA1, kADAA2, kADAA1x2 };
+    const std::array<Config, 4> cfgs = {{ kNone, kADAA1, kADAA2, kADAA1x2 }};
     double specNone = 0.0, specADAA2 = 0.0;      // 110 Hz / 24 dB (spec cell)
     double gateNone = 0.0, gateADAA2 = 0.0;      // 10 kHz / 24 dB (gate cell)
-    bool specFound = false, gateFound = false;
+    bool specFound = false;
+    bool gateFound = false;
 
     for (int d = 0; d < kND; ++d)
     {
         const double driveLin = std::pow(10.0, drives[d] / 20.0);
-        std::printf("[drive %.0f dB]  alias floor, dBc vs fundamental (lower is better)\n", drives[d]);
-        std::printf("        f0 (Hz)   harm  %-10s %-10s %-10s %-10s  ADAA2 vs none\n",
+        std::println("[drive {:.0} dB]  alias floor, dBc vs fundamental (lower is better)", drives[d]);
+        std::println("        f0 (Hz)   harm  {:<10} {:<10} {:<10} {:<10}  ADAA2 vs none",
                     configName(kNone), configName(kADAA1), configName(kADAA2), configName(kADAA1x2));
         for (int i = 0; i < kNF; ++i)
         {
             const int k0 = roundToOdd(f0s[i] * static_cast<double>(kN) / kFs);
             const double fAct = static_cast<double>(k0) * kFs / static_cast<double>(kN);
 
-            double v[4];
+            std::array<double, 4> v{};
             int nh = 0;
             for (int c = 0; c < 4; ++c)
             {
@@ -375,22 +380,22 @@ int main()
                 nh = a.nHarmonics;
             }
 
-            char cell[4][32];
+            std::array<std::string, 4> cell{};
             for (int c = 0; c < 4; ++c)
-                fmtDbc(cell[c], sizeof cell[c], v[c]);
+                cell[static_cast<std::size_t>(c)] = fmtDbc(v[c]);
 
             // If no-ADAA is already at the floor there is no aliasing to
             // remove and the comparison is meaningless; if only ADAA2 is at
             // the floor the improvement is a lower bound.
-            char gain[32];
+            std::string gain;
             if (atFloor(v[0]))
-                std::snprintf(gain, sizeof gain, "     n/m");
+                gain = "     n/m";
             else
-                std::snprintf(gain, sizeof gain, "%s%+6.1f dB",
-                              atFloor(v[2]) ? " >" : "  ",
-                              clampFloor(v[0]) - clampFloor(v[2]));
+                gain = std::format("{}{:+6.1f} dB",
+                                   atFloor(v[2]) ? " >" : "  ",
+                                   clampFloor(v[0]) - clampFloor(v[2]));
 
-            std::printf("      %8.1f  %5d %s %s %s %s  %s\n",
+            std::println("      {:8.1}  {:5} {} {} {} {}  {}",
                         fAct, nh, cell[0], cell[1], cell[2], cell[3], gain);
 
             if (std::fabs(drives[d] - 24.0) < 1e-9 && std::fabs(f0s[i] - 110.0) < 1e-9)
@@ -402,10 +407,10 @@ int main()
                 gateNone = v[0]; gateADAA2 = v[2]; gateFound = true;
             }
         }
-        std::printf("\n");
+        std::println("");
     }
 
-    // ── gate ──────────────────────────────────────────────────────────────
+    // gate
     //
     // The spec nominated 110 Hz / 24 dB for a >= 20 dB gate. That cell cannot
     // carry it, and the reason is a property of the curve rather than of the
@@ -425,24 +430,21 @@ int main()
     CHECK(specFound);
     CHECK(gateFound);
 
-    char sN[32], sA[32];
-    fmtDbc(sN, sizeof sN, specNone);
-    fmtDbc(sA, sizeof sA, specADAA2);
-    std::printf("[spec cell] 110 Hz / 24 dB: no-ADAA %s dBc, ADAA2 %s dBc\n", sN, sA);
-    std::printf("            tanh's harmonics decay exponentially, so nothing folds at 110 Hz;\n"
-                "            both configurations sit at the measurement floor. Sanity-checked\n"
-                "            (ADAA2 must not be worse), gated below at 10 kHz instead.\n");
+    const std::string sN = fmtDbc(specNone);
+    const std::string sA = fmtDbc(specADAA2);
+    std::println("[spec cell] 110 Hz / 24 dB: no-ADAA {} dBc, ADAA2 {} dBc", sN, sA);
+    std::println("            tanh's harmonics decay exponentially, so nothing folds at 110 Hz;\n            both configurations sit at the measurement floor. Sanity-checked\n            (ADAA2 must not be worse), gated below at 10 kHz instead.");
     if (clampFloor(specADAA2) > clampFloor(specNone) + 1.0)
-        FAIL("ADAA2 is worse than no-ADAA at the spec cell: %.1f vs %.1f dBc",
+        FAIL("ADAA2 is worse than no-ADAA at the spec cell: {:.1} vs {:.1} dBc",
              specADAA2, specNone);
 
     const double improvement = clampFloor(gateNone) - clampFloor(gateADAA2);
-    std::printf("[gate] 10 kHz / 24 dB: no-ADAA %.1f dBc, ADAA2 %.1f dBc -> %.1f dB better\n",
+    std::println("[gate] 10 kHz / 24 dB: no-ADAA {:.1} dBc, ADAA2 {:.1} dBc -> {:.1} dB better",
                 gateNone, gateADAA2, improvement);
     if (improvement < 20.0)
-        FAIL("ADAA2 must beat no-ADAA by >= 20 dB at 10 kHz / 24 dB; got %.1f dB", improvement);
-    std::printf("       -> PASS (>= 20 dB)\n");
+        FAIL("ADAA2 must beat no-ADAA by >= 20 dB at 10 kHz / 24 dB; got {:.1} dB", improvement);
+    std::println("       -> PASS (>= 20 dB)");
 
-    std::printf("\n=== ALL PROPERTIES HELD ===\n");
+    std::println("\n=== ALL PROPERTIES HELD ===");
     return 0;
 }

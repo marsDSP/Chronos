@@ -18,7 +18,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
-#include <cstdio>
+#include <print>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
@@ -41,111 +41,121 @@
 #define CHRONOS_NOINLINE
 #endif
 
-namespace {
-
-constexpr double kFs = 48000.0;
-constexpr int kChannels = 2;
-constexpr int kBlock = 512;
-constexpr int kBlocks = 1000;
-constexpr int kCanaryBytes = 262144; // 256 kB
-constexpr int kGateBytes = 16 * 1024; // 16 kB
-
-// Canary boundaries. Set by paintCanaryFrame_, read by the scan.
-std::uintptr_t g_canaryLow = 0;
-std::uintptr_t g_canaryHigh = 0;
-
-// Paint the canary in a child frame. The frame holds a 256 kB array. When the
-// function returns, the stack pointer moves back up and the array space is
-// free for the next child frame to reuse.
-CHRONOS_NOINLINE
-void paintCanaryFrame_() noexcept
+namespace
 {
-    unsigned char canary[static_cast<std::size_t>(kCanaryBytes)];
-    std::memset(canary, 0xA5, static_cast<std::size_t>(kCanaryBytes));
-    g_canaryLow = reinterpret_cast<std::uintptr_t>(&canary[0]);
-    g_canaryHigh = reinterpret_cast<std::uintptr_t>(&canary[0]) + static_cast<std::uintptr_t>(kCanaryBytes);
-    CHRONOS_COMPILER_BARRIER();
-}
+    constexpr double kFs = 48000.0;
+    constexpr int kChannels = 2;
+    constexpr int kBlock = 512;
+    constexpr int kBlocks = 1000;
+    constexpr int kCanaryBytes = 262144; // 256 kB
+    constexpr int kGateBytes = 16 * 1024; // 16 kB
 
-// Call process in a child frame. This frame reuses the canary stack space, so
-// the process call chain writes over the 0xA5 pattern from the top down.
-CHRONOS_NOINLINE
-void processFrame_(MarsDSP::ChronosEngine& eng, float* ioL, float* ioR, int n) noexcept
-{
-    float* io[2] = { ioL, ioR };
-    eng.process(io, kChannels, n);
-}
+    // Canary boundaries. Set by paintCanaryFrame_, read by the scan.
+    std::uintptr_t g_canaryLow = 0;
+    std::uintptr_t g_canaryHigh = 0;
 
-// Call prepare in a child frame so the canary captures the prepare stack.
-// The section length prime scan moved off the stack in S12, so this stays
-// well under the gate.
-CHRONOS_NOINLINE
-void prepareFrame_(MarsDSP::ChronosEngine& eng, double sr) noexcept
-{
-    eng.prepare(sr, kBlock, kChannels);
-}
+    // Paint the canary in a child frame. The frame holds a 256 kB array. When the
+    // function returns, the stack pointer moves back up and the array space is
+    // free for the next child frame to reuse.
+    CHRONOS_NOINLINE
+    void paintCanaryFrame_() noexcept
+    {
+        unsigned char canary[static_cast<std::size_t>(kCanaryBytes)];
+        std::memset(canary, 0xA5, static_cast<std::size_t>(kCanaryBytes));
+        g_canaryLow = reinterpret_cast<std::uintptr_t>(&canary[0]);
+        g_canaryHigh = reinterpret_cast<std::uintptr_t>(&canary[0]) + static_cast<std::uintptr_t>(kCanaryBytes);
+        CHRONOS_COMPILER_BARRIER();
+    }
 
-struct RtConfig
-{
-    float delaySamples;
-    float feedback;
-    float dampHz;
-    float crossFeed;
-    float loopDrive;
-    int   loopSatOrder;
-    float driveLin;
-    int   adaaOrder;
-    float mix;
-    bool  enableDiffuser;
-    float diffusion;
-    float diffuserSize;
-    float diffModDepth;
-    float diffModRateHz;
-};
+    // Call process in a child frame. This frame reuses the canary stack space, so
+    // the process call chain writes over the 0xA5 pattern from the top down.
+    CHRONOS_NOINLINE
+    void processFrame_(MarsDSP::ChronosEngine &eng, float *ioL, float *ioR, int n) noexcept
+    {
+        std::array<float*, 2> io{ioL, ioR};
+        eng.process(io.data(), kChannels, n);
+    }
 
-MarsDSP::ChronosEngine::Params toParams(const RtConfig& c) noexcept
-{
-    MarsDSP::ChronosEngine::Params p{};
-    p.delaySamples   = c.delaySamples;
-    p.driveLin       = c.driveLin;
-    p.mix            = c.mix;
-    p.gainLin        = 1.0f;
-    p.hpfHz          = 20.0f;
-    p.lpfHz          = 20000.0f;
-    p.bits           = 32;
-    p.adaaOrder      = c.adaaOrder;
-    p.feedback       = c.feedback;
-    p.dampHz         = c.dampHz;
-    p.crossFeed      = c.crossFeed;
-    p.loopDrive      = c.loopDrive;
-    p.loopSatOrder   = c.loopSatOrder;
-    p.diffusion      = c.diffusion;
-    p.diffuserSize   = c.diffuserSize;
-    p.diffModDepth   = c.diffModDepth;
-    p.diffModRateHz  = c.diffModRateHz;
-    p.enableDiffuser = c.enableDiffuser;
-    return p;
-}
+    // Call prepare in a child frame so the canary captures the prepare stack.
+    // The section length prime scan moved off the stack in S12, so this stays
+    // well under the gate.
+    CHRONOS_NOINLINE
+    void prepareFrame_(MarsDSP::ChronosEngine &eng, double sr) noexcept
+    {
+        eng.prepare(sr, kBlock, kChannels);
+    }
 
-// Four configs that hit the chunked diffuser-on path, the per-sample fallback
-// at a tiny delay, the modulated exact path, and a high-drive saturation path.
-const std::array<RtConfig, 4>& rtConfigs()
-{
-    static const std::array<RtConfig, 4> kConfigs{ {
-        { 24000.0f, 0.70f, 6000.0f, 0.0f, 4.0f, 2, std::pow(10.0f, 12.0f / 20.0f), 2, 100.0f, true,  0.7f, 0.5f, 16.0f, 1.0f },
-        {     6.0f, 0.50f, 6000.0f, 0.0f, 1.0f, 0, 1.0f,                                 0, 100.0f, false, 0.0f, 0.5f,  0.0f, 0.0f },
-        {  2400.0f, 0.90f, 4000.0f, 0.3f, 8.0f, 2, std::pow(10.0f, 24.0f / 20.0f), 2, 100.0f, true,  0.8f, 0.3f, 32.0f, 1.5f },
-        {  2400.0f, 0.60f, 8000.0f, 0.0f, 2.0f, 1, std::pow(10.0f, 18.0f / 20.0f), 1,  80.0f, true,  0.6f, 0.1f, 24.0f, 2.0f },
-    } };
-    return kConfigs;
-}
+    struct RtConfig
+    {
+        float delaySamples;
+        float feedback;
+        float dampHz;
+        float crossFeed;
+        float loopDrive;
+        int loopSatOrder;
+        float driveLin;
+        int adaaOrder;
+        float mix;
+        bool enableDiffuser;
+        float diffusion;
+        float diffuserSize;
+        float diffModDepth;
+        float diffModRateHz;
+    };
 
+    MarsDSP::ChronosEngine::Params toParams(const RtConfig &c) noexcept
+    {
+        MarsDSP::ChronosEngine::Params p{};
+        p.delaySamples = c.delaySamples;
+        p.driveLin = c.driveLin;
+        p.mix = c.mix;
+        p.gainLin = 1.0f;
+        p.hpfHz = 20.0f;
+        p.lpfHz = 20000.0f;
+        p.bits = 32;
+        p.adaaOrder = c.adaaOrder;
+        p.feedback = c.feedback;
+        p.dampHz = c.dampHz;
+        p.crossFeed = c.crossFeed;
+        p.loopDrive = c.loopDrive;
+        p.loopSatOrder = c.loopSatOrder;
+        p.diffusion = c.diffusion;
+        p.diffuserSize = c.diffuserSize;
+        p.diffModDepth = c.diffModDepth;
+        p.diffModRateHz = c.diffModRateHz;
+        p.enableDiffuser = c.enableDiffuser;
+        return p;
+    }
+
+    // Four configs that hit the chunked diffuser-on path, the per-sample fallback
+    // at a tiny delay, the modulated exact path, and a high-drive saturation path.
+    const std::array<RtConfig, 4> &rtConfigs()
+    {
+        static const std::array<RtConfig, 4> kConfigs{
+            {
+                {
+                    24000.0f, 0.70f, 6000.0f, 0.0f, 4.0f, 2, std::pow(10.0f, 12.0f / 20.0f), 2, 100.0f, true, 0.7f,
+                    0.5f, 16.0f, 1.0f
+                },
+                {6.0f, 0.50f, 6000.0f, 0.0f, 1.0f, 0, 1.0f, 0, 100.0f, false, 0.0f, 0.5f, 0.0f, 0.0f},
+                {
+                    2400.0f, 0.90f, 4000.0f, 0.3f, 8.0f, 2, std::pow(10.0f, 24.0f / 20.0f), 2, 100.0f, true, 0.8f, 0.3f,
+                    32.0f, 1.5f
+                },
+                {
+                    2400.0f, 0.60f, 8000.0f, 0.0f, 2.0f, 1, std::pow(10.0f, 18.0f / 20.0f), 1, 80.0f, true, 0.6f, 0.1f,
+                    24.0f, 2.0f
+                },
+            }
+        };
+        return kConfigs;
+    }
 } // namespace
 
 int main()
 {
-    std::printf("=== Chronos rt_stack_check ===\n");
-    std::printf("fs=%.0f stereo  block=%d  blocks=%d  canary=%d kB  gate=%d kB\n\n",
+    std::println("=== Chronos rt_stack_check ===");
+    std::println("fs={:.0} stereo  block={}  blocks={}  canary={} kB  gate={} kB\n",
                 kFs, kBlock, kBlocks, kCanaryBytes / 1024, kGateBytes / 1024);
 
     // Prepare the engine and buffers.
@@ -153,8 +163,10 @@ int main()
     std::vector<float> ioR(static_cast<std::size_t>(kBlock), 0.0f);
     for (int i = 0; i < kBlock; ++i)
     {
-        ioL[static_cast<std::size_t>(i)] = 0.5f * static_cast<float>(std::sin(2.0 * 3.14159265358979323846 * 440.0 * i / kFs));
-        ioR[static_cast<std::size_t>(i)] = 0.5f * static_cast<float>(std::sin(2.0 * 3.14159265358979323846 * 330.0 * i / kFs));
+        ioL[static_cast<std::size_t>(i)] = 0.5f * static_cast<float>(std::sin(
+                                               2.0 * 3.14159265358979323846 * 440.0 * i / kFs));
+        ioR[static_cast<std::size_t>(i)] = 0.5f * static_cast<float>(std::sin(
+                                               2.0 * 3.14159265358979323846 * 330.0 * i / kFs));
     }
 
     MarsDSP::ChronosEngine engine;
@@ -171,10 +183,11 @@ int main()
 
     for (int i = 0; i < kBlocks; ++i)
     {
-        const RtConfig& c = rtConfigs()[static_cast<std::size_t>((i / 250) % 4)];
+        const RtConfig &c = rtConfigs()[static_cast<std::size_t>((i / 250) % 4)];
         MarsDSP::ChronosEngine::Params p = toParams(c);
         // Sweep the diffuser size within each config so the exact path runs.
-        const float sizeSweep = 0.2f + 0.6f * static_cast<float>(0.5 + 0.5 * std::sin(2.0 * 3.14159265358979323846 * i / 97.0));
+        const float sizeSweep = 0.2f + 0.6f * static_cast<float>(0.5 + 0.5 * std::sin(
+                                                                     2.0 * 3.14159265358979323846 * i / 97.0));
         p.diffuserSize = (c.enableDiffuser) ? sizeSweep : c.diffuserSize;
         engine.setParams(p);
 
@@ -189,7 +202,7 @@ int main()
     // Scan from the bottom (low address) up for the first byte that is not
     // 0xA5. No function calls run here, so the scan does not clobber the
     // canary. The high-water mark is the distance from the top to that byte.
-    const auto* base = reinterpret_cast<const volatile unsigned char*>(g_canaryLow);
+    const auto *base = reinterpret_cast<const volatile unsigned char *>(g_canaryLow);
     std::size_t preserved = 0;
     for (; preserved < static_cast<std::size_t>(kCanaryBytes); ++preserved)
     {
@@ -198,16 +211,16 @@ int main()
     }
     const std::size_t highWater = static_cast<std::size_t>(kCanaryBytes) - preserved;
 
-    std::printf("stack high-water mark: %zu bytes (%.2f kB)\n", highWater, static_cast<double>(highWater) / 1024.0);
-    std::printf("gate: %d kB\n", kGateBytes / 1024);
+    std::println("stack high-water mark: {} bytes ({:.2} kB)", highWater, static_cast<double>(highWater) / 1024.0);
+    std::println("gate: {} kB", kGateBytes / 1024);
 
     if (highWater > static_cast<std::size_t>(kGateBytes))
     {
-        std::printf("FAIL: stack high-water mark %zu bytes exceeds %d kB gate\n",
+        std::println("FAIL: stack high-water mark {} bytes exceeds {} kB gate",
                     highWater, kGateBytes / 1024);
         return 1;
     }
 
-    std::printf("\n=== STACK USAGE WITHIN GATE ===\n");
+    std::println("\n=== STACK USAGE WITHIN GATE ===");
     return 0;
 }

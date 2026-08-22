@@ -71,7 +71,7 @@ namespace
         constexpr int dOut = 40;
         constexpr int dIn = 25;
 
-        const float testCoeffs[] = {0.3f, 0.6f, 0.78f};
+        const std::array<float, 3> testCoeffs { { 0.3f, 0.6f, 0.78f } };
         for (const float g : testCoeffs)
         {
             MarsDSP::Diffusion::NestedAllpass nap;
@@ -112,7 +112,7 @@ namespace
         constexpr int dIn = 182;
         const double expectedCentroid = static_cast<double>(dOut + dIn);
 
-        const float testCoeffs[] = {0.3f, 0.6f, 0.78f};
+        const std::array<float, 3> testCoeffs { { 0.3f, 0.6f, 0.78f } };
         for (const float g : testCoeffs)
         {
             MarsDSP::Diffusion::NestedAllpass nap;
@@ -160,7 +160,7 @@ namespace
         for (std::size_t i = 0; i < noise.size(); ++i)
             noise[i] = dist(rng);
 
-        const float testCoeffs[] = {0.9f, 0.99f};
+        const std::array<float, 2> testCoeffs { { 0.9f, 0.99f } };
         for (const float g : testCoeffs)
         {
             MarsDSP::Diffusion::NestedAllpass nap;
@@ -211,7 +211,7 @@ namespace
         for (std::size_t i = 0; i < input.size(); ++i)
             input[i] = dist(rng);
 
-        const int blockSizes[] = {1, 7, 16, 64};
+        const std::array<int, 4> blockSizes { { 1, 7, 16, 64 } };
         for (const int blockSize : blockSizes)
         {
             MarsDSP::Diffusion::NestedAllpass napRef;
@@ -238,7 +238,7 @@ namespace
             {
                 if (outRef[static_cast<std::size_t>(i)] != outBlock[static_cast<std::size_t>(i)])
                 {
-                    FAIL("block size {} mismatch at sample {}: ref={:.8f} block={:.8f}",
+                    FAIL("block size {{}} mismatch at sample {{}}: ref={{:.8f}} block={{:.8f}}",
                          blockSize, i, static_cast<double>(outRef[static_cast<std::size_t>(i)]),
                          static_cast<double>(outBlock[static_cast<std::size_t>(i)]));
                 }

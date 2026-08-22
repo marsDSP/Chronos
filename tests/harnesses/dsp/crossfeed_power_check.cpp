@@ -15,6 +15,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <print>
 #include <cstdlib>
 #include <vector>
 
@@ -22,8 +23,8 @@ namespace {
 
 const char* g_section = "(startup)";
 
-#define FAIL(fmt, ...) \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...) \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
 constexpr double kFs       = 48000.0;
 constexpr int    kFsInt    = 48000;
@@ -85,8 +86,8 @@ double measureWetRmsDb(FeedbackDelay& fb, FeedbackDelay::Params& p, float amp)
 
 int main()
 {
-    std::printf("=== crossfeed_power_check ===\n");
-    std::printf("fs=%d feedback=0.5 delay=100ms uncorrelated noise amp=0.3\n\n",
+    std::println("=== crossfeed_power_check ===");
+    std::println("fs={} feedback=0.5 delay=100ms uncorrelated noise amp=0.3\n",
                 kFsInt);
 
     FeedbackDelay fb;
@@ -122,14 +123,14 @@ int main()
         if (i == 0) baseDb = db;
         const double dev = std::fabs(db - baseDb);
         maxDev = std::max(maxDev, dev);
-        std::printf("  cross=%.1f  wetRms=%+.3f dB  dev=%+.3f dB\n",
+        std::println("  cross={:.1}  wetRms={:.3} dB  dev={:.3} dB",
                     crossValues[i], db, dev);
     }
 
-    std::printf("\nmax deviation: %.3f dB (gate 0.3 dB)\n", maxDev);
+    std::println("\nmax deviation: {:.3} dB (gate 0.3 dB)", maxDev);
     if (maxDev > 0.3)
-        FAIL("cross feed energy deviation %.3f dB above 0.3 dB", maxDev);
+        FAIL("cross feed energy deviation {:.3} dB above 0.3 dB", maxDev);
 
-    std::printf("\n=== crossfeed_power_check OK ===\n");
+    std::println("\n=== crossfeed_power_check OK ===");
     return 0;
 }

@@ -1,5 +1,4 @@
 // tests/harnesses/dsp/chain_parity.cpp
-// ──────────────────────────────────────────────────────────────────────────
 // bit-exactness gate: ChronosEngine::process vs a verbatim copy of the
 // pre-per-sample loop body
 //
@@ -15,7 +14,6 @@
 //
 // Conventions (matching latency_null_check): plain main(), exit code, printf,
 // always-live CHECK/FAIL. Links SharedCode only; no JUCE.
-// ──────────────────────────────────────────────────────────────────────────
 
 #include "dsp/ChronosEngine.h"
 #include "dsp/FeedbackDelay.h"
@@ -34,6 +32,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <print>
 #include <cstdlib>
 #include <cstring>
 #include <numbers>
@@ -47,14 +46,14 @@ constexpr int    kBudget = MarsDSP::Align::SaturatorAlign::kBudget;
 const char* g_section = "(startup)";
 
 #define CHECK(cond) \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
-#define FAIL(fmt, ...) \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...) \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
 namespace Ref {
 
-// reference only — do not optimize, do not delete
+// reference only - do not optimize, do not delete
 struct ChainRef
 {
     MarsDSP::Delays::FeedbackDelay                        fbDelay;
@@ -243,14 +242,15 @@ struct ChainRef
             for (int s = 0; s < chunk; ++s)
             {
                 // Use the materialized ramp arrays (smoothers advanced in the
-                // ramp pass above, not here — same advance count as before).
+                // ramp pass above, not here - same advance count as before).
                 const float driveLin = drvRamp[static_cast<std::size_t>(s)];
                 const float mixNorm = thetaRamp[static_cast<std::size_t>(s)] / (std::numbers::pi_v<float> * 0.5f);
                 const float theta = thetaRamp[static_cast<std::size_t>(s)];
                 // clamp endpoints (engine and reference both use exact
                 // values at mix=0 and mix=100; mmCos/mmSin leak ~1.1e-7).
                 const float mixVal = mixS.getCurrentValue();
-                float dryGain, wetGain;
+                float dryGain;
+                float wetGain;
                 if (mixVal <= 0.0f)
                 {
                     dryGain = 1.0f;
@@ -271,7 +271,9 @@ struct ChainRef
                 const float dry0a = alignL.processDry(dry0);
                 float wet0 = wetBufL[static_cast<std::size_t>(s)];
 
-                float dry1 = 0.0f, dry1a = 0.0f, wet1 = 0.0f;
+                float dry1 = 0.0f;
+                float dry1a = 0.0f;
+                float wet1 = 0.0f;
                 if (data1 != nullptr)
                 {
                     dry1 = data1[offset + s];
@@ -279,7 +281,8 @@ struct ChainRef
                     wet1 = wetBufR[static_cast<std::size_t>(s)];
                 }
 
-                float sat0, sat1 = 0.0f;
+                float sat0;
+                float sat1 = 0.0f;
                 switch (adaaOrder)
                 {
                     case 0: sat0 = wet0; if (data1 != nullptr) sat1 = wet1; break;
@@ -332,7 +335,7 @@ struct ChainRef
 
 } // namespace Ref
 
-// ── Test configuration ────────────────────────────────────────────────────
+// Test configuration
 struct TestCfg
 {
     int   blockSize;
@@ -374,14 +377,14 @@ void runOne(const TestCfg& tc, long& totalSamples)
     const float gainLin  = 1.0f;
     const float dlySmp   = 240.0f;   // crosses ring wrap at cap=512
 
-    // ── Engine ──
+    // Engine
     MarsDSP::ChronosEngine engine;
     engine.prepare(kFs, 256, tc.numChannels);
     engine.reset();
     engine.setDitherSeeds(kSeedL, kSeedR);
     engine.resetParams(makeParams(dlySmp, tc.adaaOrder, drvLin, tc.mixPct, gainLin, kHpfHz, kLpfHz, kBits));
 
-    // ── Reference ──
+    // Reference
     Ref::ChainRef ref;
     ref.prepare(kFs, 256, tc.numChannels);
     ref.reset();
@@ -415,11 +418,11 @@ void runOne(const TestCfg& tc, long& totalSamples)
     engine.setParams(makeParams(dlySmp, tc.adaaOrder, curDrvLin, curMix, gainLin, kHpfHz, kLpfHz, kBits));
     ref.setParams(dlySmp, tc.adaaOrder, curDrvLin, curMix, gainLin, kHpfHz, kLpfHz, kBits);
 
-    float* engIo[2] = { engL.data(), tc.numChannels > 1 ? engR.data() : nullptr };
-    float* refIo[2] = { refL.data(), tc.numChannels > 1 ? refR.data() : nullptr };
+    std::array<float*, 2> engIo{ engL.data(), tc.numChannels > 1 ? engR.data() : nullptr };
+    std::array<float*, 2> refIo{ refL.data(), tc.numChannels > 1 ? refR.data() : nullptr };
 
-    engine.process(engIo, tc.numChannels, tc.blockSize);
-    ref.process(refIo, tc.numChannels, tc.blockSize);
+    engine.process(engIo.data(), tc.numChannels, tc.blockSize);
+    ref.process(refIo.data(), tc.numChannels, tc.blockSize);
 
     totalSamples += static_cast<long>(tc.blockSize) * tc.numChannels;
 
@@ -435,16 +438,15 @@ void runOne(const TestCfg& tc, long& totalSamples)
         {
             const float diff = std::fabs(e[i] - r[i]);
             if (diff > tol)
-                FAIL("blockSize=%d order=%d ch=%d mix=%.0f drive=%.0f ramp=%d i=%d: "
-                     "engine=%g ref=%g diff=%.3e > %.0e",
+                FAIL("blockSize={} order={} ch={} mix={:.0} drive={:.0} ramp={} i={}: engine={} ref={} diff={:.3} > {:.0}",
                      tc.blockSize, tc.adaaOrder, ch, tc.mixPct, tc.driveDb,
-                     static_cast<int>(tc.ramping), i, (double)e[i], (double)r[i],
-                     (double)diff, (double)tol);
+                     static_cast<int>(tc.ramping), i, static_cast<double>(e[i]), static_cast<double>(r[i]),
+                     static_cast<double>(diff), static_cast<double>(tol));
         }
     }
 }
 
-// ── State-carry section: 200 consecutive blocks ───────────────────────────
+// State-carry section: 200 consecutive blocks
 void runStateCarry(long& totalSamples)
 {
     g_section = "state-carry";
@@ -488,10 +490,10 @@ void runStateCarry(long& totalSamples)
             engL[i] = v; engR[i] = v; refL[i] = v; refR[i] = v;
         }
 
-        float* engIo[2] = { engL.data(), engR.data() };
-        float* refIo[2] = { refL.data(), refR.data() };
-        engine.process(engIo, kNumCh, kBlockSize);
-        ref.process(refIo, kNumCh, kBlockSize);
+        std::array<float*, 2> engIo{ engL.data(), engR.data() };
+        std::array<float*, 2> refIo{ refL.data(), refR.data() };
+        engine.process(engIo.data(), kNumCh, kBlockSize);
+        ref.process(refIo.data(), kNumCh, kBlockSize);
 
         totalSamples += static_cast<long>(kBlockSize) * kNumCh;
 
@@ -503,26 +505,26 @@ void runStateCarry(long& totalSamples)
             {
                 const float diff = std::fabs(e[i] - r[i]);
                 if (diff > 2e-6f)
-                    FAIL("state-carry block=%d ch=%d i=%d: engine=%g ref=%g diff=%.3e > 2e-6",
-                         b, ch, i, (double)e[i], (double)r[i], (double)diff);
+                    FAIL("state-carry block={} ch={} i={}: engine={} ref={} diff={:.3} > 2e-6",
+                         b, ch, i, static_cast<double>(e[i]), static_cast<double>(r[i]), static_cast<double>(diff));
             }
         }
     }
-    std::printf("state-carry (%d blocks x %d samples, ramping mix/drive): PASS\n", kBlocks, kBlockSize);
+    std::println("state-carry ({} blocks x {} samples, ramping mix/drive): PASS", kBlocks, kBlockSize);
 }
 
 } // namespace
 
 int main()
 {
-    std::printf("=== Chronos chain_parity (S3 bit-exactness gate) ===\n");
-    std::printf("fs=%.0f  kBudget=%d\n\n", kFs, kBudget);
+    std::println("=== Chronos chain_parity (S3 bit-exactness gate) ===");
+    std::println("fs={:.0}  kBudget={}\n", kFs, kBudget);
 
-    const int blockSizes[] = {1, 2, 3, 7, 15, 16, 17, 63, 64, 65, 127, 256, 511, 512, 1024};
-    const int orders[]     = {0, 1, 2};
-    const int nChs[]       = {1, 2};
-    const float mixes[]    = {0.0f, 25.0f, 50.0f, 75.0f, 100.0f};
-    const float drives[]   = {0.0f, 12.0f, 40.0f};
+    const std::array<int, 15> blockSizes { { 1, 2, 3, 7, 15, 16, 17, 63, 64, 65, 127, 256, 511, 512, 1024 } };
+    const std::array<int, 3> orders { { 0, 1, 2 } };
+    const std::array<int, 2> nChs { { 1, 2 } };
+    const std::array<float, 5> mixes { { 0.0f, 25.0f, 50.0f, 75.0f, 100.0f } };
+    const std::array<float, 3> drives { { 0.0f, 12.0f, 40.0f } };
 
     long totalSamples = 0;
     long configs = 0;
@@ -545,11 +547,11 @@ int main()
         }
     }
 
-    std::printf("matrix (%ld configs, %ld samples): BIT-EXACT: PASS\n", configs, totalSamples);
+    std::println("matrix ({} configs, {} samples): BIT-EXACT: PASS", configs, totalSamples);
 
     runStateCarry(totalSamples);
 
-    std::printf("\ntotal samples compared: %ld\n", totalSamples);
-    std::printf("\n=== ALL PROPERTIES HELD (BIT-EXACT) ===\n");
+    std::println("\ntotal samples compared: {}", totalSamples);
+    std::println("\n=== ALL PROPERTIES HELD (BIT-EXACT) ===");
     return 0;
 }

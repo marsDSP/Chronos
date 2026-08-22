@@ -13,8 +13,10 @@
 #include "dsp/ChronosEngine.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
+#include <print>
 #include <cstdlib>
 #include <vector>
 
@@ -23,10 +25,10 @@ namespace {
 const char* g_section = "(startup)";
 
 #define CHECK(cond)                                                            \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
-#define FAIL(fmt, ...)                                                         \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...)                                                         \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
 constexpr double kFs = 48000.0;
 constexpr int    kFsInt = 48000;
@@ -42,8 +44,8 @@ constexpr double kMaxMean = 1e-5;
 
 int main()
 {
-    std::printf("=== loop_dc_check ===\n");
-    std::printf("fs=%d dc=%.3f feedback=0.9 loopCut=40Hz duration=%.0fs\n",
+    std::println("=== loop_dc_check ===");
+    std::println("fs={} dc={:.3} feedback=0.9 loopCut=40Hz duration={:.0}s",
                 kFsInt, kDcOffset, kDuration);
 
     MarsDSP::ChronosEngine engine;
@@ -82,7 +84,8 @@ int main()
     std::vector<float> bufL(static_cast<std::size_t>(kBlock), static_cast<float>(kDcOffset));
     std::vector<float> bufR(static_cast<std::size_t>(kBlock), static_cast<float>(kDcOffset));
 
-    double sumL = 0.0, sumR = 0.0;
+    double sumL = 0.0;
+    double sumR = 0.0;
     int count = 0;
 
     for (int pos = 0; pos < kTotalSamples; pos += kBlock)
@@ -95,8 +98,8 @@ int main()
         }
 
         engine.setParams(p);
-        float* io[2] = { bufL.data(), bufR.data() };
-        engine.process(io, kChannels, n);
+        std::array<float*, 2> io{ bufL.data(), bufR.data() };
+        engine.process(io.data(), kChannels, n);
 
         if (pos + n > kTotalSamples - kFinalSecondSamples)
         {
@@ -113,11 +116,11 @@ int main()
     const double meanR = sumR / static_cast<double>(count);
     const double maxMean = std::max(std::fabs(meanL), std::fabs(meanR));
 
-    std::printf("final 1 s mean: L=%+.3e R=%+.3e (gate %.0e)\n", meanL, meanR, kMaxMean);
+    std::println("final 1 s mean: L={:.3} R={:.3} (gate {:.0})", meanL, meanR, kMaxMean);
 
     if (maxMean >= kMaxMean)
-        FAIL("mean %.3e above %.0e", maxMean, kMaxMean);
+        FAIL("mean {:.3} above {:.0}", maxMean, kMaxMean);
 
-    std::printf("\n=== loop_dc_check OK ===\n");
+    std::println("\n=== loop_dc_check OK ===");
     return 0;
 }

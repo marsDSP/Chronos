@@ -3,13 +3,14 @@
 // transparent SVF, bits = 24. Each scenario runs in a fresh engine with
 // ~200 ms of silence to let the size + delay smoothers settle before the
 // impulse. Conventions matching latency_null_check / chain_parity.
-// ──────────────────────────────────────────────────────────────────────────
 
 #include "dsp/ChronosEngine.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
+#include <print>
 #include <cstdlib>
 #include <cstring>
 #include <numbers>
@@ -33,10 +34,10 @@ using Engine = MarsDSP::ChronosEngine;
 const char* g_section = "(startup)";
 
 #define CHECK(cond) \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
-#define FAIL(fmt, ...) \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...) \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
 Engine::Params makeParams(bool enableDiff, float diffusion, float size) noexcept
 {
@@ -78,8 +79,8 @@ std::vector<float> runScenario(bool enableDiff, float diffusion, float size)
     for (int off = 0; off < total; off += kBlock)
     {
         const int n = std::min(kBlock, total - off);
-        float* io[1] = { buf.data() + off };
-        eng.process(io, 1, n);
+        std::array<float*, 1> io{ buf.data() + off };
+        eng.process(io.data(), 1, n);
     }
     return buf;
 }
@@ -98,7 +99,8 @@ int firstNonzero(const std::vector<float>& out, float threshold)
 // around the centroid). Returns the sample index of the energy center of mass.
 int energyCentroid(const std::vector<float>& out)
 {
-    double totalE = 0.0, weightedSum = 0.0;
+    double totalE = 0.0;
+    double weightedSum = 0.0;
     for (int n = kSettle; n < kSettle + kCapture; ++n)
     {
         const double v = static_cast<double>(out[static_cast<std::size_t>(n)]);
@@ -114,11 +116,11 @@ int energyCentroid(const std::vector<float>& out)
 // energy centroid, g-invariant), so the diffused tap's energy centroid must
 // land ON the diffuser-off grid at every diffusion setting. The energy
 // median deliberately drifts early at high g (the IR's mass concentrates at
-// t = 0 — the front-spike trade-off documented in Diffuser.h) and is NOT
+// t = 0 - the front-spike trade-off documented in Diffuser.h) and is NOT
 // gated here; the loop-level in-sync property is gated by
 // diffuser_loop_check.
 
-// ── Test (a): diffusion = 0, onset alignment ──────────────────────────────
+// Test (a): diffusion = 0, onset alignment
 void testDiffusionZeroOnset()
 {
     g_section = "diffusion=0 onset";
@@ -133,14 +135,14 @@ void testDiffusionZeroOnset()
     CHECK(onsetOn  >= 0);
 
     const int diff = std::abs(onsetOn - onsetOff);
-    std::printf("    diffusion=0 size=1.0: onset_off=%d onset_on=%d diff=%d (gate %d)\n",
+    std::println("    diffusion=0 size=1.0: onset_off={} onset_on={} diff={} (gate {})",
                 onsetOff, onsetOn, diff, kOnsetGate);
     CHECK(diff <= kOnsetGate);
-    std::printf("diffusion=0 onset alignment (diff %d <= %d): PASS\n", diff, kOnsetGate);
+    std::println("diffusion=0 onset alignment (diff {} <= {}): PASS", diff, kOnsetGate);
 }
 
-// ── Test (b): energy centroid stays on the grid across the sweep ────────
-// The C7c comp anchors the exact energy centroid (baseTransportSamples —
+// Test (b): energy centroid stays on the grid across the sweep
+// The C7c comp anchors the exact energy centroid (baseTransportSamples -
 // g-invariant by the allpass average-group-delay identity), so the
 // diffuser-on centroid must match the diffuser-off centroid within a small
 // tolerance at every diffusion × size. This replaces the old median gate:
@@ -152,8 +154,8 @@ void testDiffusionCentroidSweep()
     constexpr int kCentroidGate = 150;  // 3.1 ms @48 kHz (window truncation
                                         // + measurement residual)
 
-    const float sizes[] = { 0.5f, 1.0f, 0.0f };
-    const float diffs[] = { 0.0f, 0.25f, 0.5f, 0.7f, 0.85f, 1.0f };
+    const std::array<float, 3> sizes { { 0.5f, 1.0f, 0.0f } };
+    const std::array<float, 6> diffs { { 0.0f, 0.25f, 0.5f, 0.7f, 0.85f, 1.0f } };
 
     for (float size : sizes)
     {
@@ -168,18 +170,18 @@ void testDiffusionCentroidSweep()
             CHECK(cOn >= 0);
 
             const int d = std::abs(cOn - cOff);
-            std::printf("    diffusion=%.2f size=%.1f: centroid_off=%d centroid_on=%d diff=%d (gate %d)\n",
+            std::println("    diffusion={:.2} size={:.1}: centroid_off={} centroid_on={} diff={} (gate {})",
                         static_cast<double>(diff_f), static_cast<double>(size),
                         cOff, cOn, d, kCentroidGate);
             if (d > kCentroidGate)
-                FAIL("diffusion=%.2f size=%.1f centroid diff %d > %d",
+                FAIL("diffusion={:.2} size={:.1} centroid diff {} > {}",
                      static_cast<double>(diff_f), static_cast<double>(size), d, kCentroidGate);
         }
     }
-    std::printf("centroid sweep (all <= %d): PASS\n", kCentroidGate);
+    std::println("centroid sweep (all <= {}): PASS", kCentroidGate);
 }
 
-// ── Test (c): PDC latency unchanged ───────────────────────────────────────
+// Test (c): PDC latency unchanged
 void testLatencyInvariant()
 {
     g_section = "latency-invariant";
@@ -192,15 +194,15 @@ void testLatencyInvariant()
     eng.setParams(makeParams(false, 0.7f, 0.5f));
     CHECK(Engine::latencySamples() == kBudget);
 
-    std::printf("PDC latency = %d (kBudget) at all diffuser states: PASS\n", kBudget);
+    std::println("PDC latency = {} (kBudget) at all diffuser states: PASS", kBudget);
 }
 
 } // namespace
 
 int main()
 {
-    std::printf("=== Chronos diffusion_onset_check (C7c) ===\n");
-    std::printf("fs=%.0f  delay=%d  settle=%d  capture=%d  onset_gate=%d samples (%.1f ms)\n\n",
+    std::println("=== Chronos diffusion_onset_check (C7c) ===");
+    std::println("fs={:.0}  delay={}  settle={}  capture={}  onset_gate={} samples ({:.1} ms)\n",
                 kFs, kDelay, kSettle, kCapture, kOnsetGate,
                 static_cast<double>(kOnsetGate) / kFs * 1000.0);
 
@@ -208,6 +210,6 @@ int main()
     testDiffusionCentroidSweep();
     testLatencyInvariant();
 
-    std::printf("\n=== ALL PROPERTIES HELD ===\n");
+    std::println("\n=== ALL PROPERTIES HELD ===");
     return 0;
 }

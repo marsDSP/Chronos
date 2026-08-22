@@ -13,6 +13,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <print>
 #include <cstdlib>
 #include <vector>
 
@@ -29,10 +30,10 @@ constexpr double kGateCorr = 0.6;
 const char* g_section = "(startup)";
 
 #define CHECK(cond) \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
-#define FAIL(fmt, ...) \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...) \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
 // Render a stereo impulse response at the given depth. The same impulse
 // feeds both channels. Returns the L and R buffers.
@@ -64,7 +65,11 @@ StereoIR renderIR(float depthSamples)
 // Pearson correlation over the window [w0, w1).
 double pearsonCorr(const std::vector<float>& L, const std::vector<float>& R, int w0, int w1)
 {
-    double sumL = 0.0, sumR = 0.0, sumLR = 0.0, sumL2 = 0.0, sumR2 = 0.0;
+    double sumL = 0.0;
+    double sumR = 0.0;
+    double sumLR = 0.0;
+    double sumL2 = 0.0;
+    double sumR2 = 0.0;
     int count = 0;
     for (int n = w0; n < w1; ++n)
     {
@@ -89,8 +94,8 @@ double pearsonCorr(const std::vector<float>& L, const std::vector<float>& R, int
 
 int main()
 {
-    std::printf("=== Chronos diffuser_decorrelation_check (S21) ===\n");
-    std::printf("fs=%.0f  size=0.5  depth=%.2f ms  gate |corr| < %.2f\n\n",
+    std::println("=== Chronos diffuser_decorrelation_check (S21) ===");
+    std::println("fs={:.0}  size=0.5  depth={:.2} ms  gate |corr| < {:.2}\n",
                 kFs, kDepthMs, kGateCorr);
 
     MarsDSP::Diffusion::Diffuser d;
@@ -98,7 +103,7 @@ int main()
     const double transport = static_cast<double>(d.baseTransportSamples(0.5f));
     const int w0 = static_cast<int>(2.0 * transport);
     const int w1 = kTotal;
-    std::printf("transport=%.0f samples (%.1f ms); tail window [%d, %d)\n\n",
+    std::println("transport={:.0} samples ({:.1} ms); tail window [{}, {})\n",
                 transport, transport / kFs * 1000.0, w0, w1);
 
     // Baseline: no modulation. The path-length difference alone gives a
@@ -119,14 +124,14 @@ int main()
 
     const double corrBase = pearsonCorr(baseIR.L, baseIR.R, w0, w1);
     const double corrMod  = pearsonCorr(modIR.L,  modIR.R,  w0, w1);
-    std::printf("correlation (no modulation): %.4f\n", std::fabs(corrBase));
-    std::printf("correlation (depth %.2f ms): %.4f  (gate < %.2f)\n",
+    std::println("correlation (no modulation): {:.4}", std::fabs(corrBase));
+    std::println("correlation (depth {:.2} ms): {:.4}  (gate < {:.2})",
                 kDepthMs, std::fabs(corrMod), kGateCorr);
 
     if (std::fabs(corrMod) >= kGateCorr)
-        FAIL("modulated correlation %.4f >= %.2f", std::fabs(corrMod), kGateCorr);
+        FAIL("modulated correlation {:.4} >= {:.2}", std::fabs(corrMod), kGateCorr);
 
-    std::printf("\ninter-channel correlation below 0.6 with modulation: PASS\n");
-    std::printf("\n=== ALL PROPERTIES HELD ===\n");
+    std::println("\ninter-channel correlation below 0.6 with modulation: PASS");
+    std::println("\n=== ALL PROPERTIES HELD ===");
     return 0;
 }

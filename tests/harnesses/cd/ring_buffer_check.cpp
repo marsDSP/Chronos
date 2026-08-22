@@ -1,63 +1,36 @@
-// tests/harnesses/cd/ring_buffer_check.cpp
-// ──────────────────────────────────────────────────────────────────────────
-// Correctness harness for MarsDSP::Delays::Pow2RingBuffer, the single-channel
-// storage layer under SimdDelayLine. Validates the write/mirror/read geometry
-// against a naive modulo oracle (pure %, no mirror, no memcpy — obviously
-// correct by inspection).
-//
-//   1. Zero state      – after prepare(), [0, capacity + kTail) is zero.
-//   2. Block write     – for every start in [0, capacity) and every length in
-//                        [1, maxBlock], writeBlock matches the model and the
-//                        mirror invariant holds after refreshMirror.
-//   3. Window read     – ramp-filled, every start in [0, capacity) × every
-//                        length in [1, kSubBlock + kTail], readWindow == oracle.
-//   4. Interleaved     – a few thousand pseudo-random blocks driven through
-//                        buffer + model together, reading windows after each.
-//                        Catches refreshMirror/write ordering bugs.
-//   5. Large capacity  – sampled subset at 1 << 18 with starts clustered near
-//                        the wrap, catching overflow in startIdx + length.
-//   6. windowPtr parity – for every (startIdx, len) where windowPtr is
-//                        non-null, it returns the same data as readWindow;
-//                        and windowPtr returns null exactly when a naive
-//                        modulo oracle says the window wraps past the mirror.
-//   7. Arena-backed    – C9b: prepare(minimumCapacity, arena) carves storage
-//                        from a BumpArena instead of owning it. Checks the
-//                        carve is 64-byte aligned, arenaFloatsFor accounting
-//                        is exact, and an interleaved write/read sequence is
-//                        BIT-IDENTICAL to an owning ring running the same
-//                        sequence (both against the modulo oracle).
-//
-// Conventions (matching tan_bench): plain main(), exit code, printf, always-
-// live CHECK/FAIL (NOT assert — NDEBUG in Release would void every test).
-// Links SharedCode only; no JUCE.
-// ──────────────────────────────────────────────────────────────────────────
+/**
+ * Correctness harness for Pow2RingBuffer, the single-channel storage layer
+ * under SimdDelayLine. Validates write, mirror, and read geometry against a
+ * naive modulo oracle. Plain main(), exit code, always-live CHECK/FAIL.
+ */
 
 #include "dsp/Pow2RingBuffer.h"
 #include "utils/memory/BumpArena.h"
 
+#include <array>
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
+#include <print>
 #include <vector>
 
 namespace {
 
-constexpr int kTail      = MarsDSP::Delays::Pow2RingBuffer::kTail; // 8
+constexpr int kTail      = MarsDSP::Delays::Pow2RingBuffer::kTail;
 constexpr int kSubBlock  = 16;
-constexpr int kMaxWindow = kSubBlock + kTail;   // 24
-constexpr int kTestCap   = 64;                  // pow2, comfortably above kTail & kMaxWindow
-constexpr int kMaxBlock  = kTestCap / 2;        // 32
-constexpr int kLargeCap  = 1 << 18;             // 262144, matches the reference kBufSize
+constexpr int kMaxWindow = kSubBlock + kTail;
+constexpr int kTestCap   = 64;
+constexpr int kMaxBlock  = kTestCap / 2;
+constexpr int kLargeCap  = 1 << 18;
 
 const char* g_section = "(startup)";
 
 #define CHECK(cond) \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
-#define FAIL(fmt, ...) \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...) \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
-// Naive modulo oracle: pure %, no mirror, no memcpy. Obviously correct.
+/// Naive modulo oracle: pure %, no mirror, no memcpy.
 struct Oracle
 {
     std::vector<float> model;
@@ -93,7 +66,7 @@ int runAll()
     using MarsDSP::Delays::Pow2RingBuffer;
     Oracle oracle;
 
-    // ── 1. Zero state ──────────────────────────────────────────────────────
+    // 1. Zero state.
     g_section = "zero state";
     {
         Pow2RingBuffer buf;
@@ -102,24 +75,21 @@ int runAll()
         CHECK(cap == kTestCap);
         CHECK(buf.mask() == cap - 1);
 
-        // Read the whole canonical region + mirror via readWindow (start=0,
-        // len=cap) and then a window that peeks at the mirror.
         std::vector<float> got(static_cast<std::size_t>(cap));
         buf.readWindow(got.data(), 0, cap);
         for (int i = 0; i < cap; ++i)
-            if (got[i] != 0.0f) FAIL("canonical i=%d is %g (expected 0)", i, (double)got[i]);
+            if (got[i] != 0.0f) FAIL("canonical i={{}} is {{}} (expected 0)", i, static_cast<double>(got[i]));
 
         // Peek at the mirror: read a window starting at cap-1 of length kTail+1.
-        // The first sample is canonical[cap-1]=0, the next kTail are mirror[0..kTail).
         std::vector<float> mir(kTail + 1);
         buf.readWindow(mir.data(), cap - 1, kTail + 1);
         for (int k = 0; k <= kTail; ++k)
-            if (mir[k] != 0.0f) FAIL("mirror peek k=%d is %g (expected 0)", k, (double)mir[k]);
+            if (mir[k] != 0.0f) FAIL("mirror peek k={{}} is {{}} (expected 0)", k, static_cast<double>(mir[k]));
 
-        std::printf("zero state: PASS\n");
+        std::println("zero state: PASS");
     }
 
-    // ── 2. Block write + mirror invariant ──────────────────────────────────
+    // 2. Block write and mirror invariant.
     g_section = "block write + mirror";
     {
         Pow2RingBuffer buf;
@@ -127,7 +97,8 @@ int runAll()
         const int cap = buf.getCapacity();
         oracle.init(cap);
 
-        std::vector<float> blk, got;
+        std::vector<float> blk;
+        std::vector<float> got;
         for (int start = 0; start < cap; ++start)
         {
             for (int n = 1; n <= kMaxBlock; ++n)
@@ -140,32 +111,31 @@ int runAll()
                 buf.refreshMirror(start, n);
                 oracle.write(start, blk.data(), n);
 
-                // Canonical region matches the model.
                 got.resize(static_cast<std::size_t>(cap));
                 buf.readWindow(got.data(), 0, cap);
                 for (int i = 0; i < cap; ++i)
                     if (got[i] != oracle.model[i])
-                        FAIL("start=%d n=%d canonical i=%d got=%g exp=%g",
-                             start, n, i, (double)got[i], (double)oracle.model[i]);
+                        FAIL("start={{}} n={{}} canonical i={{}} got={{}} exp={{}}",
+                             start, n, i, static_cast<double>(got[i]), static_cast<double>(oracle.model[i]));
 
                 // Mirror invariant: readWindow at cap-1 of length kTail+1 gives
                 // canonical[cap-1] followed by mirror[0..kTail-1], which must
-                // equal canonical[0..kTail-1] (i.e. oracle.model[0..kTail-1]).
+                // equal canonical[0..kTail-1].
                 std::vector<float> peek(kTail + 1);
                 buf.readWindow(peek.data(), cap - 1, kTail + 1);
                 if (peek[0] != oracle.model[cap - 1])
-                    FAIL("start=%d n=%d mirror peek[0] got=%g exp=%g",
-                         start, n, (double)peek[0], (double)oracle.model[cap - 1]);
+                    FAIL("start={{}} n={{}} mirror peek[0] got={{}} exp={{}}",
+                         start, n, static_cast<double>(peek[0]), static_cast<double>(oracle.model[cap - 1]));
                 for (int k = 0; k < kTail; ++k)
                     if (peek[k + 1] != oracle.model[k])
-                        FAIL("start=%d n=%d mirror k=%d got=%g exp=%g",
-                             start, n, k, (double)peek[k + 1], (double)oracle.model[k]);
+                        FAIL("start={{}} n={{}} mirror k={{}} got={{}} exp={{}}",
+                             start, n, k, static_cast<double>(peek[k + 1]), static_cast<double>(oracle.model[k]));
             }
         }
-        std::printf("block write + mirror invariant: PASS\n");
+        std::println("block write + mirror invariant: PASS");
     }
 
-    // ── 3. Window read (exhaustive) ────────────────────────────────────────
+    // 3. Window read (exhaustive).
     g_section = "window read";
     {
         Pow2RingBuffer buf;
@@ -173,16 +143,16 @@ int runAll()
         const int cap = buf.getCapacity();
         oracle.init(cap);
 
-        // Fill with a unique ramp so every logical index carries a distinct
-        // value; any duplication/off-by-one in readWindow shows up.
+        // Fill with a unique ramp so every logical index carries a distinct value.
         std::vector<float> ramp(static_cast<std::size_t>(cap));
         for (int i = 0; i < cap; ++i)
-            ramp[i] = static_cast<float>(i + 1); // 1-based so 0 is distinguishable from uninitialised
+            ramp[i] = static_cast<float>(i + 1);
         buf.writeBlock(ramp.data(), 0, cap);
         buf.refreshMirror(0, cap);
         oracle.write(0, ramp.data(), cap);
 
-        std::vector<float> got, exp;
+        std::vector<float> got;
+        std::vector<float> exp;
         for (int start = 0; start < cap; ++start)
         {
             for (int len = 1; len <= kMaxWindow; ++len)
@@ -193,14 +163,14 @@ int runAll()
                 oracle.read(start, exp.data(), len);
                 for (int j = 0; j < len; ++j)
                     if (got[j] != exp[j])
-                        FAIL("start=%d len=%d j=%d got=%g exp=%g",
-                             start, len, j, (double)got[j], (double)exp[j]);
+                        FAIL("start={{}} len={{}} j={{}} got={{}} exp={{}}",
+                             start, len, j, static_cast<double>(got[j]), static_cast<double>(exp[j]));
             }
         }
-        std::printf("window read [1,%d]: PASS\n", kMaxWindow);
+        std::println("window read [1,{}]: PASS", kMaxWindow);
     }
 
-    // ── 4. Interleaved sequence ────────────────────────────────────────────
+    // 4. Interleaved sequence.
     g_section = "interleaved";
     {
         Pow2RingBuffer buf;
@@ -210,8 +180,10 @@ int runAll()
 
         Rng rng(20240725u);
         constexpr int kBlocks = 4000;
-        int writeIdx = 0; // caller owns the write index
-        std::vector<float> blk, got, exp;
+        int writeIdx = 0;
+        std::vector<float> blk;
+        std::vector<float> got;
+        std::vector<float> exp;
         for (int b = 0; b < kBlocks; ++b)
         {
             const int n = rng.range(1, kMaxBlock);
@@ -224,10 +196,8 @@ int runAll()
             oracle.write(writeIdx, blk.data(), n);
             writeIdx = (writeIdx + n) & buf.mask();
 
-            // Read a spread of windows: the just-written block, a random
-            // start, and a start at the wrap neighbourhood.
-            const int readStarts[3] = {
-                (writeIdx - n + cap) & buf.mask(), // block start (pre-advance)
+            const std::array<int, 3> readStarts = {
+                (writeIdx - n + cap) & buf.mask(),
                 rng.range(0, cap - 1),
                 (writeIdx - kMaxWindow + cap) & buf.mask()
             };
@@ -241,15 +211,15 @@ int runAll()
                     oracle.read(rs, exp.data(), len);
                     for (int j = 0; j < len; ++j)
                         if (got[j] != exp[j])
-                            FAIL("block %d rs=%d len=%d j=%d got=%g exp=%g",
-                                 b, rs, len, j, (double)got[j], (double)exp[j]);
+                            FAIL("block {{}} rs={{}} len={{}} j={{}} got={{}} exp={{}}",
+                                 b, rs, len, j, static_cast<double>(got[j]), static_cast<double>(exp[j]));
                 }
             }
         }
-        std::printf("interleaved sequence (%d blocks): PASS\n", kBlocks);
+        std::println("interleaved sequence ({} blocks): PASS", kBlocks);
     }
 
-    // ── 5. Large capacity (1 << 18) ────────────────────────────────────────
+    // 5. Large capacity (1 << 18).
     g_section = "large capacity";
     {
         Pow2RingBuffer buf;
@@ -258,7 +228,6 @@ int runAll()
         CHECK(cap == kLargeCap);
         oracle.init(cap);
 
-        // Fill with a unique ramp via a single full-capacity writeBlock.
         std::vector<float> ramp(static_cast<std::size_t>(cap));
         for (int i = 0; i < cap; ++i)
             ramp[i] = static_cast<float>(i + 1);
@@ -266,10 +235,9 @@ int runAll()
         buf.refreshMirror(0, cap);
         oracle.write(0, ramp.data(), cap);
 
-        // Starts clustered near the wrap (last 64 indices), every legal window
-        // length. This is where an overflow in startIdx + length or a mirror
-        // sized too small would surface at realistic magnitude.
-        std::vector<float> got, exp;
+        // Starts clustered near the wrap, every legal window length.
+        std::vector<float> got;
+        std::vector<float> exp;
         const int clusterStart = cap - 64;
         for (int start = clusterStart; start < cap; ++start)
         {
@@ -281,26 +249,25 @@ int runAll()
                 oracle.read(start, exp.data(), len);
                 for (int j = 0; j < len; ++j)
                     if (got[j] != exp[j])
-                        FAIL("start=%d len=%d j=%d got=%g exp=%g",
-                             start, len, j, (double)got[j], (double)exp[j]);
+                        FAIL("start={{}} len={{}} j={{}} got={{}} exp={{}}",
+                             start, len, j, static_cast<double>(got[j]), static_cast<double>(exp[j]));
             }
         }
 
-        // Mirror invariant at scale.
         std::vector<float> peek(kTail + 1);
         buf.readWindow(peek.data(), cap - 1, kTail + 1);
         if (peek[0] != oracle.model[cap - 1])
-            FAIL("large-cap mirror peek[0] got=%g exp=%g",
-                 (double)peek[0], (double)oracle.model[cap - 1]);
+            FAIL("large-cap mirror peek[0] got={{}} exp={{}}",
+                 static_cast<double>(peek[0]), static_cast<double>(oracle.model[cap - 1]));
         for (int k = 0; k < kTail; ++k)
             if (peek[k + 1] != oracle.model[k])
-                FAIL("large-cap mirror k=%d got=%g exp=%g",
-                     k, (double)peek[k + 1], (double)oracle.model[k]);
+                FAIL("large-cap mirror k={{}} got={{}} exp={{}}",
+                     k, static_cast<double>(peek[k + 1]), static_cast<double>(oracle.model[k]));
 
-        std::printf("large capacity (1<<18), wrap-clustered: PASS\n");
+        std::println("large capacity (1<<18), wrap-clustered: PASS");
     }
 
-    // ── 6. windowPtr parity (C6) ──────────────────────────────────────────
+    // 6. windowPtr parity.
     g_section = "windowPtr parity";
     {
         Pow2RingBuffer buf;
@@ -308,14 +275,14 @@ int runAll()
         const int cap = buf.getCapacity();
         oracle.init(cap);
 
-        // Ramp-fill so every index carries a distinct value.
         std::vector<float> ramp(static_cast<std::size_t>(cap));
         for (int i = 0; i < cap; ++i) ramp[i] = static_cast<float>(i + 1);
         buf.writeBlock(ramp.data(), 0, cap);
         buf.refreshMirror(0, cap);
         oracle.write(0, ramp.data(), cap);
 
-        std::vector<float> viaRead, viaPtr;
+        std::vector<float> viaRead;
+        std::vector<float> viaPtr;
         for (int start = 0; start < cap; ++start)
         {
             for (int len = 1; len <= kMaxWindow; ++len)
@@ -325,74 +292,74 @@ int runAll()
                 buf.readWindow(viaRead.data(), start, len);
                 const float* p = buf.windowPtr(start, len);
 
-                // Naive modulo oracle: does the window wrap past the mirror?
                 const bool wraps = (start + len) > (cap + kTail);
 
                 if (p == nullptr)
                 {
                     if (!wraps)
-                        FAIL("start=%d len=%d: windowPtr null but oracle says contiguous", start, len);
+                        FAIL("start={{}} len={{}}: windowPtr null but oracle says contiguous", start, len);
                 }
                 else
                 {
                     if (wraps)
-                        FAIL("start=%d len=%d: windowPtr non-null but oracle says wrap", start, len);
+                        FAIL("start={{}} len={{}}: windowPtr non-null but oracle says wrap", start, len);
                     for (int j = 0; j < len; ++j)
                         viaPtr[static_cast<std::size_t>(j)] = p[j];
                     for (int j = 0; j < len; ++j)
                         if (viaPtr[static_cast<std::size_t>(j)] != viaRead[static_cast<std::size_t>(j)])
-                            FAIL("start=%d len=%d j=%d: ptr=%g read=%g",
+                            FAIL("start={{}} len={{}} j={{}}: ptr={{}} read={{}}",
                                  start, len, j,
-                                 (double)viaPtr[static_cast<std::size_t>(j)],
-                                 (double)viaRead[static_cast<std::size_t>(j)]);
+                                 static_cast<double>(viaPtr[static_cast<std::size_t>(j)]),
+                                 static_cast<double>(viaRead[static_cast<std::size_t>(j)]));
                 }
             }
         }
-        std::printf("windowPtr parity (contiguous == readWindow, null == wrap oracle): PASS\n");
+        std::println("windowPtr parity (contiguous == readWindow, null == wrap oracle): PASS");
     }
 
-    // ── 7. Arena-backed storage parity (C9b) ─────────────────────────────
+    // 7. Arena-backed storage parity.
     g_section = "arena-backed";
     {
         using MarsDSP::Memory::BumpArena;
 
-        // Size query must be exact: carve of two rings' floats fits exactly.
         const std::size_t floatsOne = Pow2RingBuffer::arenaFloatsFor(kTestCap);
         CHECK(floatsOne >= static_cast<std::size_t>(kTestCap + kTail));
-        CHECK(floatsOne % 16 == 0);   // padded to a 64-byte multiple
+        CHECK(floatsOne % 16 == 0);
 
         BumpArena arena;
         arena.reset(2 * floatsOne * sizeof(float));
 
-        Pow2RingBuffer buf;     // arena-backed
+        Pow2RingBuffer buf;
         buf.prepare(kTestCap, arena);
         CHECK(buf.getCapacity() == kTestCap);
         CHECK(buf.mask() == kTestCap - 1);
         CHECK(arena.get_bytes_used() == floatsOne * sizeof(float));
 
-        Pow2RingBuffer own;     // owning
+        Pow2RingBuffer own;
         own.prepare(kTestCap);
         oracle.init(kTestCap);
 
-        // The carved base is 64-byte aligned (windowPtr(0,1) IS the base).
         const float* base = buf.windowPtr(0, 1);
         CHECK(base != nullptr);
         CHECK(reinterpret_cast<std::uintptr_t>(base) % BumpArena::kBaseAlignment == 0);
 
-        // Zero state matches the owning path.
         {
             std::vector<float> got(static_cast<std::size_t>(kTestCap));
             buf.readWindow(got.data(), 0, kTestCap);
             for (int i = 0; i < kTestCap; ++i)
-                if (got[i] != 0.0f) FAIL("arena zero state i=%d is %g", i, (double)got[i]);
+                if (got[i] != 0.0f) FAIL("arena zero state i={{}} is {{}}", i, static_cast<double>(got[i]));
         }
 
-        // Interleaved pseudo-random sequence through both rings + oracle:
-        // arena-backed must be bit-identical to owning (same op order).
+        // Interleaved pseudo-random sequence through both rings and oracle.
+        // The arena-backed ring must be bit-identical to the owning ring.
         Rng rng(20260801u);
         constexpr int kBlocks = 2000;
-        int wA = 0, wO = 0;
-        std::vector<float> blk, gotA, gotO, exp;
+        int wA = 0;
+        int wO = 0;
+        std::vector<float> blk;
+        std::vector<float> gotA;
+        std::vector<float> gotO;
+        std::vector<float> exp;
         for (int b = 0; b < kBlocks; ++b)
         {
             const int n = rng.range(1, kMaxBlock);
@@ -408,7 +375,7 @@ int runAll()
             wA = (wA + n) & buf.mask();
             wO = (wO + n) & own.mask();
 
-            const int readStarts[3] = {
+            const std::array<int, 3> readStarts = {
                 (wA - n + kTestCap) & buf.mask(),
                 rng.range(0, kTestCap - 1),
                 (wA - kMaxWindow + kTestCap) & buf.mask()
@@ -426,15 +393,14 @@ int runAll()
                     for (int j = 0; j < len; ++j)
                     {
                         if (gotA[static_cast<std::size_t>(j)] != exp[static_cast<std::size_t>(j)])
-                            FAIL("arena block %d rs=%d len=%d j=%d got=%g exp=%g",
-                                 b, rs, len, j, (double)gotA[static_cast<std::size_t>(j)],
-                                 (double)exp[static_cast<std::size_t>(j)]);
+                            FAIL("arena block {{}} rs={{}} len={{}} j={{}} got={{}} exp={{}}",
+                                 b, rs, len, j, static_cast<double>(gotA[static_cast<std::size_t>(j)]),
+                                 static_cast<double>(exp[static_cast<std::size_t>(j)]));
                         if (gotA[static_cast<std::size_t>(j)] != gotO[static_cast<std::size_t>(j)])
-                            FAIL("arena vs owning block %d rs=%d len=%d j=%d %g != %g",
-                                 b, rs, len, j, (double)gotA[static_cast<std::size_t>(j)],
-                                 (double)gotO[static_cast<std::size_t>(j)]);
+                            FAIL("arena vs owning block {{}} rs={{}} len={{}} j={{}} {{}} != {{}}",
+                                 b, rs, len, j, static_cast<double>(gotA[static_cast<std::size_t>(j)]),
+                                 static_cast<double>(gotO[static_cast<std::size_t>(j)]));
                     }
-                    // windowPtr parity on the arena-backed ring too.
                     const float* p = buf.windowPtr(rs, len);
                     const bool wraps = (rs + len) > (kTestCap + kTail);
                     if (p == nullptr) { CHECK(wraps); }
@@ -448,8 +414,7 @@ int runAll()
             }
         }
 
-        // Second ring carved from the same arena lands immediately after the
-        // first (documented contiguous layout), also 64-byte aligned.
+        // A second ring carved from the same arena lands immediately after the first.
         Pow2RingBuffer buf2;
         buf2.prepare(kTestCap, arena);
         CHECK(arena.get_bytes_used() == 2 * floatsOne * sizeof(float));
@@ -457,7 +422,7 @@ int runAll()
         CHECK(base2 == base + floatsOne);
         CHECK(reinterpret_cast<std::uintptr_t>(base2) % BumpArena::kBaseAlignment == 0);
 
-        std::printf("arena-backed storage (aligned, exact accounting, owning parity): PASS\n");
+        std::println("arena-backed storage (aligned, exact accounting, owning parity): PASS");
     }
 
     return 0;
@@ -467,12 +432,14 @@ int runAll()
 
 int main()
 {
-    std::printf("=== Chronos Pow2RingBuffer correctness harness ===\n");
-    std::printf("kTail=%d  kMaxWindow=%d  testCapacity=%d  largeCapacity=%d\n\n",
+    std::println("=== Chronos Pow2RingBuffer correctness harness ===");
+    std::println("kTail={}  kMaxWindow={}  testCapacity={}  largeCapacity={}",
                 kTail, kMaxWindow, kTestCap, kLargeCap);
+    std::println();
 
-    int r = runAll();
+    const int r = runAll();
 
-    std::printf("\n=== %s ===\n", r == 0 ? "ALL PROPERTIES HELD" : "PROPERTY FAILED");
+    std::println();
+    std::println("=== {} ===", r == 0 ? "ALL PROPERTIES HELD" : "PROPERTY FAILED");
     return r;
 }

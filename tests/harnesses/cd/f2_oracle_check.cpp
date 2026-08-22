@@ -1,46 +1,19 @@
-// tests/harnesses/cd/f2_oracle_check.cpp
-// ──────────────────────────────────────────────────────────────────────────
-// High-precision oracle harness for the TanhNL antiderivatives F1 and F2.
-// It certifies the accuracy of the current implementation before anything
-// changes, and it provides the oracle that later kernels are measured
-// against.
-//
-// The oracle machinery lives in f2_dd_oracle.h (shared with
-// f2_minimax_check.cpp): a double-double (DD) closed form and a DD
-// Gauss-Legendre quadrature. See that header for the design notes.
-//
-// The two oracles must agree to < 1e-25 relative. Then the harness measures
-// the current TanhNL::F1 / TanhNL::F2 against the closed-form oracle and
-// prints the error tables. Reference values were measured independently
-// with mpmath at 60 digits. The single-point rows gate at a factor of 2.
-// The region maxima print a factor-5 alarm gate: the maximum of a rounding
-// error curve moves with the sweep grid, so the region gate only catches a
-// broken oracle.
-//
-// Two properties of the current implementation are on record here:
-//   - The relative error of F2 is UNBOUNDED as x -> 0. It is about 4.6e8
-//     at x = 1e-8. This is the defect this file documents.
-//   - The absolute error near zero floors at about 1.1e-16 (half a ulp of
-//     the ~0.4-sized terms that cancel), not at 4e-17.
-//
-// Usage: f2_oracle_check [--full] [--points N]
-//   Default: small sweep counts for CI (runs in a few seconds at -O0).
-//   --full: dense sweeps for local use. --points N: region sweep density.
-//
-// Conventions (matching dilog_check / nonlinearity_check): plain main(),
-// printf, exit code, always-live CHECK/FAIL (NOT assert). Links SharedCode
-// only; no JUCE. No forced -O2 so the header assert preconditions stay
-// armed in a Debug configure.
-// ──────────────────────────────────────────────────────────────────────────
+/**
+ * High-precision oracle harness for the TanhNL antiderivatives F1 and F2.
+ * Certifies the accuracy of the current implementation and provides the
+ * oracle that later kernels are measured against. Plain main(), exit
+ * code, always-live CHECK/FAIL.
+ */
 
 #include "dsp/nonlinear/Nonlinearities.h"
 
 #include "f2_dd_oracle.h"
 
+#include <array>
 #include <cmath>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <print>
 
 namespace {
 
@@ -50,14 +23,12 @@ using namespace F2Oracle;
 const char* g_section = "(startup)";
 
 #define CHECK(cond) \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
-#define FAIL(fmt, ...) \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...) \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
 constexpr double kU = 2.220446049250313e-16;   // DBL_EPSILON
-
-// ── Harness body ─────────────────────────────────────────────────────────
 
 int gPoints = 200;    // region sweep density (default: CI-sized)
 int gAgree = 300;     // oracle-agreement grid size
@@ -68,16 +39,18 @@ void sectionSelfTest()
 
     // twoSum / twoProd exactness identities.
     {
-        double s, e;
+        double s = 0.0;
+        double e = 0.0;
         twoSum(1.0, kU, s, e);
         CHECK(s == 1.0 + kU && e == 0.0);
         twoSum(1.0, kU * 0.5, s, e);
         CHECK(s == 1.0 && e == kU * 0.5);  // 2^-53 falls off the sum
-        double p, ep;
+        double p = 0.0;
+        double ep = 0.0;
         twoProd(1.0 + kU, 1.0 + kU, p, ep);
         CHECK(p == 1.0 + 2.0 * kU);
         CHECK(ep == kU * kU);              // the dropped cross term
-        std::printf("twoSum/twoProd exactness: PASS\n");
+        std::println("twoSum/twoProd exactness: PASS");
     }
 
     // dd division by an integer round-trips.
@@ -85,7 +58,7 @@ void sectionSelfTest()
         const DD v = dd_from(0.875);
         const DD q = dd_div_int(dd_mul_int(v, 7), 7);
         CHECK(q.hi == v.hi && q.lo == v.lo);
-        std::printf("dd mul/div int round-trip (bit-exact): PASS\n");
+        std::println("dd mul/div int round-trip (bit-exact): PASS");
     }
 
     // tanh series anchors: T_2 = -1/3, T_3 = 2/15, T_4 = -17/315.
@@ -96,7 +69,7 @@ void sectionSelfTest()
         CHECK(dd_abs_hi(dd_sub(gT[2], t2)) < 1e-30);
         CHECK(dd_abs_hi(dd_sub(gT[3], t3)) < 1e-30);
         CHECK(dd_abs_hi(dd_sub(gT[4], t4)) < 1e-30);
-        std::printf("tanh series coefficient anchors (DD recurrence): PASS\n");
+        std::println("tanh series coefficient anchors (DD recurrence): PASS");
     }
 
     // F2 series anchors: p_0 = 1/6, p_1 = -1/60.
@@ -105,7 +78,7 @@ void sectionSelfTest()
         const DD p1ref = dd_div(dd_from(-1.0), dd_from(60.0));
         CHECK(dd_abs_hi(dd_sub(gP2[0], p0ref)) < 1e-30);
         CHECK(dd_abs_hi(dd_sub(gP2[1], p1ref)) < 1e-30);
-        std::printf("F2 series coefficient anchors: PASS\n");
+        std::println("F2 series coefficient anchors: PASS");
     }
 
     // Gauss rule: weights sum to 2, first node matches the known value.
@@ -115,7 +88,7 @@ void sectionSelfTest()
             sum = dd_add(sum, g_gl.w[k]);
         CHECK(dd_abs_hi(dd_sub(sum, dd_from(2.0))) < 1e-28);
         CHECK(std::fabs(g_gl.x[GaussDD::N - 1].hi - 0.9894009349916499) < 1e-13);
-        std::printf("Gauss-Legendre-16 rule in DD (sum w = 2): PASS\n");
+        std::println("Gauss-Legendre-16 rule in DD (sum w = 2): PASS");
     }
 }
 
@@ -125,44 +98,44 @@ void sectionAnchors()
 
     const DD t = ddExpNeg2(dd_one());
     const DD dt = dd_sub(t, kAnchorExpNeg2);
-    std::printf("exp(-2)   vs 60-digit anchor: |diff| = %.3e (gate 1e-28)\n",
+    std::println("exp(-2)   vs 60-digit anchor: |diff| = {:.3e} (gate 1e-28)",
                 dd_abs_hi(dt));
     CHECK(dd_abs_hi(dt) < 1e-28);
 
     const DD li = ddDilogNegDirect(kAnchorExpNeg2);
     const DD dl = dd_sub(li, kAnchorLi2);
-    std::printf("Li2(-e^-2) vs 60-digit anchor: |diff| = %.3e (gate 1e-28)\n",
+    std::println("Li2(-e^-2) vs 60-digit anchor: |diff| = {:.3e} (gate 1e-28)",
                 dd_abs_hi(dl));
     CHECK(dd_abs_hi(dl) < 1e-28);
 
     const DD f1 = ddLnCosh(dd_one());
     const DD df = dd_sub(f1, kAnchorF1at1);
-    std::printf("ln cosh(1) vs 60-digit anchor: |diff| = %.3e (gate 1e-26)\n",
+    std::println("ln cosh(1) vs 60-digit anchor: |diff| = {:.3e} (gate 1e-26)",
                 dd_abs_hi(df));
     CHECK(dd_abs_hi(df) < 1e-26);
 
     const DD f2 = f2DD(1.0);
     const DD dg = dd_sub(f2, kAnchorF2at1);
-    std::printf("F2(1)     vs 60-digit anchor: |diff| = %.3e (gate 1e-26)\n",
+    std::println("F2(1)     vs 60-digit anchor: |diff| = {:.3e} (gate 1e-26)",
                 dd_abs_hi(dg));
     CHECK(dd_abs_hi(dg) < 1e-26);
 
-    // The series route must agree with the closed route at the a = 0.5
-    // switch. Both are computed explicitly here.
+    // The series route must agree with the closed route at the a = 0.5 switch.
     const DD atHalf = f2DD(0.5);
     const DD quad = quadDD(0.5);
     const double r = ddRelDiff(atHalf, quad);
-    std::printf("series-vs-quadrature at a = 0.5: rel diff = %.3e (gate 1e-25)\n", r);
+    std::println("series-vs-quadrature at a = 0.5: rel diff = {:.3e} (gate 1e-25)", r);
     CHECK(r < 1e-25);
 
-    std::printf("dd transcendentals vs 60-digit anchors: PASS\n");
+    std::println("dd transcendentals vs 60-digit anchors: PASS");
 }
 
 void sectionAgreement()
 {
     g_section = "oracle agreement";
 
-    double worst = 0.0, worstX = 0.0;
+    double worst = 0.0;
+    double worstX = 0.0;
     int n = gAgree;
     for (int i = 0; i < n; ++i)
     {
@@ -171,21 +144,21 @@ void sectionAgreement()
         if (r > worst) { worst = r; worstX = x; }
     }
     // The a = 0.5 switch of the closed oracle, straddled by one ulp steps.
-    const double edge[3] = { std::nextafter(0.5, 0.0), 0.5, std::nextafter(0.5, 1.0) };
+    const std::array<double, 3> edge = { std::nextafter(0.5, 0.0), 0.5, std::nextafter(0.5, 1.0) };
     for (double x : edge)
     {
         const double r = ddRelDiff(f2DD(x), quadDD(x));
         if (r > worst) { worst = r; worstX = x; }
     }
-    std::printf("closed form vs quadrature, %d log-spaced points in [1e-12, 1000]\n"
-                "    plus the a = 0.5 switch: max rel diff = %.3e at x = %.6e (gate 1e-25)\n",
+    std::println("closed form vs quadrature, {} log-spaced points in [1e-12, 1000]",
+                "    plus the a = 0.5 switch: max rel diff = {:.3e} at x = {:.6e} (gate 1e-25)",
                 n, worst, worstX);
     CHECK(worst < 1e-25);
-    std::printf("oracle agreement (1e-25): PASS\n");
+    std::println("oracle agreement (1e-25): PASS");
 }
 
 // One row of the status-quo single-point reference gates.
-struct RefPoint { double x, refRel, refAbs; };
+struct RefPoint { double x; double refRel; double refAbs; };
 
 void sectionStatusQuoF2()
 {
@@ -194,52 +167,54 @@ void sectionStatusQuoF2()
     // Deterministic single-point rows. Independently measured with mpmath
     // at 60 digits against the exact float64 code path. Factor-2 gate:
     // the last ulp of the platform exp/log1p can move these values.
-    const RefPoint relPts[] = {
+    const std::array<RefPoint, 8> relPts = {{
         { 1e-8,   4.6e8,  0.0 },
         { 4e-6,   1.70,   0.0 },
         { 6e-6,   0.83,   0.0 },
         { 8e-6,   0.37,   0.0 },
         { 1e-5,   0.13,   0.0 },
-        { 1.8e-5, 0.0055, 0.0 },
+        { 1.8e-5,  0.0055, 0.0 },
         { 3e-5,   0.0081, 0.0 },
         { 1e-4,   2.5e-5, 0.0 },
-        { 1e-3,   1.4e-7, 0.0 },
-    };
-    std::printf("F2 single-point relative error vs reference (factor-2 gate):\n");
+    }};
+    std::println("F2 single-point relative error vs reference (factor-2 gate):");
     for (const auto& rp : relPts)
     {
         const double got = TanhNL::F2(rp.x);
         const double refd = toDouble(f2DD(rp.x));
         const double rel = std::fabs(got - refd) / std::fabs(refd);
         const double ratio = rel / rp.refRel;
-        std::printf("    x = %8.1e : rel err = %.3e   ref %.3e   ratio %.2f %s\n",
+        std::println("    x = {:8.1e} : rel err = {:.3e}   ref {:.3e}   ratio {:.2f} {}",
                     rp.x, rel, rp.refRel, ratio, ratio <= 2.0 ? "" : "<-- FAIL");
         CHECK(ratio <= 2.0);
     }
 
-    const RefPoint absPts[] = {
+    const std::array<RefPoint, 2> absPts = {{
         { 17.6, 0.0, 2.97e-14 },
         { 520.0, 0.0, 3.87e-11 },
-    };
-    std::printf("F2 single-point absolute error vs reference (factor-2 gate):\n");
+    }};
+    std::println("F2 single-point absolute error vs reference (factor-2 gate):");
     for (const auto& rp : absPts)
     {
         const double got = TanhNL::F2(rp.x);
         const double refd = toDouble(f2DD(rp.x));
         const double absE = std::fabs(got - refd);
         const double ratio = absE / rp.refAbs;
-        std::printf("    x = %8.1f : abs err = %.3e   ref %.3e   ratio %.2f %s\n",
+        std::println("    x = {:8.1f} : abs err = {:.3e}   ref {:.3e}   ratio {:.2f} {}",
                     rp.x, absE, rp.refAbs, ratio, ratio <= 2.0 ? "" : "<-- FAIL");
         CHECK(ratio <= 2.0);
     }
-    std::printf("status-quo F2 single-point gates: PASS\n");
+    std::println("status-quo F2 single-point gates: PASS");
 }
 
-struct Region { double lo, hi; double refRel; double refAbs; const char* note; };
+struct Region { double lo; double hi; double refRel; double refAbs; const char* note; };
 
 void sweepRegion(const Region& rg, bool f1)
 {
-    double maxRel = 0.0, maxAbs = 0.0, argRel = 0.0, argAbs = 0.0;
+    double maxRel = 0.0;
+    double maxAbs = 0.0;
+    double argRel = 0.0;
+    double argAbs = 0.0;
     for (int i = 0; i < gPoints; ++i)
     {
         const double x = rg.lo * std::pow(rg.hi / rg.lo,
@@ -251,7 +226,7 @@ void sweepRegion(const Region& rg, bool f1)
         if (rel > maxRel) { maxRel = rel; argRel = x; }
         if (absE > maxAbs) { maxAbs = absE; argAbs = x; }
     }
-    std::printf("  [%7.0e, %7.0e]  rel %9.2e @ %9.3e (%s)   abs %9.2e @ %9.3e (%s)\n",
+    std::println("  [{:7.0e}, {:7.0e}]  rel {:9.2e} @ {:9.3e} ({})   abs {:9.2e} @ {:9.3e} ({})",
                 rg.lo, rg.hi, maxRel, argRel, rg.note, maxAbs, argAbs,
                 rg.refAbs > 0.0 ? "ref-bounded" : "no ref");
     // Alarm gates against the independently measured maxima.
@@ -267,8 +242,8 @@ void sectionStatusQuoTables()
     // independent 60-digit measurement. Row 1 has no finite rel reference:
     // the relative error is unbounded there by design of the defect.
     g_section = "status quo F2 table";
-    std::printf("F2 status-quo error table (%d points per region):\n", gPoints);
-    const Region regionsF2[] = {
+    std::println("F2 status-quo error table ({} points per region):", gPoints);
+    const std::array<Region, 7> regionsF2 = {{
         { 1e-9, 1e-3, 0.0,     1.09e-16, "unbounded" },
         { 1e-3, 1e-1, 1.4e-7,  1.44e-16, "ref 1.4e-7" },
         { 1e-1, 5e-1, 5.47e-13, 0.0,     "ref 5.5e-13" },
@@ -276,23 +251,23 @@ void sectionStatusQuoTables()
         { 1.0,  3.0,  7.58e-16, 0.0,     "ref 7.6e-16" },
         { 3.0, 19.0,  3.12e-16, 2.97e-14, "ref 3.1e-16" },
         { 19.0, 700.0, 3.01e-16, 3.87e-11, "ref 3.0e-16" },
-    };
+    }};
     for (const auto& rg : regionsF2)
         sweepRegion(rg, false);
-    std::printf("status-quo F2 region table (factor-5 alarm): PASS\n");
+    std::println("status-quo F2 region table (factor-5 alarm): PASS");
 
     g_section = "status quo F1 table";
-    std::printf("F1 status-quo error table (%d points per region, informational):\n",
+    std::println("F1 status-quo error table ({} points per region, informational):",
                 gPoints);
-    const Region regionsF1[] = {
+    const std::array<Region, 7> regionsF1 = {{
         { 1e-9, 1e-3, 0.0, 0.0, "-" }, { 1e-3, 1e-1, 0.0, 0.0, "-" },
         { 1e-1, 5e-1, 0.0, 0.0, "-" }, { 5e-1, 1.0,  0.0, 0.0, "-" },
         { 1.0,  3.0,  0.0, 0.0, "-" }, { 3.0, 19.0,  0.0, 0.0, "-" },
         { 19.0, 700.0, 0.0, 0.0, "-" },
-    };
+    }};
     for (const auto& rg : regionsF1)
         sweepRegion(rg, true);
-    std::printf("status-quo F1 region table: printed (no gates)\n");
+    std::println("status-quo F1 region table: printed (no gates)");
 }
 
 int runAll()
@@ -324,18 +299,20 @@ int main(int argc, char** argv)
         }
         else
         {
-            std::printf("usage: f2_oracle_check [--full] [--points N]\n");
+            std::println("usage: f2_oracle_check [--full] [--points N]");
             return 2;
         }
     }
 
-    std::printf("=== Chronos TanhNL antiderivative oracle harness ===\n");
-    std::printf("oracle: double-double closed form vs DD Gauss-Legendre-16 quadrature\n");
-    std::printf("sweep density: %d points/region, agreement grid %d points\n\n",
+    std::println("=== Chronos TanhNL antiderivative oracle harness ===");
+    std::println("oracle: double-double closed form vs DD Gauss-Legendre-16 quadrature");
+    std::println("sweep density: {} points/region, agreement grid {} points",
                 gPoints, gAgree);
+    std::println();
 
-    int r = runAll();
+    const int r = runAll();
 
-    std::printf("\n=== %s ===\n", r == 0 ? "ALL PROPERTIES HELD" : "PROPERTY FAILED");
+    std::println();
+    std::println("=== {} ===", r == 0 ? "ALL PROPERTIES HELD" : "PROPERTY FAILED");
     return r;
 }

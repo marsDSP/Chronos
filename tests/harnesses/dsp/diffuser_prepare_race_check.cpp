@@ -44,12 +44,12 @@ namespace
             {
                 if (d1.sectionLenL(i) != ref1.sectionLenL(i) || d1.sectionLenR(i) != ref1.sectionLenR(i))
                 {
-                    FAIL("iter {} sr1={:.0f} length mismatch on slot {}: L({} vs {}) R({} vs {})",
+                    FAIL("iter {{}} sr1={{:.0f}} length mismatch on slot {{}}: L({{}} vs {{}}) R({{}} vs {{}})",
                          iter, sr1, i, d1.sectionLenL(i), ref1.sectionLenL(i), d1.sectionLenR(i), ref1.sectionLenR(i));
                 }
                 if (d2.sectionLenL(i) != ref2.sectionLenL(i) || d2.sectionLenR(i) != ref2.sectionLenR(i))
                 {
-                    FAIL("iter {} sr2={:.0f} length mismatch on slot {}: L({} vs {}) R({} vs {})",
+                    FAIL("iter {{}} sr2={{:.0f}} length mismatch on slot {{}}: L({{}} vs {{}}) R({{}} vs {{}})",
                          iter, sr2, i, d2.sectionLenL(i), ref2.sectionLenL(i), d2.sectionLenR(i), ref2.sectionLenR(i));
                 }
             }

@@ -1,50 +1,18 @@
-// tests/harnesses/dsp/diffuser_toggle_check.cpp
-// ──────────────────────────────────────────────────────────────────────────
-// Diffuser enable-toggle hygiene. Gates the three properties the
-// ChronosEngine diffuser crossfade state machine exists to preserve:
-//
-// (a) No stale replay: when the diffuser is bypassed, its 16 rings hold up to
-//     ~61 ms of frozen audio. Re-enabling must NOT replay that stale audio.
-//     prime() clears the rings on a rising edge, and a wet-path crossfade
-//     blends undiffused → diffused over ~10 ms. Feed tone A with the diffuser
-//     on, disable, feed tone B for > 700 ms (≫ the ring depth), re-enable, and
-//     measure energy at tone A's frequency in the output after re-enable.
-//
-//     The gate is RELATIVE, not absolute: the Schroeder allpass diffuser is
-//     not a pure delay — at g > 0 it produces a low-level subharmonic / comb
-//     response at the input tone's sub-frequencies (~−60 dBc at 220 Hz for a
-//     440 Hz input at diffusion 0.7), even with no stale audio in the rings.
-//     So an absolute −80 dBc gate is unachievable. Instead the toggle case is
-//     gated against a BASELINE: a run with the diffuser always on and NO stale
-//     tone A (tone B only from the start). If prime() + the crossfade work, the
-//     toggle case's 220 Hz energy must be ≤ the baseline's (the toggle adds no
-//     more tone A than the diffuser's inherent response). Without prime() the
-//     stale tone A would replay at ~full amplitude, far exceeding the baseline.
-//
-// (b) No click: the per-sample crossfade bounds the output step at the toggle
-//     edges. The fade introduces the diffused signal at inc = 1/480 per sample;
-//     |diff − undiff| ≤ ~4.5 (diffuser_parity gates |out| ≤ 4.0, undiffused ≤
-//     0.5), so the fade-induced step ≤ 4.5/480 ≈ 0.009. The signal's own
-//     per-sample step (440 Hz sine, 0.5 amp) ≤ 2π·440/48000·0.5 ≈ 0.029. Total
-//     ≤ 0.04; gate at 0.1 (well below the no-fade click of ~4.5).
-//
-// (c) PDC latency unchanged: latencySamples() is a compile-time constant
-//     (SaturatorAlign::kBudget), independent of the diffuser toggle state.
-//
-// Uses ChronosEngine directly (the state machine is engine-level). Conventions
-// matching latency_null_check / chain_parity: plain main(), exit code, printf,
-// always-live CHECK/FAIL. Links SharedCode only; no JUCE.
-//
-// Coherent sampling: fA = 220 Hz, fB = 440 Hz. Both are integer bins of
-// N = 24000 (220·24000/48000 = 110, 440·24000/48000 = 220), so the DTFT at
-// either frequency has zero spectral leakage from the other.
-// ──────────────────────────────────────────────────────────────────────────
+/**
+ * Diffuser enable-toggle hygiene. Gates: no stale replay after re-enable
+ * (relative to an always-on baseline), no click at the toggle edges (step
+ * under 0.1), and unchanged reported latency. Tones 220 Hz and 440 Hz are
+ * integer bins of the measurement window. See docs/dsp-notes.md for the
+ * gate derivations.
+ */
 
 #include "dsp/ChronosEngine.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
+#include <print>
 #include <cstdlib>
 #include <cstring>
 #include <numbers>
@@ -62,10 +30,10 @@ using Engine = MarsDSP::ChronosEngine;
 const char* g_section = "(startup)";
 
 #define CHECK(cond) \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
-#define FAIL(fmt, ...) \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...) \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
 Engine::Params makeParams(bool enableDiff) noexcept
 {
@@ -97,7 +65,8 @@ Engine::Params makeParams(bool enableDiff) noexcept
 double measureAmp(const std::vector<float>& x, double freqHz, int start, int len)
 {
     const double omega = 2.0 * kPi * freqHz / kFs;
-    double c = 0.0, s = 0.0;
+    double c = 0.0;
+    double s = 0.0;
     for (int n = 0; n < len; ++n)
     {
         const double ang = omega * static_cast<double>(start + n);
@@ -138,7 +107,7 @@ AmpPair runScenario(bool diffOn1, bool diffOn2, bool diffOn3,
     std::vector<float> bufR(static_cast<std::size_t>(kPhase * 3));
     std::vector<float> outL(static_cast<std::size_t>(kPhase * 3));
 
-    // NOTE: kPhase (48000) is not a multiple of kBlock (256) — 48000/256 =
+    // NOTE: kPhase (48000) is not a multiple of kBlock (256) - 48000/256 =
     // 187.5. The last block of each phase must process only the remaining
     // samples (min(kBlock, kPhase - off)), not a full kBlock, or it reads/writes
     // 128 samples past the phase boundary (and past bufL/outL in phase 3).
@@ -148,8 +117,8 @@ AmpPair runScenario(bool diffOn1, bool diffOn2, bool diffOn3,
     for (int off = 0; off < kPhase; off += kBlock)
     {
         const int n = std::min(kBlock, kPhase - off);
-        float* io[2] = { bufL.data() + off, bufR.data() + off };
-        eng.process(io, 2, n);
+        std::array<float*, 2> io{ bufL.data() + off, bufR.data() + off };
+        eng.process(io.data(), 2, n);
         std::memcpy(outL.data() + off, bufL.data() + off,
                     static_cast<std::size_t>(n) * sizeof(float));
     }
@@ -161,8 +130,8 @@ AmpPair runScenario(bool diffOn1, bool diffOn2, bool diffOn3,
     {
         const int n = std::min(kBlock, kPhase - off);
         const int o = kPhase + off;
-        float* io[2] = { bufL.data() + o, bufR.data() + o };
-        eng.process(io, 2, n);
+        std::array<float*, 2> io{ bufL.data() + o, bufR.data() + o };
+        eng.process(io.data(), 2, n);
         std::memcpy(outL.data() + o, bufL.data() + o,
                     static_cast<std::size_t>(n) * sizeof(float));
     }
@@ -174,8 +143,8 @@ AmpPair runScenario(bool diffOn1, bool diffOn2, bool diffOn3,
     {
         const int n = std::min(kBlock, kPhase - off);
         const int o = 2 * kPhase + off;
-        float* io[2] = { bufL.data() + o, bufR.data() + o };
-        eng.process(io, 2, n);
+        std::array<float*, 2> io{ bufL.data() + o, bufR.data() + o };
+        eng.process(io.data(), 2, n);
         std::memcpy(outL.data() + o, bufL.data() + o,
                     static_cast<std::size_t>(n) * sizeof(float));
     }
@@ -185,7 +154,7 @@ AmpPair runScenario(bool diffOn1, bool diffOn2, bool diffOn3,
              measureAmp(outL, fB, measStart, kMeasN) };
 }
 
-// ── Test (a): no stale replay (relative gate) ─────────────────────────────
+// Test (a): no stale replay (relative gate)
 void testStaleReplay()
 {
     g_section = "stale-replay";
@@ -200,24 +169,24 @@ void testStaleReplay()
     // decays over the ring depth (~16 k samples at size 0.5); by the tail of
     // phase 3 it is steady-state, but the measurement window still catches the
     // transient tail. An always-on baseline (ON/ON/ON) has NO startup transient
-    // (−189 dBc) and is the WRONG comparison — it would make the startup
+    // (−189 dBc) and is the WRONG comparison - it would make the startup
     // transient look like stale replay. The toggle must not exceed THIS baseline.
     const AmpPair base = runScenario(false, false, true, fA, fB, /*phase1IsA=*/false);
     if (base.ampB <= 1e-7)
-        FAIL("baseline tone B %.3e too low (chain assembled wrong)", base.ampB);
+        FAIL("baseline tone B {:.3} too low (chain assembled wrong)", base.ampB);
 
     // Toggle case: tone A in phase 1 (rings fill with stale A), disable in
     // phase 2, re-enable in phase 3 (prime() clears the rings).
     const AmpPair tog = runScenario(true, false, true, fA, fB, /*phase1IsA=*/true);
     if (tog.ampB <= 1e-7)
-        FAIL("toggle tone B %.3e too low (chain assembled wrong)", tog.ampB);
+        FAIL("toggle tone B {:.3} too low (chain assembled wrong)", tog.ampB);
 
     const double baseDbc = 20.0 * std::log10(base.ampA / base.ampB);
     const double togDbc  = 20.0 * std::log10(tog.ampA  / tog.ampB);
 
-    std::printf("    baseline (always-on, no stale A): A=%.3e B=%.3e A/B=%.1f dBc\n",
+    std::println("    baseline (always-on, no stale A): A={:.3} B={:.3} A/B={:.1} dBc",
                 base.ampA, base.ampB, baseDbc);
-    std::printf("    toggle (stale A, on→off→on):       A=%.3e B=%.3e A/B=%.1f dBc\n",
+    std::println("    toggle (stale A, on→off→on):       A={:.3} B={:.3} A/B={:.1} dBc",
                 tog.ampA, tog.ampB, togDbc);
 
     // The toggle case must add no more tone A than the diffuser's inherent
@@ -226,11 +195,11 @@ void testStaleReplay()
     // buffer capacity, which shifts the transient decay. Without prime()
     // the stale replay would be ~0 dBc, far above this gate.
     CHECK(togDbc <= baseDbc + 18.0);
-    std::printf("no stale replay (toggle %.1f dBc ≤ baseline %.1f + 18 dB): PASS\n",
+    std::println("no stale replay (toggle {:.1} dBc ≤ baseline {:.1} + 18 dB): PASS",
                 togDbc, baseDbc);
 }
 
-// ── Test (b): no click at toggle edges ────────────────────────────────────
+// Test (b): no click at toggle edges
 void testClickBound()
 {
     g_section = "click-bound";
@@ -258,8 +227,8 @@ void testClickBound()
             const int n = std::min(kBlock, total - off);
             fillSine(bufL, fB, sampleIdx, n);
             fillSine(bufR, fB, sampleIdx, n);
-            float* io[2] = { bufL.data() + off, bufR.data() + off };
-            eng.process(io, 2, n);
+            std::array<float*, 2> io{ bufL.data() + off, bufR.data() + off };
+            eng.process(io.data(), 2, n);
             if (capture)
             {
                 for (int s = 1; s < n; ++s)
@@ -283,12 +252,12 @@ void testClickBound()
     eng.setParams(makeParams(true));
     runBlocks(kCapture, true);
 
-    std::printf("    click bound: max |step| = %.4f (gate %.1f)\n", maxStep, static_cast<double>(kClickBound));
+    std::println("    click bound: max |step| = {:.4} (gate {:.1})", maxStep, static_cast<double>(kClickBound));
     CHECK(maxStep <= static_cast<double>(kClickBound));
-    std::printf("no click at toggle edges (max step %.4f < %.1f): PASS\n", maxStep, static_cast<double>(kClickBound));
+    std::println("no click at toggle edges (max step {:.4} < {:.1}): PASS", maxStep, static_cast<double>(kClickBound));
 }
 
-// ── Test (c): PDC latency unchanged by toggling ───────────────────────────
+// Test (c): PDC latency unchanged by toggling
 void testLatencyInvariant()
 {
     g_section = "latency-invariant";
@@ -307,21 +276,21 @@ void testLatencyInvariant()
     CHECK(latOn == kBudget);
     CHECK(latOff == kBudget);
     CHECK(latOnAgain == kBudget);
-    std::printf("PDC latency = %d (kBudget) at all toggle states: PASS\n", lat0);
+    std::println("PDC latency = {} (kBudget) at all toggle states: PASS", lat0);
 }
 
 } // namespace
 
 int main()
 {
-    std::printf("=== Chronos diffuser_toggle_check (C5) ===\n");
-    std::printf("fs=%.0f  block=%d  kBudget=%d  fade=%d samples\n\n",
+    std::println("=== Chronos diffuser_toggle_check (C5) ===");
+    std::println("fs={:.0}  block={}  kBudget={}  fade={} samples\n",
                 kFs, kBlock, kBudget, 480);
 
     testStaleReplay();
     testClickBound();
     testLatencyInvariant();
 
-    std::printf("\n=== ALL PROPERTIES HELD ===\n");
+    std::println("\n=== ALL PROPERTIES HELD ===");
     return 0;
 }

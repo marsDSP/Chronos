@@ -9,8 +9,10 @@
 #include "dsp/align/SaturatorAlign.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
+#include <print>
 #include <cstdlib>
 #include <vector>
 
@@ -19,10 +21,10 @@ namespace {
 const char* g_section = "(startup)";
 
 #define CHECK(cond)                                                            \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
-#define FAIL(fmt, ...)                                                         \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...)                                                         \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
 constexpr double kFs = 48000.0;
 constexpr int    kFsInt = 48000;
@@ -35,8 +37,8 @@ constexpr int    kRenderSamples = 48000;
 
 int main()
 {
-    std::printf("=== unity_transparency_check ===\n");
-    std::printf("fs=%d block=%d kBudget=%d\n", kFsInt, kBlock, kBudget);
+    std::println("=== unity_transparency_check ===");
+    std::println("fs={} block={} kBudget={}", kFsInt, kBlock, kBudget);
 
     g_section = "prepare";
     MarsDSP::ChronosEngine engine;
@@ -87,8 +89,8 @@ int main()
     {
         const int n = std::min(kBlock, kRenderSamples - pos);
         engine.setParams(p);
-        float* io[2] = { outL.data() + pos, outR.data() + pos };
-        engine.process(io, kChannels, n);
+        std::array<float*, 2> io{ outL.data() + pos, outR.data() + pos };
+        engine.process(io.data(), kChannels, n);
     }
 
     g_section = "transparency";
@@ -110,18 +112,18 @@ int main()
         {
             ++mismatches;
             if (mismatches <= 10)
-                std::printf("  mismatch at %d: L got=%g exp=%g  R got=%g exp=%g\n",
-                            i, (double)gotL, (double)expectedL,
-                               (double)gotR, (double)expectedR);
+                std::println("  mismatch at {}: L got={} exp={}  R got={} exp={}",
+                            i, static_cast<double>(gotL), static_cast<double>(expectedL),
+                               static_cast<double>(gotR), static_cast<double>(expectedR));
         }
     }
 
     if (mismatches > 0)
-        FAIL("%d sample mismatches (expected exact equality, delayed by kBudget=%d)",
+        FAIL("{} sample mismatches (expected exact equality, delayed by kBudget={})",
              mismatches, kBudget);
 
-    std::printf("exact transparency: %d samples, output == input delayed by %d: PASS\n",
+    std::println("exact transparency: {} samples, output == input delayed by {}: PASS",
                 kRenderSamples, kBudget);
-    std::printf("=== unity_transparency_check OK ===\n");
+    std::println("=== unity_transparency_check OK ===");
     return 0;
 }

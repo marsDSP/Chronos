@@ -2,9 +2,11 @@
 #include "dsp/align/SaturatorAlign.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <print>
 #include <cstdlib>
 #include <vector>
 
@@ -18,10 +20,10 @@ constexpr int    kFadeSamples = static_cast<int>(kFs * kFadeMs * 0.001);
 const char* g_section = "(startup)";
 
 #define CHECK(cond) \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
-#define FAIL(fmt, ...) \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...) \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
 // Build default engine params.
 MarsDSP::ChronosEngine::Params makeParams(int adaaOrder)
@@ -66,8 +68,8 @@ void testBypassNull(int adaaOrder)
             for (int s = 0; s < kBlockSize; ++s)
                 out[static_cast<std::size_t>(b * kBlockSize + s)] =
                     in[static_cast<std::size_t>(b * kBlockSize + s)];
-            float* io[2] = { out.data() + b * kBlockSize, out.data() + b * kBlockSize };
-            engine.process(io, 2, kBlockSize);
+            std::array<float*, 2> io{ out.data() + b * kBlockSize, out.data() + b * kBlockSize };
+            engine.process(io.data(), 2, kBlockSize);
         }
     }
 
@@ -82,15 +84,15 @@ void testBypassNull(int adaaOrder)
         const double e = std::fabs(static_cast<double>(got) - static_cast<double>(exp));
         if (e > maxErr) maxErr = e;
         if (e > 2.0 * static_cast<double>(lsb))
-            FAIL("bypass null mode=%d i=%d: got=%g exp=%g (input delayed by %d), err=%.3e > 2*lsb=%.3e",
-                 adaaOrder, i, (double)got, (double)exp, kBudget, e, 2.0 * static_cast<double>(lsb));
+            FAIL("bypass null mode={} i={}: got={} exp={} (input delayed by {}), err={:.3} > 2*lsb={:.3}",
+                 adaaOrder, i, static_cast<double>(got), static_cast<double>(exp), kBudget, e, 2.0 * static_cast<double>(lsb));
     }
-    std::printf("  mode=%d bypass null (after %d samples): max|out - in[%d]| = %.3e (2*lsb=%.3e): PASS\n",
+    std::println("  mode={} bypass null (after {} samples): max|out - in[{}]| = {:.3} (2*lsb={:.3}): PASS",
                 adaaOrder, settle, kBudget, maxErr, 2.0 * static_cast<double>(lsb));
     (void)adaaOrder;
 }
 
-// ── Test 2: no click across bypass toggle ──────────────────────────────────
+// Test 2: no click across bypass toggle
 void testToggleClick()
 {
     g_section = "toggle click";
@@ -119,8 +121,8 @@ void testToggleClick()
         for (int s = 0; s < kBlockSize; ++s)
             out[static_cast<std::size_t>(b * kBlockSize + s)] =
                 in[static_cast<std::size_t>(b * kBlockSize + s)];
-        float* io[2] = { out.data() + b * kBlockSize, out.data() + b * kBlockSize };
-        engine.process(io, 2, kBlockSize);
+        std::array<float*, 2> io{ out.data() + b * kBlockSize, out.data() + b * kBlockSize };
+        engine.process(io.data(), 2, kBlockSize);
     }
 
     double maxStep = 0.0;
@@ -131,21 +133,21 @@ void testToggleClick()
     }
 
     CHECK(maxStep < 1.0);
-    std::printf("  toggle click (2 toggles, max sample step = %.4f < 1.0): PASS\n", maxStep);
+    std::println("  toggle click (2 toggles, max sample step = {:.4} < 1.0): PASS", maxStep);
 }
 
 } // namespace
 
 int main()
 {
-    std::printf("=== Chronos bypass_null_check (S5) ===\n");
-    std::printf("fs=%.0f  kBudget=%d  fade=%d ms (%d samples)\n\n", kFs, kBudget, kFadeMs, kFadeSamples);
+    std::println("=== Chronos bypass_null_check (S5) ===");
+    std::println("fs={:.0}  kBudget={}  fade={} ms ({} samples)\n", kFs, kBudget, kFadeMs, kFadeSamples);
 
     for (int mode = 0; mode <= 2; ++mode)
         testBypassNull(mode);
 
     testToggleClick();
 
-    std::printf("\n=== ALL PROPERTIES HELD ===\n");
+    std::println("\n=== ALL PROPERTIES HELD ===");
     return 0;
 }

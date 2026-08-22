@@ -10,15 +10,17 @@
 //   8. No noise modulation (the defining TPDF property)
 //
 // Tests 3, 4, 7, 9 are TODO (moments, whiteness, zero-state guard,
-// unbiasedness) — lower priority, can be added incrementally.
+// unbiasedness) - lower priority, can be added incrementally.
 
 #include "dsp/ChronosEngine.h"
 #include "simd/Config.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <print>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
@@ -27,8 +29,8 @@ namespace {
 
 const char* g_section = "(startup)";
 
-#define FAIL(fmt, ...) \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...) \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
 // Scalar xorshift32 (reference)
 float scalarNextUniform(std::uint32_t& s) noexcept
@@ -56,7 +58,7 @@ float simdRound(float x) noexcept
 
 int main()
 {
-    std::printf("=== Chronos dither_check (V2) ===\n\n");
+    std::println("=== Chronos dither_check (V2) ===\n");
 
     // 1. Quantizer bit-exactness (dither disabled)
     g_section = "quantizer bit-exactness";
@@ -74,8 +76,8 @@ int main()
             {
                 ++mismatches;
                 if (mismatches <= 5)
-                    std::printf("  mismatch: x=%g std::round=%g simd=%g\n",
-                                (double)x, (double)sr, (double)mr);
+                    std::println("  mismatch: x={} std::round={} simd={}",
+                                static_cast<double>(x), static_cast<double>(sr), static_cast<double>(mr));
             }
         }
         // Also test exact ties: k*lsb + lsb/2
@@ -89,13 +91,13 @@ int main()
             {
                 ++mismatches;
                 if (mismatches <= 10)
-                    std::printf("  tie mismatch: x=%g std::round=%g simd=%g\n",
-                                (double)x, (double)sr, (double)mr);
+                    std::println("  tie mismatch: x={} std::round={} simd={}",
+                                static_cast<double>(x), static_cast<double>(sr), static_cast<double>(mr));
             }
         }
         if (mismatches > 0)
-            FAIL("quantizer: %d mismatches (std::round vs SIMD rounding)", mismatches);
-        std::printf("quantizer bit-exactness (1e6 random + 2001 ties): PASS\n");
+            FAIL("quantizer: {} mismatches (std::round vs SIMD rounding)", mismatches);
+        std::println("quantizer bit-exactness (1e6 random + 2001 ties): PASS");
     }
 
     // 2. TPDF distribution: histogram of (u1-u2) over 1e7 draws
@@ -104,7 +106,7 @@ int main()
         constexpr int kN = 1000000;  // reduced for speed
         constexpr int kBins = 200;
         std::uint32_t rng = 42u;
-        int hist[kBins] = {};
+        std::array<int, kBins> hist = {{  }};
         for (int i = 0; i < kN; ++i)
         {
             const float u1 = scalarNextUniform(rng);
@@ -120,14 +122,14 @@ int main()
         const int edgeL = hist[0];
         const int edgeR = hist[kBins - 1];
         if (peak <= edgeL || peak <= edgeR)
-            FAIL("TPDF: peak=%d <= edge L=%d R=%d (not triangular)", peak, edgeL, edgeR);
+            FAIL("TPDF: peak={} <= edge L={} R={} (not triangular)", peak, edgeL, edgeR);
         // Check monotonic decrease from center
         for (int b = center; b < kBins - 5; ++b)
         {
             if (hist[b] < hist[b + 5] * 0.8f)
-                FAIL("TPDF: not monotonic at bin %d: %d < %d*0.8", b, hist[b], hist[b + 5]);
+                FAIL("TPDF: not monotonic at bin {}: {} < {}*0.8", b, hist[b], hist[b + 5]);
         }
-        std::printf("TPDF distribution (1e6 draws, 200 bins, triangular): PASS\n");
+        std::println("TPDF distribution (1e6 draws, 200 bins, triangular): PASS");
     }
 
     // 5. Cross-lane independence: 4 lanes of SIMD xorshift
@@ -168,13 +170,16 @@ int main()
         {
             const int n = std::min(kBlock, kN - off);
             engine.setParams(p);
-            float* io[2] = { outL.data() + off, outR.data() + off };
-            engine.process(io, 2, n);
+            std::array<float*, 2> io{ outL.data() + off, outR.data() + off };
+            engine.process(io.data(), 2, n);
         }
 
         // Cross-channel correlation
-        double sumLR = 0.0, sumL = 0.0, sumR = 0.0;
-        double sumL2 = 0.0, sumR2 = 0.0;
+        double sumLR = 0.0;
+        double sumL = 0.0;
+        double sumR = 0.0;
+        double sumL2 = 0.0;
+        double sumR2 = 0.0;
         for (int i = 0; i < kN; ++i)
         {
             const double l = outL[static_cast<std::size_t>(i)];
@@ -192,21 +197,21 @@ int main()
         const double varR = sumR2 / kN - meanR * meanR;
         const double corr = cov / std::sqrt(varL * varR);
         if (std::fabs(corr) > 2e-3)
-            FAIL("cross-channel correlation = %.3e > 2e-3", corr);
-        std::printf("cross-channel independence (corr = %.3e < 2e-3): PASS\n", corr);
+            FAIL("cross-channel correlation = {:.3} > 2e-3", corr);
+        std::println("cross-channel independence (corr = {:.3} < 2e-3): PASS", corr);
     }
 
     // 8. No noise modulation: variance of quant error is input-independent
     g_section = "no noise modulation";
     {
         // Use scalar path for this test (the property holds for any TPDF
-        // dither regardless of SIMD vs scalar — the distribution matters).
+        // dither regardless of SIMD vs scalar - the distribution matters).
         constexpr int kSteps = 64;
         constexpr int kN = 500000;
         const float lsb = std::ldexp(1.0f, 1 - 24);
         std::uint32_t rng = 98765u;
 
-        double variances[kSteps];
+        std::array<double, kSteps> variances{};
         for (int step = 0; step < kSteps; ++step)
         {
             const float dc = lsb * static_cast<float>(step) / static_cast<float>(kSteps);
@@ -236,7 +241,8 @@ int main()
         }
 
         // Check spread < 1%
-        double minVar = variances[0], maxVar = variances[0];
+        double minVar = variances[0];
+        double maxVar = variances[0];
         for (int i = 1; i < kSteps; ++i)
         {
             minVar = std::min(minVar, variances[i]);
@@ -244,9 +250,9 @@ int main()
         }
         const double spread = (maxVar - minVar) / maxVar;
         if (spread > 0.01)
-            FAIL("noise modulation: variance spread = %.4f > 1%% (min=%.3e max=%.3e)",
+            FAIL("noise modulation: variance spread = {:.4} > 1% (min={:.3} max={:.3})",
                  spread, minVar, maxVar);
-        std::printf("no noise modulation (64 DC steps, variance spread = %.4f < 1%%): PASS\n",
+        std::println("no noise modulation (64 DC steps, variance spread = {:.4} < 1%): PASS",
                     spread);
     }
 
@@ -280,8 +286,8 @@ int main()
         {
             const int n = std::min(kBlock, kN - off);
             engine.setParams(p);
-            float* io[2] = { outL.data() + off, outR.data() + off };
-            engine.process(io, 2, n);
+            std::array<float*, 2> io{ outL.data() + off, outR.data() + off };
+            engine.process(io.data(), 2, n);
         }
 
         // The output is pure delay tail of a zero input: silence.
@@ -292,10 +298,10 @@ int main()
             maxAbs = std::max(maxAbs, std::fabs(static_cast<double>(outR[static_cast<std::size_t>(i)])));
         }
         if (maxAbs > 0.0)
-            FAIL("bits==32: max abs output = %.3e > 0 (quantiser bypass adds noise)", maxAbs);
-        std::printf("bits==32 no-noise (max abs = 0): PASS\n");
+            FAIL("bits==32: max abs output = {:.3} > 0 (quantiser bypass adds noise)", maxAbs);
+        std::println("bits==32 no-noise (max abs = 0): PASS");
     }
 
-    std::printf("\n=== ALL PROPERTIES HELD ===\n");
+    std::println("\n=== ALL PROPERTIES HELD ===");
     return 0;
 }

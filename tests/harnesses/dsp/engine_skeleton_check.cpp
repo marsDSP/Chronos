@@ -1,17 +1,16 @@
 // tests/harnesses/dsp/engine_skeleton_check.cpp
-// ──────────────────────────────────────────────────────────────────────────
 // skeleton check for MarsDSP::ChronosEngine. Verifies the header compiles
 // (JUCE-free, links SharedCode only), the interface matches the plan, and
 // prepare/reset/setParams work without crashing. Does NOT call process().
 //
 // Conventions (matching latency_null_check): plain main(), exit code, printf,
 // always-live CHECK/FAIL. Links SharedCode only; no JUCE.
-// ──────────────────────────────────────────────────────────────────────────
 
 #include "dsp/ChronosEngine.h"
 #include "dsp/align/SaturatorAlign.h"
 
 #include <cstdio>
+#include <print>
 #include <cstdlib>
 
 namespace {
@@ -19,10 +18,10 @@ namespace {
 const char* g_section = "(startup)";
 
 #define CHECK(cond) \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
-#define FAIL(fmt, ...) \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...) \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
 } // namespace
 
@@ -31,18 +30,18 @@ int main()
     using MarsDSP::ChronosEngine;
     using MarsDSP::Delays::Interpolation;
 
-    std::printf("=== Chronos ChronosEngine skeleton check (S2) ===\n\n");
+    std::println("=== Chronos ChronosEngine skeleton check (S2) ===\n");
 
-    // ── 1. latencySamples is compile-time kBudget ──────────────────────
+    // 1. latencySamples is compile-time kBudget
     g_section = "latencySamples";
     {
         constexpr int kBudget = MarsDSP::Align::SaturatorAlign::kBudget;
         static_assert(ChronosEngine::latencySamples() == kBudget,
                       "latencySamples must be kBudget at compile time");
-        std::printf("latencySamples() = %d (== kBudget): PASS\n", ChronosEngine::latencySamples());
+        std::println("latencySamples() = {} (== kBudget): PASS", ChronosEngine::latencySamples());
     }
 
-    // ── 2. prepare/reset/setParams ──────────────────────────────────────
+    // 2. prepare/reset/setParams
     g_section = "prepare/reset/setParams";
     {
         ChronosEngine engine;
@@ -74,10 +73,10 @@ int main()
         CHECK(engine.getWetBufCapacity() == 256);
         engine.setParams(p);
 
-        std::printf("prepare/reset/setParams (stereo + mono, no crash): PASS\n");
+        std::println("prepare/reset/setParams (stereo + mono, no crash): PASS");
     }
 
-    // ── 3. Default-constructed engine is safe to destroy ────────────────
+    // 3. Default-constructed engine is safe to destroy
     g_section = "default-constructed";
     {
         // ChronosEngine has members with non-trivial destructors (vectors,
@@ -87,10 +86,10 @@ int main()
         {
             ChronosEngine engine;
         }
-        std::printf("default-constructed engine destroys cleanly: PASS\n");
+        std::println("default-constructed engine destroys cleanly: PASS");
     }
 
-    // ── 4. Repeated prepare (realloc path) ──────────────────────────────
+    // 4. Repeated prepare (realloc path)
     g_section = "repeated prepare";
     {
         ChronosEngine engine;
@@ -99,9 +98,9 @@ int main()
         CHECK(engine.getWetBufCapacity() == 1024);
         engine.prepare(44100.0, 256, 2);   // different sample rate
         CHECK(engine.getWetBufCapacity() == 512);
-        std::printf("repeated prepare (realloc, different sr): PASS\n");
+        std::println("repeated prepare (realloc, different sr): PASS");
     }
 
-    std::printf("\n=== ALL PROPERTIES HELD ===\n");
+    std::println("\n=== ALL PROPERTIES HELD ===");
     return 0;
 }

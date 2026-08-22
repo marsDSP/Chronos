@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <print>
 #include <cstdlib>
 #include <vector>
 
@@ -29,10 +30,10 @@ constexpr int    kSkipSec  = 2;        // smoother ramp + delay fill-in
 const char* g_section = "(startup)";
 
 #define CHECK(cond) \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
-#define FAIL(fmt, ...) \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...) \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
 using MarsDSP::Delays::FeedbackDelay;
 
@@ -109,25 +110,25 @@ double measureRmsCents(float depthCents, float rateHz, double& maxAbsCents)
 
 int main()
 {
-    std::printf("=== Chronos delay_mod_check (OU depth calibration) ===\n");
-    std::printf("fs=%.0f  tone=%.0f Hz  run=%d s  skip=%d s\n\n",
+    std::println("=== Chronos delay_mod_check (OU depth calibration) ===");
+    std::println("fs={:.0}  tone={:.0} Hz  run={} s  skip={} s\n",
                 kFs, kToneHz, kRunSec, kSkipSec);
 
     g_section = "depth-50-cent-calibration";
     double maxAbs = 0.0;
     const double rms50 = measureRmsCents(50.0f, 1.0f, maxAbs);
-    std::printf("depth 50 cents @ 1 Hz: RMS deviation %.3f cents, max %.3f cents\n",
+    std::println("depth 50 cents @ 1 Hz: RMS deviation {:.3} cents, max {:.3} cents",
                 rms50, maxAbs);
     CHECK(rms50 >= 47.0 && rms50 <= 53.0);
 
     g_section = "depth-zero";
     double maxAbs0 = 0.0;
     const double rms0 = measureRmsCents(0.0f, 1.0f, maxAbs0);
-    std::printf("depth 0 cents:         RMS deviation %.6f cents, max %.6f cents\n",
+    std::println("depth 0 cents:         RMS deviation {:.6} cents, max {:.6} cents",
                 rms0, maxAbs0);
     CHECK(rms0 < 0.01);
     CHECK(maxAbs0 < 0.05);
 
-    std::printf("\n=== ALL PROPERTIES HELD ===\n");
+    std::println("\n=== ALL PROPERTIES HELD ===");
     return 0;
 }

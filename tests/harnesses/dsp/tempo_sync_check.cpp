@@ -10,8 +10,10 @@
 #include "utils/helpers/TempoSync.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
+#include <print>
 #include <cstdlib>
 #include <numbers>
 #include <vector>
@@ -21,10 +23,10 @@ namespace {
 const char* g_section = "(startup)";
 
 #define CHECK(cond)                                                            \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
-#define FAIL(fmt, ...)                                                         \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...)                                                         \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
 constexpr double kFs = 48000.0;
 constexpr int    kFsInt = 48000;
@@ -37,7 +39,7 @@ namespace TS = MarsDSP::Utils::Helpers::TempoSync;
 
 int main()
 {
-    std::printf("=== tempo_sync_check ===\n");
+    std::println("=== tempo_sync_check ===");
 
     // 1. Conversion checks at 120 BPM.
     g_section = "conversion";
@@ -47,20 +49,20 @@ int main()
 
         // 1/4 = index 11, expect 500.0 ms
         const double ms14 = TS::convertChoiceIndexToMilliseconds(11, kBpm);
-        std::printf("  1/4 at 120 BPM: %.3f ms (expect 500.0)\n", ms14);
+        std::println("  1/4 at 120 BPM: {:.3} ms (expect 500.0)", ms14);
         CHECK(std::abs(ms14 - 500.0) < kTol);
 
         // 1/8. = index 10, expect 375.0 ms
         const double ms18d = TS::convertChoiceIndexToMilliseconds(10, kBpm);
-        std::printf("  1/8. at 120 BPM: %.3f ms (expect 375.0)\n", ms18d);
+        std::println("  1/8. at 120 BPM: {:.3} ms (expect 375.0)", ms18d);
         CHECK(std::abs(ms18d - 375.0) < kTol);
 
         // 1/4T = index 9, expect 333.333 ms
         const double ms14T = TS::convertChoiceIndexToMilliseconds(9, kBpm);
-        std::printf("  1/4T at 120 BPM: %.3f ms (expect 333.333)\n", ms14T);
+        std::println("  1/4T at 120 BPM: {:.3} ms (expect 333.333)", ms14T);
         CHECK(std::abs(ms14T - 333.333) < kTol);
 
-        std::printf("conversion at 120 BPM: PASS\n");
+        std::println("conversion at 120 BPM: PASS");
     }
 
     // 2. BPM ramp from 90 to 140 over 5 s, no delta above 0.25.
@@ -111,7 +113,8 @@ int main()
         std::vector<float> bufL(static_cast<std::size_t>(kBlock));
         std::vector<float> bufR(static_cast<std::size_t>(kBlock));
 
-        float prevL = 0.0f, prevR = 0.0f;
+        float prevL = 0.0f;
+        float prevR = 0.0f;
         float maxDelta = 0.0f;
         int maxDeltaSample = -1;
         const double kTwoPi = 2.0 * std::numbers::pi_v<double>;
@@ -133,8 +136,8 @@ int main()
             }
 
             engine.setParams(p);
-            float* io[2] = { bufL.data(), bufR.data() };
-            engine.process(io, kChannels, n);
+            std::array<float*, 2> io{ bufL.data(), bufR.data() };
+            engine.process(io.data(), kChannels, n);
 
             for (int i = 0; i < n; ++i)
             {
@@ -145,16 +148,16 @@ int main()
                 if (dL > maxDelta) { maxDelta = dL; maxDeltaSample = pos + i; }
                 if (dR > maxDelta) { maxDelta = dR; maxDeltaSample = pos + i; }
                 if (dL > kMaxDelta || dR > kMaxDelta)
-                    FAIL("delta %.4f at sample %d", std::max(dL, dR), pos + i);
+                    FAIL("delta {:.4} at sample {}", std::max(dL, dR), pos + i);
                 prevL = oL;
                 prevR = oR;
             }
         }
 
-        std::printf("BPM ramp 90->140 over 5 s: max delta %.4f at sample %d: PASS\n",
+        std::println("BPM ramp 90->140 over 5 s: max delta {:.4} at sample {}: PASS",
                     maxDelta, maxDeltaSample);
     }
 
-    std::printf("=== tempo_sync_check OK ===\n");
+    std::println("=== tempo_sync_check OK ===");
     return 0;
 }

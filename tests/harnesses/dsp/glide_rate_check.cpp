@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <print>
 #include <cstdlib>
 #include <vector>
 
@@ -17,10 +18,10 @@ namespace {
 const char* g_section = "(startup)";
 
 #define CHECK(cond)                                                            \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
-#define FAIL(fmt, ...)                                                         \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...)                                                         \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
 constexpr double kFs = 48000.0;
 constexpr int    kFsInt = 48000;
@@ -78,7 +79,7 @@ void runGlide(float startMs, float endMs)
         const float velocity = std::abs(after - before) / static_cast<float>(kBlock);
         if (velocity > maxVelocity) { maxVelocity = velocity; maxVelocityBlock = pos; }
         if (velocity > kMaxStep + kVelocityTol)
-            FAIL("velocity %.6f samples/sample at pos %d exceeds %.3f", velocity, pos, kMaxStep);
+            FAIL("velocity {:.6} samples/sample at pos {} exceeds {:.3}", velocity, pos, kMaxStep);
 
         pos += kBlock;
         if (std::abs(after - target) <= kCompleteTol)
@@ -91,9 +92,9 @@ void runGlide(float startMs, float endMs)
 
     CHECK(completed);
     if (completeSeconds > kMaxCompleteSeconds)
-        FAIL("completed at %.3f s, exceeds %.1f s", completeSeconds, kMaxCompleteSeconds);
+        FAIL("completed at {:.3} s, exceeds {:.1} s", completeSeconds, kMaxCompleteSeconds);
 
-    std::printf("  %6.1f ms -> %6.1f ms: max velocity %.5f samples/sample at block %d, completed at %.3f s: PASS\n",
+    std::println("  {:6.1} ms -> {:6.1} ms: max velocity {:.5} samples/sample at block {}, completed at {:.3} s: PASS",
                 static_cast<double>(startMs), static_cast<double>(endMs),
                 static_cast<double>(maxVelocity), maxVelocityBlock / kBlock,
                 completeSeconds);
@@ -103,13 +104,13 @@ void runGlide(float startMs, float endMs)
 
 int main()
 {
-    std::printf("=== glide_rate_check ===\n");
-    std::printf("fs=%d block=%d max_step=%.1f samples/sample complete_within=%.0fs\n",
+    std::println("=== glide_rate_check ===");
+    std::println("fs={} block={} max_step={:.1} samples/sample complete_within={:.0}s",
                 kFsInt, kBlock, kMaxStep, kMaxCompleteSeconds);
 
     g_section = "100ms->4000ms";
     runGlide(100.0f, 4000.0f);
 
-    std::printf("=== glide_rate_check OK ===\n");
+    std::println("=== glide_rate_check OK ===");
     return 0;
 }

@@ -10,8 +10,10 @@
 #include "dsp/ChronosEngine.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
+#include <print>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -60,8 +62,8 @@ std::vector<float> runScenario(bool enableDiff, float diffusion, float size)
     for (int off = 0; off < total; off += kBlock)
     {
         const int n = std::min(kBlock, total - off);
-        float* io[1] = { buf.data() + off };
-        eng.process(io, 1, n);
+        std::array<float*, 1> io{ buf.data() + off };
+        eng.process(io.data(), 1, n);
     }
     return buf;
 }
@@ -82,29 +84,28 @@ void runFeedbackCsv(float diffusion, float size, bool enableDiff,
     for (int off = 0; off < total; off += kBlock)
     {
         const int n = std::min(kBlock, total - off);
-        float* io[1] = { buf.data() + off };
-        eng.process(io, 1, n);
+        std::array<float*, 1> io{ buf.data() + off };
+        eng.process(io.data(), 1, n);
     }
 
     FILE* f = std::fopen(path, "w");
-    if (f == nullptr) { std::printf("cannot open %s\n", path); return; }
-    for (float v : buf) std::fprintf(f, "%.9g\n", static_cast<double>(v));
+    if (f == nullptr) { std::println("cannot open {}", path); return; }
+    for (float v : buf) std::println(f, "{:.9}", static_cast<double>(v));
     std::fclose(f);
-    std::printf("wrote %s\n", path);
+    std::println("wrote {}", path);
 }
 
 void dumpSweep(const char* dir)
 {
-    char path[512];
-    std::snprintf(path, sizeof(path), "%s/ref_off.csv", dir);
-    runFeedbackCsv(0.0f, 0.5f, false, path);
+    const std::string refPath = std::string(dir) + "/ref_off.csv";
+    runFeedbackCsv(0.0f, 0.5f, false, refPath.c_str());
     for (float size : { 0.5f, 0.0f })
         for (float d : { 0.25f, 0.5f, 0.75f, 1.0f })
         {
-            std::snprintf(path, sizeof(path), "%s/d%03d_s%d.csv", dir,
-                          static_cast<int>(d * 100.0f + 0.5f),
-                          static_cast<int>(size * 10.0f + 0.5f));
-            runFeedbackCsv(d, size, true, path);
+            const std::string path = std::format("{}/d{:03d}_s{}.csv", dir,
+                                                 static_cast<int>(d * 100.0f + 0.5f),
+                                                 static_cast<int>(size * 10.0f + 0.5f));
+            runFeedbackCsv(d, size, true, path.c_str());
         }
 }
 
@@ -149,11 +150,12 @@ void analyze(float diffusion, float size, int refOnset)
 
     // envelope rise/fall around the peak: window where |x| >= 10% of peak
     const float env = peak * 0.1f;
-    int r0 = peakPos, r1 = peakPos;
+    int r0 = peakPos;
+    int r1 = peakPos;
     while (r0 > kSettle && std::fabs(out[static_cast<std::size_t>(r0)]) > env) --r0;
     while (r1 < kSettle + kCapture - 1 && std::fabs(out[static_cast<std::size_t>(r1)]) > env) ++r1;
 
-    std::printf("diff=%.2f size=%.1f | onset %+6d  p05 %+6d  p25 %+6d  p50 %+6d  p75 %+6d  p95 %+6d | peak %+6d (rise %4d fall %5d)  peakAmp %.3f\n",
+    std::println("diff={:.2} size={:.1} | onset {:6}  p05 {:6}  p25 {:6}  p50 {:6}  p75 {:6}  p95 {:6} | peak {:6} (rise {:4} fall {:5})  peakAmp {:.3}",
                 static_cast<double>(diffusion), static_cast<double>(size),
                 onset - refOnset, p05 - refOnset, p25 - refOnset, p50 - refOnset,
                 p75 - refOnset, p95 - refOnset,
@@ -176,7 +178,7 @@ int main(int argc, char** argv)
     int refOnset = -1;
     for (int n = kSettle; n < kSettle + kCapture; ++n)
         if (std::fabs(ref[static_cast<std::size_t>(n)]) > 1e-4f) { refOnset = n; break; }
-    std::printf("reference onset (diffuser off): %d  (all columns relative to this, samples @48k; 48 = 1 ms)\n\n", refOnset);
+    std::println("reference onset (diffuser off): {}  (all columns relative to this, samples @48k; 48 = 1 ms)\n", refOnset);
 
     for (float size : { 0.5f, 0.0f })
         for (float d : { 0.1f, 0.25f, 0.4f, 0.55f, 0.7f, 0.85f, 1.0f })

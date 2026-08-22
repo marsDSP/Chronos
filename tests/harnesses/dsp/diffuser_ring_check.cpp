@@ -19,6 +19,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <print>
 #include <cstdlib>
 #include <vector>
 
@@ -37,10 +38,10 @@ namespace
     const char *g_section = "(startup)";
 
 #define CHECK(cond) \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
-#define FAIL(fmt, ...) \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...) \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
     using D = MarsDSP::Diffusion::Diffuser;
 
@@ -163,8 +164,8 @@ namespace
 
 int main()
 {
-    std::printf("=== Chronos diffuser_ring_check (S20: coefficient taper) ===\n");
-    std::printf("fs=%.0f  size=1.0  baseline g=%.2f (untapered)  tapered g=%.2f\n\n",
+    std::println("=== Chronos diffuser_ring_check (S20: coefficient taper) ===");
+    std::println("fs={:.0}  size=1.0  baseline g={:.2} (untapered)  tapered g={:.2}\n",
                 kFs, static_cast<double>(kBaselineCoef), static_cast<double>(kTaperedCoef));
 
     const float size = 1.0f;
@@ -185,7 +186,7 @@ int main()
     const double transport = static_cast<double>(d.baseTransportSamples(size));
     const int w0 = static_cast<int>(4.0 * transport);
     const int w1 = kTotal;
-    std::printf("transport=%.0f samples (%.1f ms); late window [%d, %d)\n\n",
+    std::println("transport={:.0} samples ({:.1} ms); late window [{}, {})\n",
                 transport, transport / kFs * 1000.0, w0, w1);
 
     const double dbBase = windowRmsDb(baseIr, w0, w1);
@@ -194,17 +195,17 @@ int main()
 
     const int lastBase = lastAboveMinus60(baseIr);
     const int lastTap = lastAboveMinus60(tapIr);
-    std::printf("late-tail RMS:  baseline(0.92 untapered) = %8.2f dBFS\n", dbBase);
-    std::printf("                tapered(0.78)            = %8.2f dBFS\n", dbTap);
-    std::printf("                delta                    = %8.2f dB\n\n", delta);
-    std::printf("-60 dBFS decay:  baseline last sample = %d (%.1f ms)\n",
+    std::println("late-tail RMS:  baseline(0.92 untapered) = {:8.2} dBFS", dbBase);
+    std::println("                tapered(0.78)            = {:8.2} dBFS", dbTap);
+    std::println("                delta                    = {:8.2} dB\n", delta);
+    std::println("-60 dBFS decay:  baseline last sample = {} ({:.1} ms)",
                 lastBase, lastBase < 0 ? 0.0 : static_cast<double>(lastBase) / kFs * 1000.0);
-    std::printf("                 tapered  last sample = %d (%.1f ms)\n",
+    std::println("                 tapered  last sample = {} ({:.1} ms)",
                 lastTap, lastTap < 0 ? 0.0 : static_cast<double>(lastTap) / kFs * 1000.0);
 
     CHECK(lastTap <= lastBase);
 
-    std::printf("\ntapered 0.78 rings at least 6 dB shorter than untapered 0.92: PASS\n");
-    std::printf("\n=== ALL PROPERTIES HELD ===\n");
+    std::println("\ntapered 0.78 rings at least 6 dB shorter than untapered 0.92: PASS");
+    std::println("\n=== ALL PROPERTIES HELD ===");
     return 0;
 }

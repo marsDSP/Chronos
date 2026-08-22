@@ -20,9 +20,9 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <format>
 #include <fstream>
 #include <string>
 #include <string_view>
@@ -49,12 +49,12 @@ constexpr double kMinus30Amp = 0.031622776601683791; // 10^(-30/20)
 const char* g_section = "(startup)";
 
 #define CHECK(cond)                                                            \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
-#define FAIL(fmt, ...)                                                         \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...)                                                         \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
-// ── FNV-1a 64 ───────────────────────────────────────────────────────────
+// FNV-1a 64
 struct Fnv1a64
 {
     static constexpr std::uint64_t kOffset = 0xcbf29ce484222325ull;
@@ -71,7 +71,7 @@ struct Fnv1a64
     }
 };
 
-// ── xorshift32 for the burst input ───────────────────────────────────────
+// xorshift32 for the burst input
 struct Xorshift32
 {
     std::uint32_t s;
@@ -90,10 +90,12 @@ struct Xorshift32
     }
 };
 
-// ── Pink noise: Paul Kellet economical filter ────────────────────────────
+// Pink noise: Paul Kellet economical filter
 struct PinkKellet
 {
-    float b0 = 0.0f, b1 = 0.0f, b2 = 0.0f;
+    float b0 = 0.0f;
+    float b1 = 0.0f;
+    float b2 = 0.0f;
     float process(float white) noexcept
     {
         b0 = 0.99765f * b0 + white * 0.0990460f;
@@ -103,7 +105,7 @@ struct PinkKellet
     }
 };
 
-// ── Fixed inputs ─────────────────────────────────────────────────────────
+// Fixed inputs
 struct StereoBuffer
 {
     std::vector<float> L, R;
@@ -161,7 +163,7 @@ StereoBuffer makeBurst()
     return b;
 }
 
-// ── Configurations ───────────────────────────────────────────────────────
+// Configurations
 // Columns: delayMs, feedback, dampHz, crossFeed, loopDriveDb,
 // loopSatOrder, driveDb, adaaOrder, mixPercent, enableDiffuser,
 // diffusion, diffuserSize, diffModDepthMs, diffModRateHz,
@@ -262,9 +264,9 @@ RenderResult render(MarsDSP::ChronosEngine& engine,
     while (pos < kRenderSamples)
     {
         const int n = std::min(kBlock, kRenderSamples - pos);
-        float* io[2] = { outL.data() + pos, outR.data() + pos };
+        std::array<float*, 2> io{ outL.data() + pos, outR.data() + pos };
         engine.setParams(p);
-        engine.process(io, kChannels, n);
+        engine.process(io.data(), kChannels, n);
         pos += n;
     }
 
@@ -287,7 +289,7 @@ RenderResult render(MarsDSP::ChronosEngine& engine,
         sumSq += aL * aL + aR * aR;
         if (aMax >= kMinus30Amp) lastAbove = s;
         if (!std::isfinite(vL) || !std::isfinite(vR))
-            FAIL("non-finite output at sample %d (L=%g R=%g)", s, (double)vL, (double)vR);
+            FAIL("non-finite output at sample {} (L={} R={})", s, static_cast<double>(vL), static_cast<double>(vR));
     }
     r.hash = h.h;
     r.peakDb = (maxAbs > 0.0) ? 20.0 * std::log10(maxAbs) : -999.0;
@@ -297,7 +299,7 @@ RenderResult render(MarsDSP::ChronosEngine& engine,
     return r;
 }
 
-// ── File IO ──────────────────────────────────────────────────────────────
+// File IO
 const char* kInputNames[] = { "imp", "sweep", "burst" };
 constexpr int kNumInputs = 3;
 
@@ -306,25 +308,23 @@ std::string hashesPath() { return goldenDir() + "/hashes.txt"; }
 
 std::string formatLine(int configId, const char* inputName, const RenderResult& r)
 {
-    char buf[192];
-    std::snprintf(buf, sizeof(buf), "%d,%s,0x%016llx,%.3f,%.3f,%.3f",
-                  configId, inputName,
-                  static_cast<unsigned long long>(r.hash),
-                  r.peakDb, r.rmsDb, r.decayMs);
-    return std::string(buf);
+    return std::format("{},{},0x{:016x},{:.3f},{:.3f},{:.3f}",
+                       configId, inputName,
+                       static_cast<unsigned long long>(r.hash),
+                       r.peakDb, r.rmsDb, r.decayMs);
 }
 
 void writeHashes(const std::vector<std::string>& lines)
 {
     std::ofstream f(hashesPath(), std::ios::out | std::ios::trunc);
-    if (!f) FAIL("cannot open %s for write", hashesPath().c_str());
+    if (!f) FAIL("cannot open {} for write", hashesPath().c_str());
     f << "# Chronos golden render hashes (FNV-1a 64 over interleaved stereo float output)\n";
     f << "# fs=48000 block=512 stereo bits=32 gain=0dB dither=0x12345678/0x9abcdef0\n";
     f << "# columns: config,input,hash,peakDbFs,rmsDbFs,decayToMinus30Ms\n";
     for (const auto& line : lines)
         f << line << "\n";
     f.flush();
-    if (!f) FAIL("write failed for %s", hashesPath().c_str());
+    if (!f) FAIL("write failed for {}", hashesPath().c_str());
 }
 
 // Parse hashes.txt into a map keyed by "config,input" -> hash string.
@@ -332,14 +332,16 @@ std::unordered_map<std::string, std::string> loadHashes()
 {
     std::unordered_map<std::string, std::string> map;
     std::ifstream f(hashesPath());
-    if (!f) FAIL("cannot open %s (run with --regen to generate it)", hashesPath().c_str());
+    if (!f) FAIL("cannot open {} (run with --regen to generate it)", hashesPath().c_str());
     std::string line;
     while (std::getline(f, line))
     {
         if (line.empty()) continue;
         if (line[0] == '#') continue;
         // split on first three commas: config,input,hash,...
-        int a = -1, b = -1, c = -1;
+        int a = -1;
+        int b = -1;
+        int c = -1;
         for (int i = 0, hits = 0; i < static_cast<int>(line.size()) && hits < 3; ++i)
         {
             if (line[static_cast<std::size_t>(i)] == ',')
@@ -350,7 +352,7 @@ std::unordered_map<std::string, std::string> loadHashes()
                 ++hits;
             }
         }
-        if (a < 0 || b < 0 || c < 0) FAIL("malformed line: %s", line.c_str());
+        if (a < 0 || b < 0 || c < 0) FAIL("malformed line: {}", line.c_str());
         const std::string key = line.substr(0, static_cast<std::size_t>(b));
         const std::string hash = line.substr(static_cast<std::size_t>(b + 1),
                                              static_cast<std::size_t>(c - b - 1));
@@ -367,10 +369,10 @@ int main(int argc, char** argv)
     for (int i = 1; i < argc; ++i)
         if (std::string_view(argv[i]) == "--regen") regen = true;
 
-    std::printf("=== Chronos golden render harness ===\n");
-    std::printf("fs=%.0f block=%d stereo samples=%d  dither=0x%08x/0x%08x\n",
+    std::println("=== Chronos golden render harness ===");
+    std::println("fs={:.0} block={} stereo samples={}  dither=0x{:08x}/0x{:08x}",
                 kFs, kBlock, kRenderSamples, kDitherL, kDitherR);
-    std::printf("hashes: %s  mode: %s\n\n", hashesPath().c_str(), regen ? "regen" : "compare");
+    std::println("hashes: {}  mode: {}\n", hashesPath().c_str(), regen ? "regen" : "compare");
 
     // Build the three fixed inputs once.
     g_section = "input generation";
@@ -394,7 +396,7 @@ int main(int argc, char** argv)
         {
             g_section = "render";
             const RenderResult r = render(engine, p, inputs[static_cast<std::size_t>(inIdx)]);
-            std::printf("%2d %-6s 0x%016llx  peak %8.3f  rms %8.3f  decay %9.3f\n",
+            std::println("{:2} {:<6} 0x{:016x}  peak {:8.3}  rms {:8.3}  decay {:9.3}",
                         cfg.id, kInputNames[inIdx],
                         static_cast<unsigned long long>(r.hash),
                         r.peakDb, r.rmsDb, r.decayMs);
@@ -406,8 +408,8 @@ int main(int argc, char** argv)
     {
         g_section = "regen";
         writeHashes(outLines);
-        std::printf("\nWrote %zu lines to %s\n", outLines.size(), hashesPath().c_str());
-        std::printf("=== REGEN OK ===\n");
+        std::println("\nWrote {} lines to {}", outLines.size(), hashesPath().c_str());
+        std::println("=== REGEN OK ===");
         return 0;
     }
 
@@ -420,33 +422,33 @@ int main(int argc, char** argv)
         int b = -1;
         for (int i = 0, hits = 0; i < static_cast<int>(line.size()) && hits < 2; ++i)
             if (line[static_cast<std::size_t>(i)] == ',') { if (hits == 1) { b = i; break; } ++hits; }
-        if (b < 0) FAIL("internal: bad line %s", line.c_str());
+        if (b < 0) FAIL("internal: bad line {}", line.c_str());
         const std::string key = line.substr(0, static_cast<std::size_t>(b));
         // hash field: between b+1 and the next comma
         int c = -1;
         for (int i = b + 1; i < static_cast<int>(line.size()); ++i)
             if (line[static_cast<std::size_t>(i)] == ',') { c = i; break; }
-        if (c < 0) FAIL("internal: bad line %s", line.c_str());
+        if (c < 0) FAIL("internal: bad line {}", line.c_str());
         const std::string actualHash = line.substr(static_cast<std::size_t>(b + 1),
                                                    static_cast<std::size_t>(c - b - 1));
         auto it = expected.find(key);
         if (it == expected.end())
         {
-            std::printf("MISMATCH %s : no stored hash\n", key.c_str());
+            std::println("MISMATCH {} : no stored hash", key.c_str());
             ++mismatches;
         }
         else if (it->second != actualHash)
         {
-            std::printf("MISMATCH %s : stored %s != actual %s\n", key.c_str(), it->second.c_str(), actualHash.c_str());
+            std::println("MISMATCH {} : stored {} != actual {}", key.c_str(), it->second.c_str(), actualHash.c_str());
             ++mismatches;
         }
     }
 
     if (mismatches > 0)
-        FAIL("%d hash mismatch(es); run with --regen if the change is intended", mismatches);
+        FAIL("{} hash mismatch(es); run with --regen if the change is intended", mismatches);
 
-    std::printf("\n%d configs x %d inputs = %zu hashes, all match.\n",
+    std::println("\n{} configs x {} inputs = {} hashes, all match.",
                 static_cast<int>(configs().size()), kNumInputs, outLines.size());
-    std::printf("=== ALL GOLDEN HASHES MATCH ===\n");
+    std::println("=== ALL GOLDEN HASHES MATCH ===");
     return 0;
 }

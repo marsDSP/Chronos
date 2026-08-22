@@ -1,5 +1,4 @@
 // tests/harnesses/cd/f2_minimax_check.cpp
-// ──────────────────────────────────────────────────────────────────────────
 // Correctness harness for MarsDSP::Math::f1Tanh / f2Tanh, the regional
 // minimax kernels for the tanh antiderivatives.
 //
@@ -72,7 +71,6 @@
 // printf, exit code, always-live CHECK/FAIL (NOT assert). Links SharedCode
 // only; no JUCE. No forced -O2 so the header assert preconditions stay
 // armed in a Debug configure.
-// ──────────────────────────────────────────────────────────────────────────
 
 #include "math/TanhAntiderivatives.h"
 
@@ -80,6 +78,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <print>
 #include <cstdlib>
 #include <cstring>
 
@@ -101,10 +100,10 @@ using namespace F2Oracle;
 const char* g_section = "(startup)";
 
 #define CHECK(cond) \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
-#define FAIL(fmt, ...) \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...) \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
 constexpr double kUlp = 2.220446049250313e-16;   // 2^-52, the relative ulp
 
@@ -135,30 +134,32 @@ double f2RegionIII(double a)
     return std::fma(0.5 * h, h, kTanC2);
 }
 
-// ── 1. Oracle agreement ──────────────────────────────────────────────────
+// 1. Oracle agreement
 void sectionOracleAgreement()
 {
     g_section = "oracle agreement";
-    double worst = 0.0, worstX = 0.0;
+    double worst = 0.0;
+    double worstX = 0.0;
     for (int i = 0; i < gAgree; ++i)
     {
         const double x = 1e-12 * std::pow(1e15, static_cast<double>(i) / (gAgree - 1));
         const double r = ddRelDiff(f2DD(x), quadDD(x));
         if (r > worst) { worst = r; worstX = x; }
     }
-    std::printf("closed form vs quadrature, %d points: max rel diff = %.3e at x = %.4e (gate 1e-25)\n",
+    std::println("closed form vs quadrature, {} points: max rel diff = {:.3} at x = {:.4} (gate 1e-25)",
                 gAgree, worst, worstX);
     CHECK(worst < 1e-25);
-    std::printf("oracle agreement (1e-25): PASS\n");
+    std::println("oracle agreement (1e-25): PASS");
 }
 
-// ── 2/3. Relative error sweeps ───────────────────────────────────────────
+// 2/3. Relative error sweeps
 void sectionRelErr(bool f1)
 {
     g_section = f1 ? "relative error F1" : "relative error F2";
-    double worst = 0.0, worstX = 0.0;
-    double regWorst[3] = { 0.0, 0.0, 0.0 };
-    double regX[3] = { 0.0, 0.0, 0.0 };
+    double worst = 0.0;
+    double worstX = 0.0;
+    std::array<double, 3> regWorst = {{ 0.0, 0.0, 0.0 }};
+    std::array<double, 3> regX = {{ 0.0, 0.0, 0.0 }};
     for (int i = 0; i < gPoints; ++i)
     {
         const double x = 1e-12 * std::pow(1e15, static_cast<double>(i) / (gPoints - 1));
@@ -169,22 +170,25 @@ void sectionRelErr(bool f1)
         const int reg = x <= kTanA0 ? 0 : (x < kTanA1 ? 1 : 2);
         if (rel > regWorst[reg]) { regWorst[reg] = rel; regX[reg] = x; }
     }
-    const char* names[3] = { "I [1e-12, 1]", "II (1, 19)", "III [19, 1000]" };
+    std::array<const char*, 3> names = {{ "I [1e-12, 1]", "II (1, 19)", "III [19, 1000]" }};
     for (int r = 0; r < 3; ++r)
-        std::printf("    region %-16s max rel err = %.3e = %.3f ulp at x = %.6e\n",
+        std::println("    region {:<16} max rel err = {:.3} = {:.3} ulp at x = {:.6}",
                     names[r], regWorst[r], ulpOf(regWorst[r]), regX[r]);
     const double gate = f1 ? 2.0 : 3.0;
-    std::printf("%s: max rel err %.3f ulp at x = %.6e (gate <= %.1f ulp): %s\n",
+    std::println("{}: max rel err {:.3} ulp at x = {:.6} (gate <= {:.1} ulp): {}",
                 f1 ? "F1" : "F2", ulpOf(worst), worstX, gate,
                 ulpOf(worst) <= gate ? "PASS" : "FAIL");
     CHECK(ulpOf(worst) <= gate);
 }
 
-// ── 4. Near-zero relative accuracy ───────────────────────────────────────
+// 4. Near-zero relative accuracy
 void sectionNearZero()
 {
     g_section = "near zero";
-    double worst = 0.0, worstX = 0.0, worstRef = 0.0, worstRefX = 0.0;
+    double worst = 0.0;
+    double worstX = 0.0;
+    double worstRef = 0.0;
+    double worstRefX = 0.0;
     const int n = gPoints < 10000 ? 10000 : gPoints / 10;
     for (int i = 0; i < n; ++i)
     {
@@ -195,15 +199,15 @@ void sectionNearZero()
         const double relOld = std::fabs(MarsDSP::Math::Ref::f2TanhRef(x) - ref) / std::fabs(ref);
         if (relOld > worstRef) { worstRef = relOld; worstRefX = x; }
     }
-    std::printf("    new kernel: max rel err = %.3e = %.3f ulp at x = %.4e (gate <= 3 ulp)\n",
+    std::println("    new kernel: max rel err = {:.3} = {:.3} ulp at x = {:.4} (gate <= 3 ulp)",
                 worst, ulpOf(worst), worstX);
-    std::printf("    dilog era : max rel err = %.3e at x = %.4e (unbounded, for the record)\n",
+    std::println("    dilog era : max rel err = {:.3} at x = {:.4} (unbounded, for the record)",
                 worstRef, worstRefX);
     CHECK(ulpOf(worst) <= 3.0);
-    std::printf("near-zero F2 relative accuracy (3 ulp, %d points in [1e-12, 1e-3]): PASS\n", n);
+    std::println("near-zero F2 relative accuracy (3 ulp, {} points in [1e-12, 1e-3]): PASS", n);
 }
 
-// ── 5/6. Seam continuity ─────────────────────────────────────────────────
+// 5/6. Seam continuity
 // The jump gate compares the two region expressions evaluated explicitly at
 // the seam. The slope check gates the central finite difference of F2
 // against F1 at the seam, with a bound that carries the FD truncation
@@ -214,13 +218,14 @@ void seamCheck(double seam, double f2I, double f2O, const char* tag)
 {
     const double jump = std::fabs(f2I - f2O);
     const double jumpUlp = jump / (std::fabs(f2I) * kUlp);
-    std::printf("    seam %s: |F2_left - F2_right| = %.3e = %.3f ulp (gate <= 1 ulp)\n",
+    std::println("    seam {}: |F2_left - F2_right| = {:.3} = {:.3} ulp (gate <= 1 ulp)",
                 tag, jump, jumpUlp);
     CHECK(jumpUlp <= 1.0);
 
     const double f1AtSeam = f1Tanh(seam);
     const double f2Mag = std::fabs(f2Tanh(seam));
-    double worstRel = 0.0, worstEps = 0.0;
+    double worstRel = 0.0;
+    double worstEps = 0.0;
     for (int i = 0; i < 30; ++i)
     {
         const double eps = 1e-12 * std::pow(1e11, static_cast<double>(i) / 29.0);
@@ -232,10 +237,10 @@ void seamCheck(double seam, double f2I, double f2O, const char* tag)
         const double rel = err / bound;
         if (rel > worstRel) { worstRel = rel; worstEps = eps; }
         if (err > bound)
-            FAIL("seam %s slope: eps=%.3e fd=%.17g F1=%.17g err=%.3e > bound=%.3e",
+            FAIL("seam {} slope: eps={:.3} fd={:.17} F1={:.17} err={:.3} > bound={:.3}",
                  tag, eps, fd, f1AtSeam, err, bound);
     }
-    std::printf("    seam %s slope: max err/bound = %.3f at eps = %.3e (gate <= 1): PASS\n",
+    std::println("    seam {} slope: max err/bound = {:.3} at eps = {:.3} (gate <= 1): PASS",
                 tag, worstRel, worstEps);
 }
 
@@ -247,14 +252,14 @@ void sectionSeams()
     seamCheck(kTanA1, f2RegionII(kTanA1), f2RegionIII(kTanA1), "a1");
 }
 
-// ── 7. Structural exactness ──────────────────────────────────────────────
+// 7. Structural exactness
 void sectionStructural()
 {
     g_section = "structural exactness";
 
     CHECK(f2Tanh(0.0) == 0.0);
     CHECK(f1Tanh(0.0) == 0.0);
-    std::printf("F2(0) == 0.0 and F1(0) == 0.0 exactly: PASS\n");
+    std::println("F2(0) == 0.0 and F1(0) == 0.0 exactly: PASS");
 
     // Parity over 1e6 points, log-spaced from the denormal range up, plus
     // ulp steps around both seams. For denormal x the F2 path returns a
@@ -268,10 +273,10 @@ void sectionStructural()
         const double x = std::pow(10.0, -310.0 + 313.0 * static_cast<double>(i) / 999999.0);
         if (x < 2.2250738585072014e-308) ++denormals;
         if (!(f2Tanh(-x) == -f2Tanh(x)))
-            FAIL("F2 parity broken at x = %.17e: %.17e vs %.17e",
+            FAIL("F2 parity broken at x = {:.17}: {:.17} vs {:.17}",
                  x, f2Tanh(-x), -f2Tanh(x));
         if (!(f1Tanh(-x) == f1Tanh(x)))
-            FAIL("F1 parity broken at x = %.17e: %.17e vs %.17e",
+            FAIL("F1 parity broken at x = {:.17}: {:.17} vs {:.17}",
                  x, f1Tanh(-x), f1Tanh(x));
     }
     const double seamPts[8] = {
@@ -289,11 +294,11 @@ void sectionStructural()
     const double dn = 1e-310;
     CHECK(f2Tanh(dn) == 0.0 && f2Tanh(-dn) == 0.0);
     CHECK(f1Tanh(dn) == 0.0 && f1Tanh(-dn) == 0.0);
-    std::printf("parity bit-exact over 1e6 points (%d denormals) + both seams: PASS\n",
+    std::println("parity bit-exact over 1e6 points ({} denormals) + both seams: PASS",
                 denormals);
 }
 
-// ── 8. Monotonicity ──────────────────────────────────────────────────────
+// 8. Monotonicity
 void sectionMonotonicity()
 {
     g_section = "monotonicity";
@@ -304,7 +309,7 @@ void sectionMonotonicity()
         const double x = 1000.0 * static_cast<double>(i) / n;
         const double v = f1Tanh(x);
         if (!(v >= prev))
-            FAIL("F1 not non-decreasing at x=%.6f prev=%.17g v=%.17g", x, prev, v);
+            FAIL("F1 not non-decreasing at x={:.6} prev={:.17} v={:.17}", x, prev, v);
         prev = v;
     }
     double prevF2 = f2Tanh(-1000.0);
@@ -313,19 +318,22 @@ void sectionMonotonicity()
         const double x = -1000.0 + 2000.0 * static_cast<double>(i) / n;
         const double v = f2Tanh(x);
         if (!(v > prevF2))
-            FAIL("F2 not strictly increasing at x=%.6f prev=%.17g v=%.17g", x, prevF2, v);
+            FAIL("F2 not strictly increasing at x={:.6} prev={:.17} v={:.17}", x, prevF2, v);
         prevF2 = v;
     }
-    std::printf("F1 non-decreasing on [0, 1000], F2 strictly increasing on [-1000, 1000] (%d pts): PASS\n",
+    std::println("F1 non-decreasing on [0, 1000], F2 strictly increasing on [-1000, 1000] ({} pts): PASS",
                 n);
 }
 
-// ── 9. Derivative consistency ────────────────────────────────────────────
+// 9. Derivative consistency
 void sectionDerivatives()
 {
     g_section = "derivative consistency";
     const double h = 1e-5;
-    double worst1 = 0.0, worst2 = 0.0, worstX1 = 0.0, worstX2 = 0.0;
+    double worst1 = 0.0;
+    double worst2 = 0.0;
+    double worstX1 = 0.0;
+    double worstX2 = 0.0;
     auto probe = [&](double x) {
         const double fd1 = (f2Tanh(x + h) - f2Tanh(x - h)) / (2.0 * h);
         const double t1 = f1Tanh(x);
@@ -333,7 +341,7 @@ void sectionDerivatives()
         const double tol1 = 1e-6 * (std::fabs(t1) + 1e-3);
         if (e1 / tol1 > worst1) { worst1 = e1 / tol1; worstX1 = x; }
         if (e1 > tol1)
-            FAIL("F2' != F1 at x=%.8f: fd=%.17g F1=%.17g err=%.3e tol=%.3e",
+            FAIL("F2' != F1 at x={:.8}: fd={:.17} F1={:.17} err={:.3} tol={:.3}",
                  x, fd1, t1, e1, tol1);
         const double fd2 = (f1Tanh(x + h) - f1Tanh(x - h)) / (2.0 * h);
         const double t2 = std::tanh(x);
@@ -341,7 +349,7 @@ void sectionDerivatives()
         const double tol2 = 1e-6 * (std::fabs(t2) + 1e-3);
         if (e2 / tol2 > worst2) { worst2 = e2 / tol2; worstX2 = x; }
         if (e2 > tol2)
-            FAIL("F1' != tanh at x=%.8f: fd=%.17g tanh=%.17g err=%.3e tol=%.3e",
+            FAIL("F1' != tanh at x={:.8}: fd={:.17} tanh={:.17} err={:.3} tol={:.3}",
                  x, fd2, t2, e2, tol2);
     };
     for (int i = 0; i <= 4000; ++i)
@@ -355,16 +363,16 @@ void sectionDerivatives()
         probe(kTanA1 * (1.0 - d));
         probe(kTanA1 * (1.0 + d));
     }
-    std::printf("F2' = F1: max err/tol = %.3f at x = %.6f\n", worst1, worstX1);
-    std::printf("F1' = tanh: max err/tol = %.3f at x = %.6f\n", worst2, worstX2);
-    std::printf("derivative consistency (h = 1e-5, tol 1e-6): PASS\n");
+    std::println("F2' = F1: max err/tol = {:.3} at x = {:.6}", worst1, worstX1);
+    std::println("F1' = tanh: max err/tol = {:.3} at x = {:.6}", worst2, worstX2);
+    std::println("derivative consistency (h = 1e-5, tol 1e-6): PASS");
 }
 
-// ── 10. Extremes ─────────────────────────────────────────────────────────
+// 10. Extremes
 void sectionExtremes()
 {
     g_section = "extremes";
-    const double xs[6] = { 700.0, -700.0, 1000.0, -1000.0, 1e6, -1e6 };
+    const std::array<double, 6> xs = {{ 700.0, -700.0, 1000.0, -1000.0, 1e6, -1e6 }};
     for (double x : xs)
     {
         const double v1 = f1Tanh(x);
@@ -372,19 +380,19 @@ void sectionExtremes()
         CHECK(std::isfinite(v1) && std::isfinite(v2));
         CHECK((v1 == 0.0 || std::isnormal(v1)) && (v2 == 0.0 || std::isnormal(v2)));
     }
-    std::printf("finite, normal output at +-700, +-1000, +-1e6: PASS\n");
+    std::println("finite, normal output at +-700, +-1000, +-1e6: PASS");
 
     // F1(1000) = 1000 - ln2 + log1p(e^-2000) = 1000 - ln2 exactly.
     const double got = f1Tanh(1000.0);
     const double ref = 999.3068528194401;              // nearest double to 1000 - ln2
     const double ulpAt = 1.1368683772161603e-13;       // ulp of 999.3
     const double err = std::fabs(got - ref);
-    std::printf("F1(1000) = %.17g vs 1000 - ln2 = %.17g: err = %.3e (gate 1 ulp = %.3e)\n",
+    std::println("F1(1000) = {:.17} vs 1000 - ln2 = {:.17}: err = {:.3} (gate 1 ulp = {:.3})",
                 got, ref, err, ulpAt);
     CHECK(err <= ulpAt);
 }
 
-// ── 11. Basis conditioning ───────────────────────────────────────────────
+// 11. Basis conditioning
 // Monomial basis condition number: max over u in [0, 1] of
 // sum_k |c_k| u^k / |p(u)|. Sensitive to coefficient transcription errors
 // even when the fit grid still looks accurate. The committed reference
@@ -396,7 +404,8 @@ double basisCond(const std::array<double, N>& c)
     for (int i = 0; i <= 10000; ++i)
     {
         const double u = static_cast<double>(i) / 10000.0;
-        double num = 0.0, den = c[N - 1];
+        double num = 0.0;
+        double den = c[N - 1];
         for (int k = static_cast<int>(N) - 2; k >= 0; --k)
         {
             num = num * u + std::fabs(c[static_cast<size_t>(k)]);
@@ -415,14 +424,14 @@ void sectionBasisCond()
     const double sCond = basisCond(kF1RegionI);
     const double pRef = 1.22911268079;   // tests/logs/baseline/f2_region1_basis_condition.txt
     const double sRef = 1.41920804845;   // tests/logs/baseline/f1_region1_basis_condition.txt
-    std::printf("    P(u): measured %.6f vs committed %.6f (gate: 10%%)\n", pCond, pRef);
-    std::printf("    S(u): measured %.6f vs committed %.6f (gate: 10%%)\n", sCond, sRef);
+    std::println("    P(u): measured {:.6} vs committed {:.6} (gate: 10%)", pCond, pRef);
+    std::println("    S(u): measured {:.6} vs committed {:.6} (gate: 10%)", sCond, sRef);
     CHECK(std::fabs(pCond / pRef - 1.0) <= 0.10);
     CHECK(std::fabs(sCond / sRef - 1.0) <= 0.10);
-    std::printf("basis conditioning matches the committed derivation logs: PASS\n");
+    std::println("basis conditioning matches the committed derivation logs: PASS");
 }
 
-// ── 12. Coefficient transcription ────────────────────────────────────────
+// 12. Coefficient transcription
 void sectionTranscription()
 {
     g_section = "coefficient transcription";
@@ -430,9 +439,8 @@ void sectionTranscription()
     static_assert(kF1RegionI.size() == 15,   "S(u) must be degree 14");
     static_assert(kF2RegionIIPsi.size() == 11, "psi(t) must be degree 10");
     static_assert(kF1RegionIIL.size() == 11,   "L(t) must be degree 10");
-    std::printf("coefficient counts: P/S degree 14, psi/L degree 10: PASS\n");
-    std::printf("    (the python derivation scripts re-derive these values and\n"
-                "     exit non-zero on drift; they run in CI alongside this harness)\n");
+    std::println("coefficient counts: P/S degree 14, psi/L degree 10: PASS");
+    std::println("    (the python derivation scripts re-derive these values and\n     exit non-zero on drift; they run in CI alongside this harness)");
 }
 
 int runAll()
@@ -470,18 +478,18 @@ int main(int argc, char** argv)
         }
         else
         {
-            std::printf("usage: f2_minimax_check [--full] [--points N]\n");
+            std::println("usage: f2_minimax_check [--full] [--points N]");
             return 2;
         }
     }
 
-    std::printf("=== Chronos TanhNL regional minimax kernel harness ===\n");
-    std::printf("kernels: f1Tanh / f2Tanh (three regions, Estrin, two-part ln2)\n");
-    std::printf("sweep density: %d points, agreement grid %d points\n\n",
+    std::println("=== Chronos TanhNL regional minimax kernel harness ===");
+    std::println("kernels: f1Tanh / f2Tanh (three regions, Estrin, two-part ln2)");
+    std::println("sweep density: {} points, agreement grid {} points\n",
                 gPoints, gAgree);
 
     int r = runAll();
 
-    std::printf("\n=== %s ===\n", r == 0 ? "ALL PROPERTIES HELD" : "PROPERTY FAILED");
+    std::println("\n=== {} ===", r == 0 ? "ALL PROPERTIES HELD" : "PROPERTY FAILED");
     return r;
 }

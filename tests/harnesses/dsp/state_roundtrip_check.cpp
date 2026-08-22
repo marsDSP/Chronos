@@ -14,6 +14,7 @@ using namespace juce;
 
 #include <cstdint>
 #include <cstdio>
+#include <print>
 #include <cstring>
 
 namespace {
@@ -21,10 +22,10 @@ namespace {
 const char* g_section = "(startup)";
 
 #define CHECK(cond)                                                            \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
-#define FAIL(fmt, ...)                                                         \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...)                                                         \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
 // Minimal AudioProcessor that owns a real APVTS with the Chronos layout.
 class StubProcessor final : public AudioProcessor
@@ -75,22 +76,21 @@ float getDenorm (const AudioProcessorValueTreeState& a, const char* id)
 MemoryBlock saveState (AudioProcessorValueTreeState& a)
 {
     ValueTree s = a.copyState();
-    s.setProperty ("version", 2, nullptr);
+    s.setProperty ("version", 4, nullptr);
     MemoryBlock block;
     AudioProcessor::copyXmlToBinary (*s.createXml(), block);
     return block;
 }
 
 // Load a state block into the APVTS. Mirrors the processor path: read the
-// version, then stamp the current version, then replace the state. The
-// version-1 branch needs no migration yet.
+// version, then stamp the current version, then replace the state.
 void loadState (AudioProcessorValueTreeState& a, const MemoryBlock& block)
 {
     auto xml = AudioProcessor::getXmlFromBinary (block.getData(), (int) block.getSize());
     if (xml == nullptr || ! xml->hasTagName (a.state.getType()))
         return;
     ValueTree s (ValueTree::fromXml (*xml));
-    s.setProperty ("version", 2, nullptr);
+    s.setProperty ("version", 4, nullptr);
     a.replaceState (s);
 }
 
@@ -113,6 +113,8 @@ int main()
         setDenorm (a, "drive", 9.0f);
         setDenorm (a, "dampHz", 3200.0f);
         setDenorm (a, "enableDiffuser", 1.0f);
+        setDenorm (a, "filterMode", 1.0f);
+        setDenorm (a, "delayMode", 1.0f);
 
         const MemoryBlock save1 = saveState (a);
         loadState (a, save1);
@@ -121,8 +123,14 @@ int main()
         CHECK (save1.getSize() > 0);
         CHECK (save1.getSize() == save2.getSize());
         if (std::memcmp (save1.getData(), save2.getData(), save1.getSize()) != 0)
-            FAIL ("save1 != save2 after a round-trip (%llu bytes)",
+            FAIL("save1 != save2 after a round-trip ({} bytes)",
                   static_cast<unsigned long long> (save1.getSize()));
+
+        // Analog mode and BBD delay mode survive the round-trip
+        const float mode = getDenorm (a, "filterMode");
+        CHECK (mode == 1.0f);
+        const float dMode = getDenorm (a, "delayMode");
+        CHECK (dMode == 1.0f);
     }
 
     // Version-1 fixture: no version property, one out-of-range value.
@@ -147,7 +155,7 @@ int main()
         ValueTree s (ValueTree::fromXml (*xml));
         // Absent version reads as zero, which means a version-1 state.
         CHECK (! s.hasProperty ("version"));
-        s.setProperty ("version", 2, nullptr);
+        s.setProperty ("version", 4, nullptr);
         a.replaceState (s);
 
         // The out-of-range feedback must clamp to the legal maximum.
@@ -155,10 +163,16 @@ int main()
         CHECK(fb > 1.14f && fb < 1.16f);
         const float delay = getDenorm(a, "delayTime");
         CHECK(delay >= 1.0f && delay <= 5000.001f);
+        // Stored tree without filterMode loads and reports Digital (0)
+        const float mode = getDenorm(a, "filterMode");
+        CHECK(mode == 0.0f);
+        // Stored tree without delayMode loads and reports Digital (0)
+        const float dMode = getDenorm(a, "delayMode");
+        CHECK(dMode == 0.0f);
         // The live state now carries the current schema version.
-        CHECK (static_cast<int> (a.state.getProperty ("version")) == 2);
+        CHECK (static_cast<int> (a.state.getProperty ("version")) == 4);
     }
 
-    std::printf ("=== state_roundtrip_check OK ===\n");
+    std::println("=== state_roundtrip_check OK ===");
     return 0;
 }

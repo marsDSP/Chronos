@@ -1,70 +1,12 @@
-// tests/harnesses/dsp/chain_fuzz_check.cpp
-// ──────────────────────────────────────────────────────────────────────────
-// Adversarial-input safety net for the Chronos signal chain, hand-assembled
-// in ChronosProcessor::processBlock order (delay → drive gain → ADAA →
-// alignment → HPF → LPF → equal-power crossfade → output gain → TPDF dither
-// → quantization), the way tests/harnesses/dsp/latency_null_check.cpp
-// assembles it. Links SharedCode only — no JUCE AudioProcessor.
-//
-// SIMD refactors break on exactly the inputs nobody tests: branchless blends
-// propagate NaN through the *untaken* branch, _mm_round_* disagrees with
-// std::round on ties, and denormals that ScopedNoDenormals would flush in the
-// plugin survive in this JUCE-free harness. Re-run after every DSP change.
-//
-// Gated assertions (FAIL on violation):
-//   (a) No NaN/inf in the output for any FINITE input, ever.
-//   (b) Output magnitude stays within an analytically justified bound:
-//         |out| <= gainLin·(dryB·|cos θ| + wetB·|sin θ|) + 2·lsb + 1e-6
-//       with
-//         dryB = max|in|          — align dry is a bit-exact integer delay;
-//         satB = max|in| (mode 0, saturator = identity), else 1.00001 —
-//                ADAA1/ADAA2 outputs are means of f over the node simplex
-//                (mean-value / Hermite–Genocchi), |f| = |tanh| <= 1, plus
-//                rounding slack;
-//         wetB = 3.0·satB         — measured worst-case gain of the wet
-//                                   SVF cascade (HP 200 Hz → LP 8 kHz, TPT
-//                                   Butterworth): square waves whose
-//                                   fundamental sits in the HP band swing
-//                                   edge-to-edge: 2.24× (±0.8, several
-//                                   periods), 2.44× saturated, single step
-//                                   0.98×, impulse 0.49×; allowance 3.0× is
-//                                   ~1.25× margin over the worst. The delay
-//                                   interpolator adds no overshoot at the
-//                                   battery's integer delays (5/50 ms @48k).
-//         2·lsb                   — the ±1·lsb TPDF dither (u1−u2, uniforms
-//                                   on [0,1)) + 0.5·lsb of rounding, covered
-//                                   with the 1e-6 slack.
-//       The bound is a stability gate, not a model of the step response: it
-//       must never fire for correct code, however loose that makes it.
-//   (d) All zeros in → all +0.0f out, BIT-EXACT, when dither is disabled
-//       (the chain is homogeneous: delay/align rings pass zeros, ADAA
-//       evaluates f(0)=F1(0)=F2(0)=0 for TanhNL, SVF is zero-state linear,
-//       round(0/lsb)·lsb = +0). Dither breaks this BY DESIGN: gated
-//       separately as |out| <= lsb with dither enabled.
-//
-//   (c) NaN/inf robustness (test 4, GATED): ±inf/NaN injected at samples
-//       0/1/2/mid-block of a sine. Non-finite samples are scrubbed at
-//       SaturatorAlign::process{Dry,Wet} (to +0.0f) and inside
-//       SimdSVF::processBlockStep (bad lanes cleared; latched non-finite
-//       state reset), so:
-//         (c1) every output sample stays finite, for ANY input, and
-//         (c2) the output rejoins the reference trajectory (the same run
-//              with the injected sample zeroed) for i > pos + delaySamples
-//              + 300, tol 1e-2 — the delay ring serves the bad sample for 6
-//              taps, ADAA for 2 (ADAA1) / 4 (ADAA2), the mode-1 FIR for 16,
-//              and 300 covers delay + window + HP 200 Hz settling with
-//              margin. Dry is scrubbed identically in both runs.
-//
-// Parameters are FLAT per block (no 20 ms smoothers) — harsher than the
-// plugin, intentionally: the battery is adversarial, not representative.
-// The ditherEnabled flag is harness-only (the plugin always dithers); it
-// exists to test chain homogeneity. Conventions match the other *_check
-// harnesses: plain main()/printf/exit code, always-live CHECK/FAIL, no
-// forced -O2. ONE DEVIATION: NDEBUG is forced ON for this target (see
-// tests/CMakeLists.txt). the NaN/inf battery intentionally violates DSP
-// header preconditions (e.g. dilogNeg's t in [0,1]), and the recovery
-// measurement needs IEEE NaN propagation, not an assert abort.
-// ──────────────────────────────────────────────────────────────────────────
+/**
+ * Adversarial-input safety net for the signal chain, hand-assembled in
+ * ChronosEngine::process order. Gates: no NaN or Inf for any finite input;
+ * output within the analytic bound; zeros in give +0.0f out bit-exact with
+ * the dither off; injected non-finite samples are scrubbed and the output
+ * rejoins the reference trajectory. See docs/dsp-notes.md for the bound
+ * derivation. NDEBUG is forced on for this target: the battery intentionally
+ * violates DSP header preconditions and needs IEEE propagation.
+ */
 
 #include "dsp/SimdDelayLine.h"
 #include "dsp/StateVariable.h"
@@ -78,6 +20,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <print>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -99,10 +42,10 @@ constexpr auto   kInterp = MarsDSP::Delays::Interpolation::Lagrange5th;
 const char* g_section = "(startup)";
 
 #define CHECK(cond) \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
-#define FAIL(fmt, ...) \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...) \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
 // xorshift32, identical to ChronosProcessor::nextUniform.
 inline float nextUniform(std::uint32_t& s) noexcept
@@ -113,18 +56,26 @@ inline float nextUniform(std::uint32_t& s) noexcept
     return static_cast<float>(s >> 8) * (1.0f / 16777216.0f);
 }
 
-// ── The chain under test ──────────────────────────────────────────────────
+// The chain under test
 // Mirrors ChronosProcessor::processBlock's per-sample loop with flat
 // parameters and a harness-only dither kill switch. Stereo always.
 struct FuzzChain
 {
     MarsDSP::Delays::SimdDelayLine delayLine;
-    MarsDSP::Align::SaturatorAlign alignL, alignR;
-    MarsDSP::Nonlinear::ADAA1<MarsDSP::Nonlinear::TanhNL> adaa1L, adaa1R;
-    MarsDSP::Nonlinear::ADAA2<MarsDSP::Nonlinear::TanhNL> adaa2L, adaa2R;
-    MarsDSP::Filters::SimdSVF hpf, lpf;
-    std::uint32_t xsL = 0x12345678u, xsR = 0x9abcdef0u;
-    std::vector<float> wetL, wetR, workL, workR;
+    MarsDSP::Align::SaturatorAlign alignL;
+    MarsDSP::Align::SaturatorAlign alignR;
+    MarsDSP::Nonlinear::ADAA1<MarsDSP::Nonlinear::TanhNL> adaa1L;
+    MarsDSP::Nonlinear::ADAA1<MarsDSP::Nonlinear::TanhNL> adaa1R;
+    MarsDSP::Nonlinear::ADAA2<MarsDSP::Nonlinear::TanhNL> adaa2L;
+    MarsDSP::Nonlinear::ADAA2<MarsDSP::Nonlinear::TanhNL> adaa2R;
+    MarsDSP::Filters::SimdSVF hpf;
+    MarsDSP::Filters::SimdSVF lpf;
+    std::uint32_t xsL = 0x12345678u;
+    std::uint32_t xsR = 0x9abcdef0u;
+    std::vector<float> wetL;
+    std::vector<float> wetR;
+    std::vector<float> workL;
+    std::vector<float> workR;
 
     int   mode    = 2;      // 0=Off, 1=ADAA1, 2=ADAA2
     float mixPct  = 100.0f; // 0..100
@@ -191,7 +142,8 @@ struct FuzzChain
             const float wet0 = wetL[static_cast<std::size_t>(s)];
             const float wet1 = wetR[static_cast<std::size_t>(s)];
 
-            float sat0, sat1;
+            float sat0;
+            float sat1;
             switch (mode)
             {
                 case 0:
@@ -236,13 +188,13 @@ struct FuzzChain
     }
 };
 
-// ── Assertion helpers ─────────────────────────────────────────────────────
+// Assertion helpers
 struct Cfg
 {
     int mode; float mixPct; float driveDb; float delayMs;
 };
 
-// Analytic output bound — derivation in the header comment, assertion (b).
+// Analytic output bound - derivation in the header comment, assertion (b).
 float outBound(const Cfg& c, float maxIn)
 {
     const float theta  = (c.mixPct * 0.01f) * (std::numbers::pi_v<float> * 0.5f);
@@ -271,16 +223,16 @@ void runFinite(const Cfg& c, const char* tag, const std::vector<float>& in,
     {
         const float v = out[i];
         if (!std::isfinite(v))
-            FAIL("%s: non-finite output at i=%zu (mode=%d mix=%.0f drive=%.0f delay=%.0f)",
-                 tag, i, c.mode, (double)c.mixPct, (double)c.driveDb, (double)c.delayMs);
+            FAIL("{}: non-finite output at i={} (mode={} mix={:.0} drive={:.0} delay={:.0})",
+                 tag, i, c.mode, static_cast<double>(c.mixPct), static_cast<double>(c.driveDb), static_cast<double>(c.delayMs));
         if (std::fabs(v) > bound)
-            FAIL("%s: |out|=%g exceeds analytic bound %g at i=%zu (mode=%d mix=%.0f drive=%.0f delay=%.0f)",
-                 tag, (double)std::fabs(v), (double)bound, i,
-                 c.mode, (double)c.mixPct, (double)c.driveDb, (double)c.delayMs);
+            FAIL("{}: |out|={} exceeds analytic bound {} at i={} (mode={} mix={:.0} drive={:.0} delay={:.0})",
+                 tag, static_cast<double>(std::fabs(v)), static_cast<double>(bound), i,
+                 c.mode, static_cast<double>(c.mixPct), static_cast<double>(c.driveDb), static_cast<double>(c.delayMs));
     }
 }
 
-// ── Signal generators (all length kN unless noted) ────────────────────────
+// Signal generators (all length kN unless noted)
 std::vector<float> genZeros()        { return std::vector<float>(kN, 0.0f); }
 
 std::vector<float> genAlternating(double mag)
@@ -324,7 +276,7 @@ std::vector<float> genBlockSteps(double amp, int block)
     return x;
 }
 
-// ── Test 1: zeros — homogeneity, bit-exact with dither off; lsb with dither ─
+// Test 1: zeros - homogeneity, bit-exact with dither off; lsb with dither
 void test1_zeros(const Cfg& c)
 {
     g_section = "zeros";
@@ -339,8 +291,8 @@ void test1_zeros(const Cfg& c)
         ch.process(in.data(), out.data(), kN, 256);
         for (std::size_t i = 0; i < out.size(); ++i)
             if (out[i] != 0.0f || std::signbit(out[i]))
-                FAIL("zeros (dither off): out[%zu] = %g, expected +0.0f bit-exact (mode=%d mix=%.0f)",
-                     i, (double)out[i], c.mode, (double)c.mixPct);
+                FAIL("zeros (dither off): out[{}] = {}, expected +0.0f bit-exact (mode={} mix={:.0})",
+                     i, static_cast<double>(out[i]), c.mode, static_cast<double>(c.mixPct));
     }
     {
         FuzzChain ch;
@@ -350,12 +302,12 @@ void test1_zeros(const Cfg& c)
         ch.process(in.data(), out.data(), kN, 256);
         for (std::size_t i = 0; i < out.size(); ++i)
             if (std::fabs(out[i]) > FuzzChain::lsb())
-                FAIL("zeros (dither on): |out[%zu]| = %g > lsb = %g (mode=%d mix=%.0f)",
-                     i, (double)std::fabs(out[i]), (double)FuzzChain::lsb(), c.mode, (double)c.mixPct);
+                FAIL("zeros (dither on): |out[{}]| = {} > lsb = {} (mode={} mix={:.0})",
+                     i, static_cast<double>(std::fabs(out[i])), static_cast<double>(FuzzChain::lsb()), c.mode, static_cast<double>(c.mixPct));
     }
 }
 
-// ── Test 4: NaN/inf injection — output stays finite, chain recovers ─────
+// Test 4: NaN/inf injection - output stays finite, chain recovers
 // Assertions (c1)/(c2) from the header. For each injection the reference is
 // the identical run with the bad sample zeroed; dither streams match (same
 // seeds, same draw count), so the comparison isolates the scrub/transit.
@@ -365,7 +317,7 @@ void test4_injection(const Cfg& c, long& runs)
     const float bads[3] = { std::numeric_limits<float>::infinity(),
                             -std::numeric_limits<float>::infinity(),
                             std::numeric_limits<float>::quiet_NaN() };
-    const int poss[4] = { 0, 1, 2, kN / 2 };
+    const std::array<int, 4> poss = {{ 0, 1, 2, kN / 2 }};
     const int delaySmp = static_cast<int>(std::ceil(c.delayMs * 0.001f * static_cast<float>(kFs)));
 
     for (float bad : bads)
@@ -395,8 +347,8 @@ void test4_injection(const Cfg& c, long& runs)
             // (c1) every output sample stays finite, even during transit.
             for (std::size_t i = 0; i < out.size(); ++i)
                 if (!std::isfinite(out[i]))
-                    FAIL("injection: non-finite output at i=%zu (bad=%g pos=%d mode=%d mix=%.0f drive=%.0f delay=%.0f)",
-                         i, (double)bad, pos, c.mode, (double)c.mixPct, (double)c.driveDb, (double)c.delayMs);
+                    FAIL("injection: non-finite output at i={} (bad={} pos={} mode={} mix={:.0} drive={:.0} delay={:.0})",
+                         i, static_cast<double>(bad), pos, c.mode, static_cast<double>(c.mixPct), static_cast<double>(c.driveDb), static_cast<double>(c.delayMs));
 
             // (c2) rejoin the reference trajectory after the flush+settle
             // window: pos + delaySamples + 300 samples, tol 1e-2 (header).
@@ -404,17 +356,17 @@ void test4_injection(const Cfg& c, long& runs)
             for (std::size_t i = thr; i < static_cast<std::size_t>(kN); ++i)
             {
                 if (std::fabs(out[i] - ref[i]) > 1e-2f)
-                    FAIL("injection: L not rejoined at i=%zu (thr=%zu): out=%g ref=%g (bad=%g pos=%d mode=%d mix=%.0f)",
-                         i, thr, (double)out[i], (double)ref[i], (double)bad, pos, c.mode, (double)c.mixPct);
+                    FAIL("injection: L not rejoined at i={} (thr={}): out={} ref={} (bad={} pos={} mode={} mix={:.0})",
+                         i, thr, static_cast<double>(out[i]), static_cast<double>(ref[i]), static_cast<double>(bad), pos, c.mode, static_cast<double>(c.mixPct));
                 if (std::fabs(out[static_cast<std::size_t>(kN) + i] - ref[static_cast<std::size_t>(kN) + i]) > 1e-2f)
-                    FAIL("injection: R not rejoined at i=%zu (thr=%zu): out=%g ref=%g (bad=%g pos=%d mode=%d mix=%.0f)",
-                         i, thr, (double)out[static_cast<std::size_t>(kN) + i], (double)ref[static_cast<std::size_t>(kN) + i],
-                         (double)bad, pos, c.mode, (double)c.mixPct);
+                    FAIL("injection: R not rejoined at i={} (thr={}): out={} ref={} (bad={} pos={} mode={} mix={:.0})",
+                         i, thr, static_cast<double>(out[static_cast<std::size_t>(kN) + i]), static_cast<double>(ref[static_cast<std::size_t>(kN) + i]),
+                         static_cast<double>(bad), pos, c.mode, static_cast<double>(c.mixPct));
             }
         }
 }
 
-// ── Test 9: parameter step changes mid-stream ─────────────────────────────
+// Test 9: parameter step changes mid-stream
 void test9_paramSteps()
 {
     g_section = "parameter steps";
@@ -451,27 +403,27 @@ void test9_paramSteps()
         for (int s = 0; s < block; ++s)
         {
             if (!std::isfinite(wL[static_cast<std::size_t>(s)]) || !std::isfinite(wR[static_cast<std::size_t>(s)]))
-                FAIL("param steps: non-finite output at block %d sample %d", b, s);
+                FAIL("param steps: non-finite output at block {} sample {}", b, s);
             if (std::fabs(wL[static_cast<std::size_t>(s)]) > bound || std::fabs(wR[static_cast<std::size_t>(s)]) > bound)
-                FAIL("param steps: |out| exceeds bound %g at block %d sample %d (mode=%d drive=%.0f)",
-                     (double)bound, b, s, ch.mode, (double)ch.driveDb);
+                FAIL("param steps: |out| exceeds bound {} at block {} sample {} (mode={} drive={:.0})",
+                     static_cast<double>(bound), b, s, ch.mode, static_cast<double>(ch.driveDb));
         }
     }
-    std::printf("parameter steps (delay 5→50→5 ms, drive 0→40 dB, mode 0→1→2): PASS\n");
+    std::println("parameter steps (delay 5→50→5 ms, drive 0→40 dB, mode 0→1→2): PASS");
 }
 
 } // namespace
 
 int main()
 {
-    std::printf("=== Chronos chain_fuzz_check: adversarial-input safety net ===\n");
-    std::printf("kBudget=%d  fs=%.0f  run=%d samples  bits=%d (lsb=%.3e)\n\n",
-                kBudget, kFs, kN, kBits, (double)FuzzChain::lsb());
+    std::println("=== Chronos chain_fuzz_check: adversarial-input safety net ===");
+    std::println("kBudget={}  fs={:.0}  run={} samples  bits={} (lsb={:.3})\n",
+                kBudget, kFs, kN, kBits, static_cast<double>(FuzzChain::lsb()));
 
-    const int   modes[3]  = { 0, 1, 2 };
-    const float mixes[3]  = { 0.0f, 50.0f, 100.0f };
-    const float drives[3] = { 0.0f, 12.0f, 40.0f };
-    const float delays[2] = { 5.0f, 50.0f };
+    const std::array<int, 3> modes = {{ 0, 1, 2 }};
+    const std::array<float, 3> mixes = {{ 0.0f, 50.0f, 100.0f }};
+    const std::array<float, 3> drives = {{ 0.0f, 12.0f, 40.0f }};
+    const std::array<float, 2> delays = {{ 5.0f, 50.0f }};
 
     long injRuns = 0;
     long finiteRuns = 0;
@@ -486,7 +438,7 @@ int main()
         // 1. Zeros: homogeneity (bit-exact, dither off) + dither bound.
         test1_zeros(c); ++finiteRuns;
 
-        // 2. Denormals: ±1e-320 (flushes to ±0.0f in the float buffer —
+        // 2. Denormals: ±1e-320 (flushes to ±0.0f in the float buffer -
         //    documents the flush) and ±1e-45f (true float denormal).
         runFinite(c, "denormals 1e-320", genAlternating(1e-320), 0.0f, 256); ++finiteRuns;
         runFinite(c, "denormals 1e-45f", genAlternating(1e-45), 1e-45f, 256); ++finiteRuns;
@@ -506,7 +458,7 @@ int main()
             ++finiteRuns;
         }
 
-        // 6. Nyquist alternation — fires ADAA2 branch (b). Block 61 forces
+        // 6. Nyquist alternation - fires ADAA2 branch (b). Block 61 forces
         //    the SIMD delay's sub-block scalar tail as well.
         runFinite(c, "nyquist alternation", genAlternating(1.0), 1.0f, 256); ++finiteRuns;
         runFinite(c, "nyquist alternation (blk=61)", genAlternating(1.0), 1.0f, 61); ++finiteRuns;
@@ -526,19 +478,19 @@ int main()
             runFinite(c, "silence-to-step", rise, 0.8f, 256); ++finiteRuns;
         }
 
-        // 4. ±inf / NaN at samples 0, 1, 2, mid-block — GATED (c1/c2).
+        // 4. ±inf / NaN at samples 0, 1, 2, mid-block - GATED (c1/c2).
         test4_injection(c, injRuns);
     }
 
     // 9. Parameter step changes mid-stream.
     test9_paramSteps();
 
-    std::printf("finite-input battery: %ld runs × %d×2 samples — no NaN/inf, all within analytic bounds: PASS\n",
+    std::println("finite-input battery: {} runs × {}×2 samples — no NaN/inf, all within analytic bounds: PASS",
                 finiteRuns, kN);
-    std::printf("zeros-in/zeros-out bit-exact (dither off) and |out| <= lsb (dither on): PASS\n");
-    std::printf("NaN/inf injection: %ld runs — output always finite, rejoins reference within\n", injRuns);
-    std::printf("  pos + delaySamples + 300 samples (tol 1e-2): PASS\n");
+    std::println("zeros-in/zeros-out bit-exact (dither off) and |out| <= lsb (dither on): PASS");
+    std::println("NaN/inf injection: {} runs — output always finite, rejoins reference within", injRuns);
+    std::println("  pos + delaySamples + 300 samples (tol 1e-2): PASS");
 
-    std::printf("\n=== ALL FUZZ PROPERTIES HELD ===\n");
+    std::println("\n=== ALL FUZZ PROPERTIES HELD ===");
     return 0;
 }

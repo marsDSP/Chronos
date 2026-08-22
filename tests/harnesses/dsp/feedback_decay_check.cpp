@@ -1,6 +1,7 @@
 #include "dsp/ChronosEngine.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <print>
@@ -63,8 +64,8 @@ namespace
         for (int off = 0; off < total; off += 256)
         {
             const int n = std::min(256, total - off);
-            float *io[1] = { buf.data() + off };
-            eng.process(io, 1, n);
+            std::array<float*, 1> io{ buf.data() + off };
+            eng.process(io.data(), 1, n);
         }
 
         const int numRepeats = static_cast<int>(expectedRT60 / delay);
@@ -115,7 +116,7 @@ int main()
 {
     std::println("=== Chronos feedback_decay_check (S22e) ===\n");
 
-    const float testFbs[] = {0.25f, 0.40f, 0.50f, 0.60f, 0.75f, 0.85f};
+    const std::array<float, 6> testFbs { { 0.25f, 0.40f, 0.50f, 0.60f, 0.75f, 0.85f } };
     for (const bool diff : {false, true})
     {
         g_section = diff ? "diffuser_active" : "diffuser_bypassed";

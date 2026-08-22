@@ -1,5 +1,4 @@
 // tests/harnesses/simd/diffuser_parity.cpp
-// ──────────────────────────────────────────────────────────────────────────
 // Diffuser parity: processBlock (section-major, 4-wide SIMD chunk fast path
 // + per-sample FracDelayTap exact path) vs processBlockRef (sample-major
 // scalar reference twin), across block sizes, size/diffusion/mod settings,
@@ -25,7 +24,6 @@
 // always-live CHECK/FAIL. Links SharedCode only; no JUCE. Forced -O2 and
 // -Xarch_x86_64 -mfma (Apple) / -mfma (Linux) / /arch:AVX2 (MSVC) so the
 // chunk kernel inlines and simde_mm_* lowers to native intrinsics.
-// ──────────────────────────────────────────────────────────────────────────
 
 #include "dsp/Diffuser.h"
 
@@ -70,7 +68,8 @@ namespace
     {
         g_section = "diffuser_parity";
 
-        MarsDSP::Diffusion::Diffuser fast, ref;
+        MarsDSP::Diffusion::Diffuser fast;
+        MarsDSP::Diffusion::Diffuser ref;
         fast.prepare(kFs);
         ref.prepare(kFs);
         applySettings(fast, c);
@@ -101,32 +100,32 @@ namespace
             const float eL = std::fabs(fL[u] - rL[u]);
             if (eL > g_worst) g_worst = static_cast<double>(eL);
             if (eL > kTol)
-                FAIL("block=%d diff=%.2f size=%.2f modD=%.1f modR=%.2f stereo=%d i=%d L: "
-                 "block=%g ref=%g diff=%.3e > %.0e",
-                 c.blockSize, (double)c.diffusion, (double)c.size,
-                 (double)c.modDepth, (double)c.modRateHz, static_cast<int>(c.stereo),
-                 i, (double)fL[u], (double)rL[u], (double)eL, (double)kTol);
+                FAIL("block={} diff={:.2} size={:.2} modD={:.1} modR={:.2} stereo={} i={} L: block={} ref={} diff={:.3} > {:.0}",
+                 c.blockSize, static_cast<double>(c.diffusion), static_cast<double>(c.size),
+                 static_cast<double>(c.modDepth), static_cast<double>(c.modRateHz), static_cast<int>(c.stereo),
+                 i, static_cast<double>(fL[u]), static_cast<double>(rL[u]), static_cast<double>(eL),
+                 static_cast<double>(kTol));
             if (c.stereo)
             {
                 const float eR = std::fabs(fR[u] - rR[u]);
                 if (eR > g_worst) g_worst = static_cast<double>(eR);
                 if (eR > kTol)
-                    FAIL("block=%d diff=%.2f size=%.2f modD=%.1f modR=%.2f stereo=%d i=%d R: "
-                     "block=%g ref=%g diff=%.3e > %.0e",
-                     c.blockSize, (double)c.diffusion, (double)c.size,
-                     (double)c.modDepth, (double)c.modRateHz, static_cast<int>(c.stereo),
-                     i, (double)fR[u], (double)rR[u], (double)eR, (double)kTol);
+                    FAIL("block={} diff={:.2} size={:.2} modD={:.1} modR={:.2} stereo={} i={} R: block={} ref={} diff={:.3} > {:.0}",
+                     c.blockSize, static_cast<double>(c.diffusion), static_cast<double>(c.size),
+                     static_cast<double>(c.modDepth), static_cast<double>(c.modRateHz), static_cast<int>(c.stereo),
+                     i, static_cast<double>(fR[u]), static_cast<double>(rR[u]), static_cast<double>(eR),
+                     static_cast<double>(kTol));
             }
 
             // Finite + bounded (allpass |g|<1 cascade, |in|<=1 -> bounded out).
             if (!std::isfinite(fL[u]) || std::fabs(fL[u]) > 4.0f)
-                FAIL("block=%d i=%d L non-finite/unbounded: %g", c.blockSize, i, (double)fL[u]);
+                FAIL("block={} i={} L non-finite/unbounded: {}", c.blockSize, i, static_cast<double>(fL[u]));
             if (c.stereo && (!std::isfinite(fR[u]) || std::fabs(fR[u]) > 4.0f))
-                FAIL("block=%d i=%d R non-finite/unbounded: %g", c.blockSize, i, (double)fR[u]);
+                FAIL("block={} i={} R non-finite/unbounded: {}", c.blockSize, i, static_cast<double>(fR[u]));
         }
     }
 
-    // ── C6: base-transport unit check ─────────────────────────────────────
+    // Base-transport unit check
     // Verify baseTransportSamples / baseTransportSamplesLR match an inline
     // recomputation via effLen, and sanity-check the measured transport table
     // (S4: size 0 = shortest path ~28 ms; size 1 = full path ~61 ms).
@@ -139,7 +138,7 @@ namespace
         const float kMinDelayF = MarsDSP::Diffusion::Diffuser::kMinDelay;
         const int kNum = MarsDSP::Diffusion::Diffuser::kNumDelaysPerBank;
 
-        const float sizes[] = {0.0f, 0.25f, 0.5f, 0.75f, 0.9f, 1.0f};
+        const std::array<float, 6> sizes { { 0.0f, 0.25f, 0.5f, 0.75f, 0.9f, 1.0f } };
         for (float sz: sizes)
         {
             const auto lr = d.baseTransportSamplesLR(sz);
@@ -149,7 +148,8 @@ namespace
             // getters. This verifies baseTransportSamplesLR uses the token-
             // identical arithmetic to chunk_/chain_ (unmodulated).
             const float s = std::clamp(sz, 0.0f, 1.0f);
-            float refL = 0.0f, refR = 0.0f;
+            float refL = 0.0f;
+            float refR = 0.0f;
             for (int i = 0; i < kNum; ++i)
             {
                 const float lenFL = static_cast<float>(d.sectionLenL(i));
@@ -165,13 +165,14 @@ namespace
                 refR += effR;
             }
             if (std::fabs(lr[0] - refL) > 1e-5f || std::fabs(lr[1] - refR) > 1e-5f)
-                FAIL("size=%.2f L=%.3f vs ref %.3f, R=%.3f vs ref %.3f",
-                 (double)sz, (double)lr[0], (double)refL, (double)lr[1], (double)refR);
+                FAIL("size={:.2} L={:.3} vs ref {:.3}, R={:.3} vs ref {:.3}",
+                 static_cast<double>(sz), static_cast<double>(lr[0]), static_cast<double>(refL),
+                 static_cast<double>(lr[1]), static_cast<double>(refR));
             if (std::fabs(mean - 0.5f * (lr[0] + lr[1])) > 1e-5f)
-                FAIL("size=%.2f mean=%.3f but 0.5*(L+R)=%.3f",
-                 (double)sz, (double)mean, (double)(0.5f * (lr[0] + lr[1])));
+                FAIL("size={:.2} mean={:.3} but 0.5*(L+R)={:.3}",
+                 static_cast<double>(sz), static_cast<double>(mean), static_cast<double>((0.5f * (lr[0] + lr[1]))));
 
-            std::printf("    size=%.2f  L=%.1f (%.1f ms)  R=%.1f (%.1f ms)  skew=%.2f ms  mean=%.1f\n",
+            std::println("    size={:.2}  L={:.1} ({:.1} ms)  R={:.1} ({:.1} ms)  skew={:.2} ms  mean={:.1}",
                         (double) sz,
                         (double) lr[0], static_cast<double>(lr[0]) / kFs * 1000.0,
                         (double) lr[1], static_cast<double>(lr[1]) / kFs * 1000.0,
@@ -186,7 +187,7 @@ namespace
             const auto lr0 = d.baseTransportSamplesLR(0.0f);
             CHECK(lr0[0] > 1200.0f && lr0[0] < 1500.0f);
             CHECK(lr0[1] > 1200.0f && lr0[1] < 1500.0f);
-            std::printf("    size=0 sanity: L=%.0f R=%.0f (both in (1200, 1500)): PASS\n",
+            std::println("    size=0 sanity: L={:.0} R={:.0} (both in (1200, 1500)): PASS",
                         static_cast<double>(lr0[0]), static_cast<double>(lr0[1]));
         }
 
@@ -198,7 +199,7 @@ namespace
             const auto lr1 = d.baseTransportSamplesLR(1.0f);
             CHECK(lr1[0] > lr0[0]); // size=1 is the full (longest) transport
             CHECK(lr1[1] > lr0[1]);
-            std::printf("    size=1 sanity: L=%.0f R=%.0f (both > size=0): PASS\n",
+            std::println("    size=1 sanity: L={:.0} R={:.0} (both > size=0): PASS",
                         static_cast<double>(lr1[0]), static_cast<double>(lr1[1]));
         }
 
@@ -208,17 +209,19 @@ namespace
         {
             const float cur = d.baseTransportSamples(sz);
             if (cur < prev - 1e-4f)
-                FAIL("non-monotonic at size=%.2f: cur=%.1f < prev=%.1f", static_cast<double>(sz), static_cast<double>(cur), static_cast<double>(prev));
+                FAIL("non-monotonic at size={:.2}: cur={:.1} < prev={:.1}", static_cast<double>(sz), static_cast<double>(cur),
+                 static_cast<double>(prev));
             prev = cur;
         }
-        std::printf("    monotonicity (transport non-decreasing in size): PASS\n");
-        std::printf("base-transport unit check: PASS\n");
+        std::println("    monotonicity (transport non-decreasing in size): PASS");
+        std::println("base-transport unit check: PASS");
     }
+
     void testSizeRampParity()
     {
         g_section = "size-ramp-parity";
-        const int blockSizes[] = {1, 7, 16, 17, 64, 512};
-        for (const int bs : blockSizes)
+        const std::array<int, 6> blockSizes { { 1, 7, 16, 17, 64, 512 } };
+        for (const int bs: blockSizes)
         {
             MarsDSP::Diffusion::Diffuser fast;
             MarsDSP::Diffusion::Diffuser ref;
@@ -280,11 +283,11 @@ int main()
     testBaseTransport();
     std::println("");
 
-    const int blockSizes[] = {1, 2, 3, 7, 15, 16, 17, 31, 32, 33, 64, 100, 256};
-    const float diffs[] = {0.0f, 0.3f, 0.7f, 0.92f};
-    const float sizes[] = {0.0f, 0.25f, 0.5f, 0.9f};
-    const float modDepths[] = {0.0f, 8.0f, 16.0f, 32.0f};
-    const float modRates[] = {0.5f, 2.0f};
+    const std::array<int, 13> blockSizes { { 1, 2, 3, 7, 15, 16, 17, 31, 32, 33, 64, 100, 256 } };
+    const std::array<float, 4> diffs { { 0.0f, 0.3f, 0.7f, 0.92f } };
+    const std::array<float, 4> sizes { { 0.0f, 0.25f, 0.5f, 0.9f } };
+    const std::array<float, 4> modDepths { { 0.0f, 8.0f, 16.0f, 32.0f } };
+    const std::array<float, 2> modRates { { 0.5f, 2.0f } };
 
     long configs = 0;
     for (int bs: blockSizes)
@@ -299,7 +302,7 @@ int main()
                         }
 
     std::println("matrix ({} configs): parity <= {:.0e} (worst {:.3e}), finite, bounded: PASS\n",
-                configs, static_cast<double>(kTol), g_worst);
+                 configs, static_cast<double>(kTol), g_worst);
 
     std::println("Testing size ramp unsettled parity:");
     testSizeRampParity();

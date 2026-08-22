@@ -25,6 +25,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
+#include <print>
 #include <cstdlib>
 #include <numbers>
 #include <vector>
@@ -45,8 +46,8 @@ using MarsDSP::Delays::SimdDelayLine;
 
 const char* g_section = "(startup)";
 
-#define FAIL(fmt, ...) \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...) \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
 // Run one drive step with a continuous tone (steady-state wet RMS) and a
 // subsequent burst+silence (RT60). Returns the full output buffer. The
@@ -131,13 +132,16 @@ RT60Result measureRT60(const std::vector<float>& wet, int burstStart)
         timeMs.push_back(static_cast<double>(r) * static_cast<double>(kDelay) / kFs * 1000.0);
     }
     if (rmsDb.size() < 4)
-        FAIL("RT60: only %zu repeat windows above noise floor", rmsDb.size());
+        FAIL("RT60: only {} repeat windows above noise floor", rmsDb.size());
 
     // Linear regression: rmsDb = a + b * timeMs. RT60 = -60 / b (ms).
     // Skip the first repeat (transient / burst tail).
     const std::size_t i0 = 1;
     const std::size_t N = rmsDb.size() - i0;
-    double sx = 0.0, sy = 0.0, sxx = 0.0, sxy = 0.0;
+    double sx = 0.0;
+    double sy = 0.0;
+    double sxx = 0.0;
+    double sxy = 0.0;
     for (std::size_t i = i0; i < rmsDb.size(); ++i)
     {
         sx  += timeMs[i];
@@ -149,7 +153,7 @@ RT60Result measureRT60(const std::vector<float>& wet, int burstStart)
     if (std::fabs(denom) < 1e-12) FAIL("RT60: degenerate linear fit");
     const double b = (static_cast<double>(N) * sxy - sx * sy) / denom;
     const double a = (sy - b * sx) / static_cast<double>(N);
-    if (b >= 0.0) FAIL("RT60: non-decaying envelope (slope %.4f dB/ms)", b);
+    if (b >= 0.0) FAIL("RT60: non-decaying envelope (slope {:.4} dB/ms)", b);
 
     // Worst deviation of any fitted repeat from the line (linearity check).
     double worstDev = 0.0;
@@ -167,11 +171,11 @@ RT60Result measureRT60(const std::vector<float>& wet, int burstStart)
 
 int main()
 {
-    std::printf("=== Chronos loop_gain_check (S5) ===\n");
-    std::printf("fs=%.0f  delay=%d (%.0f ms)  feedback=%.2f  burst=220Hz @0.5\n\n",
+    std::println("=== Chronos loop_gain_check (S5) ===");
+    std::println("fs={:.0}  delay={} ({:.0} ms)  feedback={:.2}  burst=220Hz @0.5\n",
                 kFs, kDelay, static_cast<double>(kDelay) / kFs * 1000.0, static_cast<double>(kFb));
 
-    // ── Anchor value check: rmsRatioForDrive_ vs the spec table ──────────
+    // Anchor value check: rmsRatioForDrive_ vs the spec table
     g_section = "anchor values";
     struct Anchor { float k; float rmsRatio; float trim; };
     const Anchor anchors[] = {
@@ -179,7 +183,7 @@ int main()
         { 1.995262f,  1.624467f, 0.784593f },
         { 15.848932f, 2.711624f, 0.607275f },
     };
-    std::printf("%10s %12s %12s | %12s %12s | %s\n",
+    std::println("{:>10} {:>12} {:>12} | {:>12} {:>12} | {}",
                 "k", "rmsRatio", "spec", "trim", "spec", "pass");
     for (const auto& a : anchors)
     {
@@ -187,30 +191,30 @@ int main()
         const float trim = std::pow(got, -0.5f);
         const bool okR = std::fabs(got - a.rmsRatio) < 1e-4f;
         const bool okT = std::fabs(trim - a.trim) < 1e-4f;
-        std::printf("%10.6f %12.6f %12.6f | %12.6f %12.6f | %s\n",
+        std::println("{:10.6} {:12.6} {:12.6} | {:12.6} {:12.6} | {}",
                     static_cast<double>(a.k), static_cast<double>(got),
                     static_cast<double>(a.rmsRatio),
                     static_cast<double>(trim), static_cast<double>(a.trim),
                     (okR && okT) ? "PASS" : "FAIL");
-        if (!okR) FAIL("rmsRatio(k=%.6f) = %.6f vs spec %.6f", a.k, got, a.rmsRatio);
-        if (!okT) FAIL("trim(k=%.6f) = %.6f vs spec %.6f", a.k, trim, a.trim);
+        if (!okR) FAIL("rmsRatio(k={:.6}) = {:.6} vs spec {:.6}", a.k, got, a.rmsRatio);
+        if (!okT) FAIL("trim(k={:.6}) = {:.6} vs spec {:.6}", a.k, trim, a.trim);
     }
-    std::printf("anchor values: PASS\n\n");
+    std::println("anchor values: PASS\n");
 
-    // ── RT60 + wet RMS across the drive sweep ────────────────────────────
+    // RT60 + wet RMS across the drive sweep
     // The trim is defined for the 0.5-amp reference, so the sweep starts at
     // drive=1 (0 dB) where the reference-level signal enters the saturator at
     // 0.5 amp. Below drive=1 the saturator is linear for this reference and the
     // trim over-boosts (rmsRatio drops toward k, trim rises as 1/sqrt(k)).
-    const float drives[] = { 1.0f, 2.0f, 4.0f, 8.0f, 16.0f };
+    const std::array<float, 5> drives { { 1.0f, 2.0f, 4.0f, 8.0f, 16.0f } };
     constexpr int kNDrives = static_cast<int>(sizeof(drives) / sizeof(drives[0]));
 
     const double theoreticalRT60 =
         3.0 * static_cast<double>(kDelay) / kFs /
         std::fabs(std::log10(static_cast<double>(kFb)));
 
-    std::printf("theoretical RT60 (g=0.5): %.4f s\n\n", theoreticalRT60);
-    std::printf("%6s %10s %10s %10s | %10s %10s | %s\n",
+    std::println("theoretical RT60 (g=0.5): {:.4} s\n", theoreticalRT60);
+    std::println("{:>6} {:>10} {:>10} {:>10} | {:>10} {:>10} | {}",
                 "drive", "RT60(s)", "theory", "|d|%", "linDev", "gate", "pass");
 
     double worstRT60Err = 0.0;
@@ -218,7 +222,8 @@ int main()
     for (int d = 0; d < kNDrives; ++d)
     {
         g_section = "drive sweep";
-        int steadyStart = 0, burstStart = 0;
+        int steadyStart = 0;
+        int burstStart = 0;
         (void)steadyStart;
         const auto wet = runDrive(drives[d], steadyStart, burstStart);
         const RT60Result r = measureRT60(wet, burstStart);
@@ -229,19 +234,19 @@ int main()
 
         const bool okRT = rt60Err <= 5.0;
         const bool okLin = r.worstDevDb <= 1.5;
-        std::printf("%6.2f %10.4f %10.4f %9.2f%% | %9.3f %9.1f | %s\n",
+        std::println("{:6.2} {:10.4} {:10.4} {:9.2}% | {:9.3} {:9.1} | {}",
                     static_cast<double>(drives[d]), r.rt60, theoreticalRT60, rt60Err,
                     r.worstDevDb, 1.5, (okRT && okLin) ? "PASS" : "FAIL");
         if (!okRT)
-            FAIL("drive=%.2f: RT60 %.4f s vs theory %.4f s (%.2f%% > 5%%)",
+            FAIL("drive={:.2}: RT60 {:.4} s vs theory {:.4} s ({:.2}% > 5%)",
                  drives[d], r.rt60, theoreticalRT60, rt60Err);
         if (!okLin)
-            FAIL("drive=%.2f: decay envelope linearity dev %.3f dB > 1.5 dB",
+            FAIL("drive={:.2}: decay envelope linearity dev {:.3} dB > 1.5 dB",
                  drives[d], r.worstDevDb);
     }
 
-    std::printf("\nworst RT60 error: %.2f%% (gate 5%%)\n", worstRT60Err);
-    std::printf("worst decay linearity dev: %.3f dB (gate 1.5 dB)\n", worstLinDev);
-    std::printf("\n=== ALL LOOP GAIN GATES HELD ===\n");
+    std::println("\nworst RT60 error: {:.2}% (gate 5%)", worstRT60Err);
+    std::println("worst decay linearity dev: {:.3} dB (gate 1.5 dB)", worstLinDev);
+    std::println("\n=== ALL LOOP GAIN GATES HELD ===");
     return 0;
 }

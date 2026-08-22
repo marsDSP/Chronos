@@ -15,9 +15,11 @@
 #include "dsp/ChronosEngine.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <print>
 #include <cstdlib>
 #include <numbers>
 #include <vector>
@@ -27,10 +29,10 @@ namespace {
 const char* g_section = "(startup)";
 
 #define CHECK(cond)                                                            \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
-#define FAIL(fmt, ...)                                                         \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...)                                                         \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
 constexpr double kFs = 48000.0;
 constexpr int    kFsInt = 48000;
@@ -62,8 +64,8 @@ double measureRmsDb(const std::vector<float>& l, const std::vector<float>& r,
 
 int main()
 {
-    std::printf("=== drive_loudness_check ===\n");
-    std::printf("fs=%d sine=%.3f amp %.0f Hz mix=100 adaa=2\n\n", kFsInt, kSineAmp, kSineFreq);
+    std::println("=== drive_loudness_check ===");
+    std::println("fs={} sine={:.3} amp {:.0} Hz mix=100 adaa=2\n", kFsInt, kSineAmp, kSineFreq);
 
     // Generate a 0.5-amplitude sine (the makeup table reference signal).
     std::vector<float> inL(static_cast<std::size_t>(kTotalSamples));
@@ -79,9 +81,9 @@ int main()
         }
     }
 
-    const int driveSteps[] = { 0, 3, 6, 9, 12, 15, 18, 21, 24 };
+    const std::array<int, 9> driveSteps { { 0, 3, 6, 9, 12, 15, 18, 21, 24 } };
     constexpr int kNumSteps = static_cast<int>(sizeof(driveSteps) / sizeof(driveSteps[0]));
-    double rmsDb[kNumSteps];
+    std::array<double, kNumSteps> rmsDb{};
 
     for (int si = 0; si < kNumSteps; ++si)
     {
@@ -127,13 +129,13 @@ int main()
         for (int pos = 0; pos < kTotalSamples; pos += kBlock)
         {
             const int n = std::min(kBlock, kTotalSamples - pos);
-            float* io[2] = { outL.data() + pos, outR.data() + pos };
+            std::array<float*, 2> io{ outL.data() + pos, outR.data() + pos };
             engine.setParams(p);
-            engine.process(io, kChannels, n);
+            engine.process(io.data(), kChannels, n);
         }
 
         rmsDb[si] = measureRmsDb(outL, outR, kSkipSamples, kTotalSamples - kSkipSamples);
-        std::printf("  drive %2d dB: RMS %+.3f dBFS\n", driveDb, rmsDb[si]);
+        std::println("  drive {:2} dB: RMS {:.3} dBFS", driveDb, rmsDb[si]);
     }
 
     // Assert monotonicity.
@@ -141,20 +143,20 @@ int main()
     for (int si = 1; si < kNumSteps; ++si)
     {
         if (rmsDb[si] < rmsDb[si - 1] - 0.001)
-            FAIL("loudness not monotonic: step %d (%.3f) < step %d (%.3f)",
+            FAIL("loudness not monotonic: step {} ({:.3}) < step {} ({:.3})",
                  driveSteps[si], rmsDb[si], driveSteps[si - 1], rmsDb[si - 1]);
     }
-    std::printf("monotonicity: PASS\n");
+    std::println("monotonicity: PASS");
 
     // Assert total rise in [2.0, 3.5] dB.
     g_section = "total rise";
     const double rise = rmsDb[kNumSteps - 1] - rmsDb[0];
-    std::printf("total rise: %.3f dB (gate [2.0, 3.5])\n", rise);
+    std::println("total rise: {:.3} dB (gate [2.0, 3.5])", rise);
     if (rise < 2.0)
-        FAIL("total rise %.3f dB below 2.0 dB", rise);
+        FAIL("total rise {:.3} dB below 2.0 dB", rise);
     if (rise > 3.5)
-        FAIL("total rise %.3f dB above 3.5 dB", rise);
+        FAIL("total rise {:.3} dB above 3.5 dB", rise);
 
-    std::printf("\n=== drive_loudness_check OK ===\n");
+    std::println("\n=== drive_loudness_check OK ===");
     return 0;
 }

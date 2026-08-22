@@ -1,55 +1,19 @@
-// tests/harnesses/dsp/diffuser_loop_check.cpp
-// ──────────────────────────────────────────────────────────────────────────
-// In-loop diffuser (C7c) acceptance harness — the two properties the whole
-// architecture exists for, measured with BINNING-FREE aggregate moments:
-//
-// (1) IN SYNC: the aggregate energy centroid M1 = Σe·t/Σe of the whole
-//     output must match the diffuser-off control's within 32 samples at
-//     every diffusion setting. Every sample is counted exactly once at its
-//     true position, so no binning artifact can hide a systematic comp
-//     error. Measured: |dM1| <= 8 samples at all settings; the pre-C7c
-//     post-loop design (median-anchored w·base comp) shifted every repeat
-//     late by g^8·base (~826 samples at diffusion 1, size 0.5) and would
-//     fail this by 25x the gate. Per-repeat Voronoi-binned centroids are
-//     NOT gated: at high g the blob tails genuinely overlap (front spike
-//     (g^8)^n leads by n·base, right tails decay over ~2·base·n), and the
-//     spill from louder earlier repeats into quieter later bins dominates
-//     the binned means — a measurement artifact, not a grid error (the
-//     aggregate proof above is the correct metric; the clean low-g bins
-//     1..3 are kept as supporting evidence where the overlap is
-//     negligible).
-//
-// (2) WASH: repeat n has n diffusion passes, so the per-repeat RMS width²
-//     grows linearly in n (variances add under convolution — the loop's
-//     damp/DC chain is LTI per pass and the loop saturator is in its linear
-//     regime at feedback 0.5). Aggregate version: dvar = var(diffused) −
-//     var(control) must equal n_bar·sigma1² within tolerance, where n_bar
-//     is the energy-weighted repeat index measured from the control's per-
-//     repeat energies and sigma1² is the one-pass blob's width² measured
-//     from the (clean) first repeat. Measured ratio 0.65–1.23 across the
-//     sweep; gate [0.5, 1.75]. The pre-C7c one-pass design failed this
-//     (dvar = 0: constant per-repeat width).
-//
-// (3) Control: the diffuser-off reference run provides the grid, the
-//     per-repeat energies (for n_bar), and a loop-filter smear baseline
-//     (the damp one-pole adds ~2.4 samples/pass of centroid drift, the 8 Hz
-//     DC blocker a ~1k-sample tail — pre-existing feedback-loop properties
-//     the control-relative comparisons cancel).
-//
-// Setup: mono, full wet, no main saturation (adaaOrder = 0), loopSatOrder =
-// 0 (satLatency_ = 0, so repeats land at exactly n·delay), loopDrive = 1 in
-// the linear regime (|v| <= 0.5, the hard clamp never fires), dampHz 6000,
-// crossFeed 0, feedback 0.5, mod depth 0 (deterministic), bits = 24. Delay
-// 24000 (500 ms, >> base transport so the comp fits at every size).
-// Conventions matching latency_null_check / chain_parity: plain main(),
-// printf, exit code, always-live CHECK/FAIL. Links SharedCode only; no JUCE.
-// ──────────────────────────────────────────────────────────────────────────
+/**
+ * In-loop diffuser acceptance harness. Gate A (sync): the aggregate energy
+ * centroid of the output matches the diffuser-off control within 32 samples.
+ * Gate B (wash): the variance growth obeys dvar = nBar * sigma1^2, repeat n
+ * carries n diffusion passes. Per-repeat binned centroids are not gated:
+ * blob tails overlap at high diffusion. See docs/dsp-notes.md for the
+ * aggregate-moment derivation and the control-run baselines.
+ */
 
 #include "dsp/ChronosEngine.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
+#include <print>
 #include <cstdlib>
 #include <vector>
 
@@ -70,10 +34,10 @@ using Engine = MarsDSP::ChronosEngine;
 const char* g_section = "(startup)";
 
 #define CHECK(cond) \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
-#define FAIL(fmt, ...) \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...) \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
 Engine::Params makeParams(bool enableDiff, float diffusion, float size) noexcept
 {
@@ -113,8 +77,8 @@ std::vector<float> runScenario(bool enableDiff, float diffusion, float size)
     for (int off = 0; off < total; off += kBlock)
     {
         const int n = std::min(kBlock, total - off);
-        float* io[1] = { buf.data() + off };
-        eng.process(io, 1, n);
+        std::array<float*, 1> io{ buf.data() + off };
+        eng.process(io.data(), 1, n);
     }
     return buf;
 }
@@ -134,13 +98,15 @@ struct BinStats
     double width    = 0.0;   // RMS spread around the centroid, samples
 };
 
-// Aggregate energy moments of the whole output past t0 — no binning, so no
+// Aggregate energy moments of the whole output past t0 - no binning, so no
 // spill artifact: M1 is the energy centroid, var the second central moment.
 struct AggStats { double m1 = 0.0; double var = 0.0; };
 
 AggStats aggStats(const std::vector<float>& out, int t0)
 {
-    double sumE = 0.0, sumEX = 0.0, sumEX2 = 0.0;
+    double sumE = 0.0;
+    double sumEX = 0.0;
+    double sumEX2 = 0.0;
     for (int n = t0; n < static_cast<int>(out.size()); ++n)
     {
         const double v = static_cast<double>(out[static_cast<std::size_t>(n)]);
@@ -162,9 +128,9 @@ AggStats aggStats(const std::vector<float>& out, int t0)
 // kRepeats are tail dumps so late repeats don't pollute the last gated bin.
 void binStats(const std::vector<float>& out, int gridOne, BinStats* bins)
 {
-    double sumE[kBins + 1] = {};
-    double sumEX[kBins + 1] = {};
-    double sumEX2[kBins + 1] = {};
+    std::array<double, kBins + 1> sumE = {{  }};
+    std::array<double, kBins + 1> sumEX = {{  }};
+    std::array<double, kBins + 1> sumEX2 = {{  }};
 
     for (int n = 0; n < kSettle + kCapture; ++n)
     {
@@ -191,7 +157,7 @@ void binStats(const std::vector<float>& out, int gridOne, BinStats* bins)
     }
 }
 
-// ── Test 1+2: aggregate sync (gate A) + aggregate wash law (gate B) ─────
+// Test 1+2: aggregate sync (gate A) + aggregate wash law (gate B)
 void testLoopSyncAndWash()
 {
     g_section = "loop sync + wash";
@@ -210,11 +176,11 @@ void testLoopSyncAndWash()
     BinStats ctrl[kBins + 1];
     binStats(ref, gridOne, ctrl);
     CHECK(ctrl[1].energy > 0.0);
-    std::printf("    control (diffuser off) — loop-filter smear baseline:\n");
+    std::println("    control (diffuser off) — loop-filter smear baseline:");
     for (int r = 2; r <= kRepeats; ++r)
     {
         const double cdiff = ctrl[r].centroid - (gridOne + (r - 1.0) * kDelay);
-        std::printf("    control repeat %d: centroid vs raw grid %+.1f samples, width %.1f\n",
+        std::println("    control repeat {}: centroid vs raw grid {:.1} samples, width {:.1}",
                     r, cdiff, ctrl[r].width);
         CHECK(ctrl[r].energy > 0.0);
         CHECK(std::fabs(cdiff) <= 64.0);    // small: damp+DC drift only
@@ -224,7 +190,8 @@ void testLoopSyncAndWash()
     // n_bar: energy-weighted repeat index from the control's per-repeat
     // energies (the diffuser is energy-preserving, so the diffused runs
     // share the same per-repeat energy distribution).
-    double nBar = 0.0, sumE = 0.0;
+    double nBar = 0.0;
+    double sumE = 0.0;
     for (int r = 1; r <= kBins; ++r)
     {
         nBar += ctrl[r].energy * static_cast<double>(r);
@@ -232,11 +199,11 @@ void testLoopSyncAndWash()
     }
     nBar /= sumE;
     const AggStats aggCtrl = aggStats(ref, kSettle);
-    std::printf("    control: n_bar=%.3f  aggregate M1=%.1f var=%.0f: PASS\n\n",
+    std::println("    control: n_bar={:.3}  aggregate M1={:.1} var={:.0}: PASS\n",
                 nBar, aggCtrl.m1, aggCtrl.var);
 
-    const float sizes[] = { 0.5f, 0.0f };
-    const float diffs[] = { 0.25f, 0.5f, 0.75f, 1.0f };
+    const std::array<float, 2> sizes { { 0.5f, 0.0f } };
+    const std::array<float, 4> diffs { { 0.25f, 0.5f, 0.75f, 1.0f } };
 
     for (float size : sizes)
     {
@@ -249,18 +216,18 @@ void testLoopSyncAndWash()
             binStats(out, gridOne, bins);
             CHECK(bins[1].energy > 0.0);
 
-            // ── Gate A (IN SYNC): aggregate centroid vs control ──
+            // Gate A (IN SYNC): aggregate centroid vs control
             const AggStats agg = aggStats(out, kSettle);
             const double dM1 = agg.m1 - aggCtrl.m1;
-            std::printf("    diff=%.2f size=%.1f: dM1 %+6.1f (gate %.0f)",
+            std::print("    diff={:.2} size={:.1}: dM1 {:6.1} (gate {:.0})",
                         static_cast<double>(diff), static_cast<double>(size),
                         dM1, kSyncGate);
             if (std::fabs(dM1) > kSyncGate)
-                FAIL("diff=%.2f size=%.1f aggregate centroid off by %.1f > %.0f",
+                FAIL("diff={:.2} size={:.1} aggregate centroid off by {:.1} > {:.0}",
                      static_cast<double>(diff), static_cast<double>(size),
                      std::fabs(dM1), kSyncGate);
 
-            // ── Gate B (WASH): dvar = n_bar * sigma1^2 ──
+            // Gate B (WASH): dvar = n_bar * sigma1^2
             // sigma1^2 from the clean first repeat (no louder previous
             // repeat to spill into bin 1), loop-filter width subtracted.
             const double s1sq = bins[1].width * bins[1].width
@@ -269,27 +236,26 @@ void testLoopSyncAndWash()
             const double dvar = agg.var - aggCtrl.var;
             const double pred = nBar * s1sq;
             const double ratio = dvar / pred;
-            std::printf("  dvar %.0f / pred %.0f = %.3f (gate %.2f..%.2f)  sigma1 %.0f (ctrl %.0f)",
+            std::print("  dvar {:.0} / pred {:.0} = {:.3} (gate {:.2}..{:.2})  sigma1 {:.0} (ctrl {:.0})",
                         dvar, pred, ratio, kWashLo, kWashHi,
                         std::sqrt(s1sq), ctrl[1].width);
             if (ratio < kWashLo || ratio > kWashHi)
-                FAIL("diff=%.2f size=%.1f wash law ratio %.3f outside [%.2f, %.2f] "
-                     "(dvar %.0f, pred %.0f)",
+                FAIL("diff={:.2} size={:.1} wash law ratio {:.3} outside [{:.2}, {:.2}] (dvar {:.0}, pred {:.0})",
                      static_cast<double>(diff), static_cast<double>(size),
                      ratio, kWashLo, kWashHi, dvar, pred);
-            // discriminator: the wash comes from the diffuser — one-pass
+            // discriminator: the wash comes from the diffuser - one-pass
             // width well beyond the loop-filter-only smear.
             if (std::sqrt(s1sq) < 2.0 * ctrl[1].width)
-                FAIL("diff=%.2f size=%.1f sigma1 %.1f < 2x control %.1f (wash not from diffuser)",
+                FAIL("diff={:.2} size={:.1} sigma1 {:.1} < 2x control {:.1} (wash not from diffuser)",
                      static_cast<double>(diff), static_cast<double>(size),
                      std::sqrt(s1sq), ctrl[1].width);
 
-            // ── Supporting evidence: clean per-repeat bins 1..3, gated
+            // Supporting evidence: clean per-repeat bins 1..3, gated
             //    only where the blob-tail overlap is negligible (size 0.5,
-            //    diff <= 0.75 — at size 0 the blobs are ~2x wider and spill
+            //    diff <= 0.75 - at size 0 the blobs are ~2x wider and spill
             //    pollutes bin 3 already at diff 0.75, and at diff 1.0 the
             //    (g^8)^n front spikes land n*base early, in previous bins).
-            //    The aggregate gates above are the authoritative metrics. ──
+            //    The aggregate gates above are the authoritative metrics.
             if (size == 0.5f && diff <= 0.75f)
             {
                 double worstC = 0.0;
@@ -298,28 +264,28 @@ void testLoopSyncAndWash()
                     const double cdiff = std::fabs(bins[r].centroid - ctrl[r].centroid);
                     worstC = std::max(worstC, cdiff);
                     if (cdiff > 150.0)
-                        FAIL("diff=%.2f size=%.1f repeat %d centroid off control by %.1f > 150",
+                        FAIL("diff={:.2} size={:.1} repeat {} centroid off control by {:.1} > 150",
                              static_cast<double>(diff), static_cast<double>(size), r, cdiff);
                 }
-                std::printf("  worst r1..3 |dC| %.1f", worstC);
+                std::print("  worst r1..3 |dC| {:.1}", worstC);
             }
-            std::printf(" -> sync + wash PASS\n");
+            std::println(" -> sync + wash PASS");
         }
     }
-    std::printf("loop sync (aggregate centroid on grid) + wash (variance n_bar*sigma1^2): PASS\n");
+    std::println("loop sync (aggregate centroid on grid) + wash (variance n_bar*sigma1^2): PASS");
 }
 
 } // namespace
 
 int main()
 {
-    std::printf("=== Chronos diffuser_loop_check (C7c: in-loop sync + wash) ===\n");
-    std::printf("fs=%.0f  delay=%d (%.0f ms)  feedback=%.2f  repeats=%d\n\n",
+    std::println("=== Chronos diffuser_loop_check (in-loop sync + wash) ===");
+    std::println("fs={:.0}  delay={} ({:.0} ms)  feedback={:.2}  repeats={}\n",
                 kFs, kDelay, static_cast<double>(kDelay) / kFs * 1000.0,
                 static_cast<double>(kFbGain), kRepeats);
 
     testLoopSyncAndWash();
 
-    std::printf("\n=== ALL PROPERTIES HELD ===\n");
+    std::println("\n=== ALL PROPERTIES HELD ===");
     return 0;
 }

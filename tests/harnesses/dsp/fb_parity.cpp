@@ -1,69 +1,19 @@
-// tests/harnesses/dsp/fb_parity.cpp
-// ──────────────────────────────────────────────────────────────────────────
-// FeedbackDelay parity: process (chunked, C3) vs processRef (per-sample
-// reference twin, // reference only -- do not optimize, do not delete).
-//
-// The chunked process() processes sub-chunks of Lc ≤ D − kChunkGuard samples
-// (D = read delay), exploiting the loop-carried distance to read all taps
-// before writing any. processRef() is the verbatim pre-C3 per-sample loop.
-// Both share processSampleScalar_ (the one scalar implementation) for the
-// Lc < 4 fallback, so the degenerate path is identical by construction.
-//
-// Parity subtlety (why the gate is split):
-//  * satOrder = 0 (hard clamp, no FMA in the chain): the chunked bulk-tap-read
-//    uses the identical FracDelayTap::read op order (mul + horizontal sum,
-//    hoisted window when settled, per-sample FracDelayTap::read when moving).
-//    The recursive chain (damp/DC/cross/saturate) is the same per-sample ops
-//    in the same order. Storing vL[i] to a stack float and reading it back is
-//    bit-exact. S5 added loopTrim_ = pow(rmsRatio, -0.5) to the wet output;
-//    std::pow is not bit-exact across libm implementations (x86_64 vs arm64
-//    differ by 1 ULP), and the trim feeds back through the loop so the
-//    difference compounds over recirculation. So satOrder = 0 now uses the
-//    same combined abs/rel tolerance as the diffuser-on cells, plus the
-//    energy-envelope gate for feedback ≥ 0.5.
-//  * satOrder ∈ {1,2}: ADAA is a nonlinear state recursion in double. Even
-//    with identical per-sample ops, a recirculating system can compound
-//    float32 rounding differences per loop pass if any op reorders. The
-//    chunked path's per-sample ops are identical to processRef's, so we
-//    EXPECT near-bit-exact, but we gate with a per-sample relative tolerance
-//    1e-5 over the first 2·D samples (one loop period of recirculation) plus
-//    an energy-envelope gate (per-1024-sample RMS ratio within ±0.1 dB) over
-//    ≥ 10 loop passes at feedback 0.95 — divergence must stay bounded-noise,
-//    not systematic.
-//
-// Matrix: delay ∈ {5, 7, 12, 48, 480, 4800} (first three force the degenerate
-//   scalar path and the Lc boundary), feedback ∈ {0, 0.5, 0.95, 1.2}, cross ∈
-//   {0, 0.37, 1}, block ∈ {1, 17, 64, 256, 512}, mono + stereo. Plus a
-//   delay-automation ramp (sweep delay across blocks → mid-ramp smoother,
-//   crossing chunk boundaries) and a dampHz/loopCutHz/crossFeed automation
-//   case.
-//
-// C7c in-loop diffuser section: the diffuser is enabled via Params on BOTH
-// instances (the loop tap reads at d − satLatency − fade·baseTransport, the
-// tap stream passes through the diffuser before the recursion, and the
-// toggle fade blends raw/diffused). Cells are chosen to hit every
-// diffuser-path difference against processRef:
-//   * diffusion {0.5, 1.0} × size {0.5, 0.0} at delay 4800: settled bulk
-//     read + the SIMD diffuser kernel (processBlock) vs the scalar chain_
-//     (processBlockRef) — these differ at last-ulp level (FMA contraction),
-//     so diffuser-on cells ALWAYS use the tolerance gate, even at satOrder 0
-//     (bit-exact is only required for diffuser-off cells);
-//   * delay 480 with size 0.5 (delay < baseTransport): the loop tap clamps
-//     at kMinLoopDelay (repeats land late by the remainder — documented C7c
-//     clamp semantics), Lc < 4 → scalar fallback WITH the diffuser live;
-//   * enable-toggle cells: resetParams(diffuser off) then setParams
-//     on→off→on mid-run — parity through FadingIn/FadingOut (the fade
-//     forces the per-sample non-settled tap walk).
-//
-// Conventions (matching latency_null_check / chain_parity): plain main(), exit
-// code, printf, always-live CHECK/FAIL. Links SharedCode only; no JUCE.
-// ──────────────────────────────────────────────────────────────────────────
+/**
+ * FeedbackDelay parity: the chunked process() against the per-sample
+ * processRef() reference twin. Diffuser-off cells are bit-exact.
+ * Diffuser-on cells use a combined abs 1e-6 / rel 1e-3 gate plus a plus/minus
+ * 0.1 dB energy-envelope check, because the SIMD diffuser kernel and the
+ * scalar reference differ at ulp level through FMA contraction.
+ * The matrix covers delay, feedback, cross, block size, mono and stereo,
+ * the Lc < 4 fallback, automation ramps, and enable toggles.
+ */
 
 #include "dsp/FeedbackDelay.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <print>
 #include <cstdlib>
 #include <numbers>
 #include <vector>
@@ -86,10 +36,10 @@ double g_worstRel = 0.0;
 double g_worstEnvDb = 0.0;
 
 #define CHECK(cond) \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
-#define FAIL(fmt, ...) \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...) \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
 struct Cfg
 {
@@ -99,7 +49,7 @@ struct Cfg
     int   satOrder;
     int   block;
     bool  stereo;
-    bool  diffOn    = false;  // C7c: in-loop diffuser enabled
+    bool  diffOn    = false;  // in-loop diffuser enabled
     float diffusion = 0.7f;   // allpass coefficient 0..0.92
     float diffSize  = 0.5f;   // section length scale
     float delayModDepth  = 0.0f;  // cents; 0 keeps the settled path reachable
@@ -188,7 +138,7 @@ void runOne(const Cfg& c, bool automateDelay, bool automateDampCross)
                        rL.data() + off, hasR ? rR.data() + off : nullptr, n);
     }
 
-    // ── Compare ──
+    // Compare
     const int D = c.delay;
     const int twoD = std::min(2 * D, kTotal);
     // All cells use a COMBINED gate (abs <= 1e-6 OR rel <= 1e-3). S5's
@@ -212,7 +162,7 @@ void runOne(const Cfg& c, bool automateDelay, bool automateDampCross)
             const float rel = absL / denom;
             g_worstRel = std::max(g_worstRel, static_cast<double>(rel));
             const bool okL = (absL <= 1e-6f || rel <= 1e-3f);
-            if (!okL) { tolOk = false; FAIL("TOL delay=%d fb=%.2f cross=%.2f sat=%d blk=%d i=%d L: abs=%.3e rel=%.3e (%g vs %g)",
+            if (!okL) { tolOk = false; FAIL("TOL delay={} fb={:.2} cross={:.2} sat={} blk={} i={} L: abs={:.3} rel={:.3} ({} vs {})",
                      c.delay, c.feedback, c.cross, c.satOrder, c.block, i,
                      static_cast<double>(absL), static_cast<double>(rel),
                      static_cast<double>(fL[u]), static_cast<double>(rL[u])); }
@@ -223,7 +173,7 @@ void runOne(const Cfg& c, bool automateDelay, bool automateDampCross)
                 const float relR = absR / denomR;
                 g_worstRel = std::max(g_worstRel, static_cast<double>(relR));
                 const bool okR = (absR <= 1e-6f || relR <= 1e-3f);
-                if (!okR) { tolOk = false; FAIL("TOL delay=%d fb=%.2f cross=%.2f sat=%d blk=%d i=%d R: abs=%.3e rel=%.3e (%g vs %g)",
+                if (!okR) { tolOk = false; FAIL("TOL delay={} fb={:.2} cross={:.2} sat={} blk={} i={} R: abs={:.3} rel={:.3} ({} vs {})",
                          c.delay, c.feedback, c.cross, c.satOrder, c.block, i,
                          static_cast<double>(absR), static_cast<double>(relR),
                          static_cast<double>(fR[u]), static_cast<double>(rR[u])); }
@@ -248,7 +198,7 @@ void runOne(const Cfg& c, bool automateDelay, bool automateDampCross)
                 if (std::fabs(devDb) > 0.1)
                 {
                     envOk = false;
-                    FAIL("ENV delay=%d fb=%.2f sat=%d blk=%d start=%d: %.3f dB > 0.1 dB",
+                    FAIL("ENV delay={} fb={:.2} sat={} blk={} start={}: {:.3} dB > 0.1 dB",
                          c.delay, c.feedback, c.satOrder, c.block, start, devDb);
                 }
             }
@@ -261,14 +211,14 @@ void runOne(const Cfg& c, bool automateDelay, bool automateDampCross)
 
 int main()
 {
-    std::printf("=== Chronos fb_parity (chunked process vs per-sample processRef) ===\n");
-    std::printf("fs=%.0f  total=%d  maxDelay=%d\n\n", kFs, kTotal, kMaxDelay);
+    std::println("=== Chronos fb_parity (chunked process vs per-sample processRef) ===");
+    std::println("fs={:.0}  total={}  maxDelay={}\n", kFs, kTotal, kMaxDelay);
 
-    const int   delays[6]  = { 5, 7, 12, 48, 480, 4800 };
-    const float fbs[4]     = { 0.0f, 0.5f, 0.95f, 1.2f };
-    const float cross[3]   = { 0.0f, 0.37f, 1.0f };
-    const int   sats[3]    = { 0, 1, 2 };
-    const int   blocks[5]  = { 1, 17, 64, 256, 512 };
+    const std::array<int, 6> delays = {{ 5, 7, 12, 48, 480, 4800 }};
+    const std::array<float, 4> fbs = {{ 0.0f, 0.5f, 0.95f, 1.2f }};
+    const std::array<float, 3> cross = {{ 0.0f, 0.37f, 1.0f }};
+    const std::array<int, 3> sats = {{ 0, 1, 2 }};
+    const std::array<int, 5> blocks = {{ 1, 17, 64, 256, 512 }};
     const bool  stereos[2] = { false, true };
 
     long configs = 0;
@@ -406,7 +356,7 @@ int main()
                 const float rel = absL / denom;
                 g_worstRel = std::max(g_worstRel, static_cast<double>(rel));
                 if (absL > 1e-6f && rel > 1e-3f)
-                    FAIL("TOGGLE-TOL sat=%d blk=%d ch=%d i=%d L: abs=%.3e rel=%.3e (%g vs %g)",
+                    FAIL("TOGGLE-TOL sat={} blk={} ch={} i={} L: abs={:.3} rel={:.3} ({} vs {})",
                          sat, blk, stereo?2:1, i, static_cast<double>(absL),
                          static_cast<double>(rel), static_cast<double>(fL[u]),
                          static_cast<double>(rL[u]));
@@ -417,7 +367,7 @@ int main()
                     const float relR = absR / denomR;
                     g_worstRel = std::max(g_worstRel, static_cast<double>(relR));
                     if (absR > 1e-6f && relR > 1e-3f)
-                        FAIL("TOGGLE-TOL sat=%d blk=%d ch=%d i=%d R: abs=%.3e rel=%.3e",
+                        FAIL("TOGGLE-TOL sat={} blk={} ch={} i={} R: abs={:.3} rel={:.3}",
                              sat, blk, stereo?2:1, i, static_cast<double>(absR),
                              static_cast<double>(relR));
                 }
@@ -427,9 +377,9 @@ int main()
         }
     }
 
-    std::printf("matrix (%ld configs):\n", configs);
-    std::printf("  tolerance:               %d configs PASS (worst rel %.3e, gate 1e-3)\n", g_tolOk, g_worstRel);
-    std::printf("  satOrder 1/2 energy env: %d configs PASS (worst %.4f dB, gate 0.1 dB)\n", g_envOk, g_worstEnvDb);
-    std::printf("\n=== ALL PROPERTIES HELD ===\n");
+    std::println("matrix ({} configs):", configs);
+    std::println("  tolerance:               {} configs PASS (worst rel {:.3}, gate 1e-3)", g_tolOk, g_worstRel);
+    std::println("  satOrder 1/2 energy env: {} configs PASS (worst {:.4} dB, gate 0.1 dB)", g_envOk, g_worstEnvDb);
+    std::println("\n=== ALL PROPERTIES HELD ===");
     return 0;
 }

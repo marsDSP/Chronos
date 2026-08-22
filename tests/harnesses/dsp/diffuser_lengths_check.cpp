@@ -26,7 +26,7 @@ namespace
         return true;
     }
 
-    constexpr double kSampleRates[] = {44100.0, 48000.0, 88200.0, 96000.0, 176400.0, 192000.0};
+    constexpr std::array<double, 6> kSampleRates { { 44100.0, 48000.0, 88200.0, 96000.0, 176400.0, 192000.0 } };
 }
 
 int main()

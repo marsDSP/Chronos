@@ -9,8 +9,10 @@
 #include "dsp/ChronosEngine.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
+#include <print>
 #include <cstdlib>
 #include <numbers>
 #include <vector>
@@ -20,10 +22,10 @@ namespace {
 const char* g_section = "(startup)";
 
 #define CHECK(cond)                                                            \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
-#define FAIL(fmt, ...)                                                         \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...)                                                         \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
 constexpr double kFs = 48000.0;
 constexpr int    kFsInt = 48000;
@@ -69,16 +71,16 @@ MarsDSP::ChronosEngine::Params paramsAt(float pos) noexcept
 
 int main()
 {
-    std::printf("=== automation_sweep_check ===\n");
-    std::printf("fs=%d duration=%.0fs delta_limit=%.2f\n", kFsInt, kDuration, kMaxDelta);
+    std::println("=== automation_sweep_check ===");
+    std::println("fs={} duration={:.0}s delta_limit={:.2}", kFsInt, kDuration, kMaxDelta);
 
-    constexpr int blockSizes[] = { 16, 64, 512, 2048 };
+    constexpr std::array<int, 4> blockSizes { { 16, 64, 512, 2048 } };
     const double kTwoPi = 2.0 * std::numbers::pi_v<double>;
 
     for (int blockSize : blockSizes)
     {
         g_section = "block-size";
-        std::printf("  block=%d ... ", blockSize);
+        std::print("  block={} ... ", blockSize);
         std::fflush(stdout);
 
         MarsDSP::ChronosEngine engine;
@@ -120,8 +122,8 @@ int main()
             }
 
             engine.setParams(paramsAt(posMid));
-            float* io[2] = { bufL.data(), bufR.data() };
-            engine.process(io, kChannels, n);
+            std::array<float*, 2> io{ bufL.data(), bufR.data() };
+            engine.process(io.data(), kChannels, n);
 
             for (int i = 0; i < n; ++i)
             {
@@ -130,24 +132,24 @@ int main()
                 if (!std::isfinite(oL) || !std::isfinite(oR))
                 {
                     allFinite = false;
-                    FAIL("non-finite output at sample %d (L=%g R=%g)", pos + i, (double)oL, (double)oR);
+                    FAIL("non-finite output at sample {} (L={} R={})", pos + i, static_cast<double>(oL), static_cast<double>(oR));
                 }
                 const float dL = std::abs(oL - prevL);
                 const float dR = std::abs(oR - prevR);
                 if (dL > maxDeltaL) { maxDeltaL = dL; maxDeltaSample = pos + i; }
                 if (dR > maxDeltaR) { maxDeltaR = dR; maxDeltaSample = pos + i; }
                 if (dL > kMaxDelta || dR > kMaxDelta)
-                    FAIL("delta %.4f at sample %d (block %d)", std::max(dL, dR), pos + i, blockSize);
+                    FAIL("delta {:.4} at sample {} (block {})", std::max(dL, dR), pos + i, blockSize);
                 prevL = oL;
                 prevR = oR;
             }
         }
 
         CHECK(allFinite);
-        std::printf("ok (max delta L=%.4f R=%.4f at sample %d)\n",
+        std::println("ok (max delta L={:.4} R={:.4} at sample {})",
                     maxDeltaL, maxDeltaR, maxDeltaSample);
     }
 
-    std::printf("=== automation_sweep_check OK ===\n");
+    std::println("=== automation_sweep_check OK ===");
     return 0;
 }

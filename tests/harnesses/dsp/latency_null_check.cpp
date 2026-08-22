@@ -9,6 +9,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <print>
 #include <cstdlib>
 #include <numbers>
 #include <vector>
@@ -22,10 +23,10 @@ constexpr double kPi     = 3.14159265358979323846;
 const char* g_section = "(startup)";
 
 #define CHECK(cond) \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
-#define FAIL(fmt, ...) \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...) \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
 struct Chain
 {
@@ -122,7 +123,8 @@ struct Chain
 double measureAmp(const std::vector<float>& x, double freqHz, int start, int len)
 {
     const double omega = 2.0 * kPi * freqHz / kFs;
-    double c = 0.0, s = 0.0;
+    double c = 0.0;
+    double s = 0.0;
     for (int n = 0; n < len; ++n)
     {
         const double ang = omega * (start + n);
@@ -133,7 +135,7 @@ double measureAmp(const std::vector<float>& x, double freqHz, int start, int len
     return 2.0 * std::sqrt(c * c + s * s) / static_cast<double>(len);
 }
 
-// ── Test 1: full-dry null (mix = 0%), bit-exact, all three modes ─────────
+// Test 1: full-dry null (mix = 0%), bit-exact, all three modes
 void testFullDryNull()
 {
     g_section = "full-dry null";
@@ -157,8 +159,8 @@ void testFullDryNull()
         {
             const float exp = (n >= kBudget) ? in[static_cast<std::size_t>(n - kBudget)] : 0.0f;
             if (out0[n] != exp)
-                FAIL("mode=%d n=%d got=%g exp=%g (full-dry null, bit-exact)",
-                     mode, n, (double)out0[n], (double)exp);
+                FAIL("mode={} n={} got={} exp={} (full-dry null, bit-exact)",
+                     mode, n, static_cast<double>(out0[n]), static_cast<double>(exp));
         }
     }
 
@@ -175,10 +177,10 @@ void testFullDryNull()
         c.prepare(kN); c.process(in.data(), o.data(), kN);
         for (int n = 0; n < kN; ++n)
             if (o[n] != ref[n])
-                FAIL("mode-independence: mode=%d n=%d differs from mode 0 (%g != %g)",
-                     mode, n, (double)o[n], (double)ref[n]);
+                FAIL("mode-independence: mode={} n={} differs from mode 0 ({} != {})",
+                     mode, n, static_cast<double>(o[n]), static_cast<double>(ref[n]));
     }
-    std::printf("full-dry null (mix=0%%, bit-exact, all 3 modes identical): PASS\n");
+    std::println("full-dry null (mix=0%, bit-exact, all 3 modes identical): PASS");
 }
 
 void testFullWetOffDelay()
@@ -210,8 +212,8 @@ void testFullWetOffDelay()
         maxErr = std::max(maxErr, err);
     }
     if (maxErr > 1e-5)
-        FAIL("full-wet Off max|out - in[delay+kBudget]| = %.3e (> 1e-5)", maxErr);
-    std::printf("full-wet Off delay (delaySamples+kBudget = %d, max err %.3e < 1e-5): PASS\n",
+        FAIL("full-wet Off max|out - in[delay+kBudget]| = {:.3} (> 1e-5)", maxErr);
+    std::println("full-wet Off delay (delaySamples+kBudget = {}, max err {:.3} < 1e-5): PASS",
                 totalDelay, maxErr);
 }
 
@@ -255,11 +257,11 @@ double sweepAlignmentDeviation(int mode, float amplitude, double fLo, double fHi
         const double wet = runChain(1.0f, fHz);   // mix=100% -> wet path only
         const double sum = runChain(0.5f, fHz);   // 50/50
         const double predicted = dry * cosGain + wet * sinGain;
-        if (predicted <= 0.0) FAIL("mode=%d %.1f Hz predicted <= 0", mode, fHz);
+        if (predicted <= 0.0) FAIL("mode={} {:.1} Hz predicted <= 0", mode, fHz);
         const double devDb = 20.0 * std::log10(sum / predicted);
         if (std::abs(devDb) > std::abs(maxDevDb)) { maxDevDb = devDb; worstK = k; }
     }
-    std::printf("    mode=%d sweep [%.1f, %.1f] Hz: max dev %+.4f dB at %.1f Hz (vs in-phase prediction)\n",
+    std::println("    mode={} sweep [{:.1}, {:.1}] Hz: max dev {:.4} dB at {:.1} Hz (vs in-phase prediction)",
                 mode, binToHz(kLo), binToHz(kHi), maxDevDb, binToHz(worstK));
     return std::abs(maxDevDb);
 }
@@ -269,7 +271,7 @@ void test3_50pctOffSweep()
     g_section = "50% mix Off sweep";
     const double dev = sweepAlignmentDeviation(0, 1.0f, 20.0, 20000.0);
     CHECK(dev <= 0.05);
-    std::printf("50%% mix Off sweep 20 Hz-20 kHz (gate +-0.05 dB vs aligned prediction, got %+.4f): PASS\n", dev);
+    std::println("50% mix Off sweep 20 Hz-20 kHz (gate +-0.05 dB vs aligned prediction, got {:.4}): PASS", dev);
 }
 
 void test4_50pctADAA()
@@ -278,13 +280,13 @@ void test4_50pctADAA()
     {
         const double dev = sweepAlignmentDeviation(1, 0.01f, 20.0, 15000.0);
         CHECK(dev <= 0.2);
-        std::printf("50%% mix ADAA1 sweep to 15 kHz (gate +-0.2 dB vs aligned prediction, got %+.4f): PASS\n", dev);
+        std::println("50% mix ADAA1 sweep to 15 kHz (gate +-0.2 dB vs aligned prediction, got {:.4}): PASS", dev);
     }
     g_section = "50% mix ADAA2";
     {
         const double dev = sweepAlignmentDeviation(2, 0.01f, 20.0, 15000.0);
         CHECK(dev <= 0.1);
-        std::printf("50%% mix ADAA2 sweep to 15 kHz (gate +-0.1 dB vs aligned prediction, got %+.4f): PASS\n", dev);
+        std::println("50% mix ADAA2 sweep to 15 kHz (gate +-0.1 dB vs aligned prediction, got {:.4}): PASS", dev);
     }
 }
 
@@ -292,14 +294,14 @@ void test4_50pctADAA()
 
 int main()
 {
-    std::printf("=== Chronos end-to-end latency/alignment harness ===\n");
-    std::printf("kBudget = %d  fs = %.0f Hz\n\n", kBudget, kFs);
+    std::println("=== Chronos end-to-end latency/alignment harness ===");
+    std::println("kBudget = {}  fs = {:.0} Hz\n", kBudget, kFs);
 
     testFullDryNull();
     testFullWetOffDelay();
     test3_50pctOffSweep();
     test4_50pctADAA();
 
-    std::printf("\n=== ALL PROPERTIES HELD ===\n");
+    std::println("\n=== ALL PROPERTIES HELD ===");
     return 0;
 }

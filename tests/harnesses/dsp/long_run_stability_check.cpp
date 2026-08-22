@@ -15,6 +15,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <print>
 #include <cstdlib>
 #include <numbers>
 #include <vector>
@@ -24,10 +25,10 @@ namespace {
 const char* g_section = "(startup)";
 
 #define CHECK(cond)                                                            \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
-#define FAIL(fmt, ...)                                                         \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...)                                                         \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
 constexpr double kFs = 48000.0;
 constexpr int    kFsInt = 48000;
@@ -44,8 +45,8 @@ int main()
     using clock = std::chrono::steady_clock;
     const auto t0 = clock::now();
 
-    std::printf("=== long_run_stability_check ===\n");
-    std::printf("fs=%d block=%d duration=4h samples=%lld\n", kFsInt, kBlock,
+    std::println("=== long_run_stability_check ===");
+    std::println("fs={} block={} duration=4h samples={}", kFsInt, kBlock,
                 static_cast<long long>(kTotalSamples));
 
     g_section = "prepare";
@@ -133,7 +134,7 @@ int main()
 
     g_section = "OU state statistics";
     const float maxSigma = fb.ouStateMaxSigma();
-    std::printf("max OU state: %.4f sigmas (gate < 6.0)\n", static_cast<double>(maxSigma));
+    std::println("max OU state: {:.4} sigmas (gate < 6.0)", static_cast<double>(maxSigma));
     CHECK(maxSigma < 6.0f);
 
     g_section = "output RMS stability";
@@ -143,18 +144,18 @@ int main()
     const double rmsFinal = std::sqrt(finalSumSq / static_cast<double>(finalCount));
     const double dbDelta = (rms1Min > 0.0 && rmsFinal > 0.0)
         ? std::abs(20.0 * std::log10(rmsFinal / rms1Min)) : 999.0;
-    std::printf("RMS at 1 min: %.6e  RMS at end: %.6e  delta: %.3f dB\n",
+    std::println("RMS at 1 min: {:.6}  RMS at end: {:.6}  delta: {:.3} dB",
                 rms1Min, rmsFinal, dbDelta);
     CHECK(dbDelta < 0.5);
 
     g_section = "output mean";
     const double meanFinal = finalSum / static_cast<double>(finalCount);
-    std::printf("mean over final minute: %.3e\n", meanFinal);
+    std::println("mean over final minute: {:.3}", meanFinal);
     CHECK(std::abs(meanFinal) < 1e-6);
 
-    std::printf("wall time: %.1f s\n", wallSec);
+    std::println("wall time: {:.1} s", wallSec);
     CHECK(wallSec < 240.0);
 
-    std::printf("=== long_run_stability_check OK ===\n");
+    std::println("=== long_run_stability_check OK ===");
     return 0;
 }
