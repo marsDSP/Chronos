@@ -10,7 +10,9 @@ const ParameterID bitsParamID{"bits", 1};
 const ParameterID delayTimeParamID{"delayTime", 1};
 const ParameterID delaySyncParamID{"delaySync", 1};
 const ParameterID delayDivisionParamID{"delayDivision", 1};
+const ParameterID delayModeParamID{"delayMode", 1};
 const ParameterID bypassParamID{"bypass", 1};
+const ParameterID filterModeParamID{"filterMode", 1};
 const ParameterID hpfFreqParamID{"hpfFreq", 1};
 const ParameterID lpfFreqParamID{"lpfFreq", 1};
 const ParameterID mixParamID{"mix", 1};
@@ -45,7 +47,9 @@ public:
         castParameter(apvts, delayTimeParamID, delayParam);
         castParameter(apvts, delaySyncParamID, delaySyncParam);
         castParameter(apvts, delayDivisionParamID, delayDivisionParam);
+        castParameter(apvts, delayModeParamID, delayModeParam);
         castParameter(apvts, bypassParamID, bypassParam);
+        castParameter(apvts, filterModeParamID, filterModeParam);
         castParameter(apvts, hpfFreqParamID, hpfParam);
         castParameter(apvts, lpfFreqParamID, lpfParam);
         castParameter(apvts, mixParamID, mixParam);
@@ -83,6 +87,9 @@ public:
                         "1/8T", "1/16.", "1/8", "1/4T", "1/8.", "1/4",
                         "1/2T", "1/4.", "1/2", "1/1T", "1/2.", "1/1",
                         "2/1", "4/1"}, 11));
+
+        layout.add(std::make_unique<AudioParameterChoice>(delayModeParamID, "Delay Core",
+            StringArray{"Digital", "BBD"}, 0));
 
         {
             constexpr float kFbKnee = 0.90f;
@@ -169,6 +176,9 @@ public:
         layout.add(std::make_unique<AudioParameterChoice>(adaaOrderParamID, "Drive Sat",
             StringArray{"Off", "1st", "2nd"}, 2));
 
+        layout.add(std::make_unique<AudioParameterChoice>(filterModeParamID, "Output Filter",
+            StringArray{"Digital", "Analog"}, 0));
+
         layout.add(std::make_unique<AudioParameterFloat>(hpfFreqParamID, "Output HPF",
             NormalisableRange{20.0f, 2000.0f, 0.0f, 0.25452f}, 20.0f,
             Attrs().withStringFromValueFunction(
@@ -200,78 +210,28 @@ public:
         return layout;
     }
 
+    /// Store the sample rate. The engine owns all per-sample smoothing.
     void prepare(const double sr) noexcept
     {
         sampleRate = sr;
-        constexpr double dur = 0.02;
-        gainSmoother.reset(sr, dur);
-        bitsSmoother.reset(sr, dur);
-        hpfSmoother.reset(sr, dur);
-        lpfSmoother.reset(sr, dur);
-        mixSmoother.reset(sr, dur);
-        driveSmoother.reset(sr, dur);
     }
 
+    /// Snap the block-rate delay value to the current knob position.
     void reset() noexcept
     {
-        gain = 0.0f;
-        bits = 0.0f;
         delaySamples = 0.0f;
-        mix = 0.0f;
-        drive = 0.0f;
-        if (gainParam != nullptr)
-            gainSmoother.setCurrentAndTargetValue(Decibels::decibelsToGain(gainParam->get()));
-        if (bitsParam != nullptr)
-            bitsSmoother.setCurrentAndTargetValue(static_cast<float>(bitsParam->get()));
         if (delayParam != nullptr)
             delaySamples = msToSamples(delayParam->get());
-        if (hpfParam != nullptr)
-            hpfSmoother.setCurrentAndTargetValue(hpfParam->get());
-        if (lpfParam != nullptr)
-            lpfSmoother.setCurrentAndTargetValue(lpfParam->get());
-        if (mixParam != nullptr)
-            mixSmoother.setCurrentAndTargetValue(mixParam->get());
-        if (driveParam != nullptr)
-            driveSmoother.setCurrentAndTargetValue(Decibels::decibelsToGain(driveParam->get()));
     }
 
+    /// Refresh the block-rate delay value from the knob. Call once per block.
     void update() noexcept
     {
-        if (gainParam != nullptr)
-            gainSmoother.setTargetValue(Decibels::decibelsToGain(gainParam->get()));
-        if (bitsParam != nullptr)
-            bitsSmoother.setTargetValue(static_cast<float>(bitsParam->get()));
         if (delayParam != nullptr)
             delaySamples = msToSamples(delayParam->get());
-        if (hpfParam != nullptr)
-            hpfSmoother.setTargetValue(hpfParam->get());
-        if (lpfParam != nullptr)
-            lpfSmoother.setTargetValue(lpfParam->get());
-        if (mixParam != nullptr)
-            mixSmoother.setTargetValue(mixParam->get());
-        if (driveParam != nullptr)
-            driveSmoother.setTargetValue(Decibels::decibelsToGain(driveParam->get()));
     }
 
-    void smoothen() noexcept
-    {
-        gain = gainSmoother.getNextValue();
-        bits = static_cast<int>(bitsSmoother.getNextValue());
-        hpfFreq = hpfSmoother.getNextValue();
-        lpfFreq = lpfSmoother.getNextValue();
-        mix = mixSmoother.getNextValue();
-        drive = driveSmoother.getNextValue();
-    }
-
-    [[nodiscard]] float getGain() const noexcept { return gain; }
-    [[nodiscard]] int getBits() const noexcept { return bits; }
     [[nodiscard]] float getDelaySamples() const noexcept { return delaySamples; }
-    [[nodiscard]] float getDelayMs() const noexcept { return delayParam != nullptr ? delayParam->get() : 375.0f; }
-    [[nodiscard]] float getHPFFreq() const noexcept { return hpfFreq; }
-    [[nodiscard]] float getLPFFreq() const noexcept { return lpfFreq; }
-    [[nodiscard]] float getMix() const noexcept { return mix; }
-    [[nodiscard]] float getDrive() const noexcept { return drive; }
-    [[nodiscard]] double getSampleRate() const noexcept { return sampleRate; }
     [[nodiscard]] bool getBypass() const noexcept { return bypassParam != nullptr && bypassParam->get(); }
     [[nodiscard]] AudioProcessorParameter *getBypassParameter() const noexcept { return bypassParam; }
 
@@ -292,6 +252,7 @@ public:
     }
 
     [[nodiscard]] float getRawMix() const noexcept { return mixParam ? mixParam->get() : 35.0f; }
+    [[nodiscard]] int getRawFilterMode() const noexcept { return filterModeParam ? filterModeParam->getIndex() : 0; }
     [[nodiscard]] int getRawBits() const noexcept { return bitsParam ? bitsParam->get() : 32; }
     [[nodiscard]] float getRawHpfHz() const noexcept { return hpfParam ? hpfParam->get() : 20.0f; }
     [[nodiscard]] float getRawLpfHz() const noexcept { return lpfParam ? lpfParam->get() : 20000.0f; }
@@ -309,6 +270,7 @@ public:
     [[nodiscard]] float getRawDelayModRateHz() const noexcept { return delayModRateHzParam ? delayModRateHzParam->get() : 0.35f; }
     [[nodiscard]] bool getRawDelaySync() const noexcept { return delaySyncParam != nullptr && delaySyncParam->get(); }
     [[nodiscard]] int getRawDelayDivision() const noexcept { return delayDivisionParam ? delayDivisionParam->getIndex() : 11; }
+    [[nodiscard]] int getRawDelayMode() const noexcept { return delayModeParam ? delayModeParam->getIndex() : 0; }
     [[nodiscard]] float getRawDiffusion() const noexcept { return diffusionParam ? diffusionParam->get() : 0.55f; }
     [[nodiscard]] float getRawDiffuserSize() const noexcept { return diffuserSizeParam ? diffuserSizeParam->get() : 0.5f; }
     [[nodiscard]] float getRawDiffModDepth() const noexcept { return diffModDepthParam ? diffModDepthParam->get() : 0.30f; }
@@ -324,23 +286,19 @@ private:
         return static_cast<float>(ms * 0.001 * sampleRate);
     }
 
-    float gain{};
-    int bits{};
     float delaySamples{};
-    float hpfFreq{};
-    float lpfFreq{};
-    float mix{};
-    float drive{};
 
     AudioParameterFloat *gainParam{};
     AudioParameterInt *bitsParam{};
     AudioParameterFloat *delayParam{};
     AudioParameterBool *delaySyncParam{};
     AudioParameterChoice *delayDivisionParam{};
+    AudioParameterChoice *delayModeParam{};
     AudioParameterFloat *hpfParam{};
     AudioParameterFloat *lpfParam{};
     AudioParameterFloat *mixParam{};
     AudioParameterBool *bypassParam{};
+    AudioParameterChoice *filterModeParam{};
     AudioParameterFloat *driveParam{};
     AudioParameterChoice *adaaOrderParam{};
     AudioParameterFloat *feedbackParam{};
@@ -356,13 +314,6 @@ private:
     AudioParameterFloat *diffuserSizeParam{};
     AudioParameterFloat *diffModDepthParam{};
     AudioParameterFloat *diffModRateHzParam{};
-
-    LinearSmoothedValue<float> gainSmoother;
-    LinearSmoothedValue<float> bitsSmoother;
-    LinearSmoothedValue<float> hpfSmoother;
-    LinearSmoothedValue<float> lpfSmoother;
-    LinearSmoothedValue<float> mixSmoother;
-    LinearSmoothedValue<float> driveSmoother;
 
     double sampleRate{};
 };

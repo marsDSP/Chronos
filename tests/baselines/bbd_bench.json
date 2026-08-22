@@ -1,0 +1,17 @@
+{
+  "provisional": true,
+  "records": [
+    {"name": "FeedbackDelay (BBD)", "config": "delay=5ms", "ns_per_sample": 180.0},
+    {"name": "BrigadeLine::process", "config": "delay=5ms", "ns_per_sample": 80.0},
+    {"name": "FeedbackDelay (BBD)", "config": "delay=50ms", "ns_per_sample": 65.0},
+    {"name": "BrigadeLine::process", "config": "delay=50ms", "ns_per_sample": 25.0},
+    {"name": "FeedbackDelay (BBD)", "config": "delay=375ms", "ns_per_sample": 45.0},
+    {"name": "BrigadeLine::process", "config": "delay=375ms", "ns_per_sample": 15.0},
+    {"name": "FeedbackDelay (BBD)", "config": "delay=853ms", "ns_per_sample": 40.0},
+    {"name": "BrigadeLine::process", "config": "delay=853ms", "ns_per_sample": 12.0},
+    {"name": "FeedbackDelay (BBD)", "config": "delay=1500ms", "ns_per_sample": 38.0},
+    {"name": "BrigadeLine::process", "config": "delay=1500ms", "ns_per_sample": 10.0},
+    {"name": "FeedbackDelay (BBD)", "config": "delay=5000ms", "ns_per_sample": 35.0},
+    {"name": "BrigadeLine::process", "config": "delay=5000ms", "ns_per_sample": 8.0}
+  ]
+}

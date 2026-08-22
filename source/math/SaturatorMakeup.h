@@ -7,11 +7,12 @@
 #include <algorithm>
 #include <cmath>
 
-// Saturator makeup gain table.
-// Gives the RMS ratio of tanh(k * x) to x for a 0.5-amplitude sine.
-// Gives the output makeup and the loop trim from the ratio.
-// The table covers k from 1 to 16. Block-rate callers interpolate.
-// scripts/python/gen_makeup_table.py derives the values.
+/**
+ * Saturator makeup gain tables.
+ * Gives the RMS ratio of tanh(k * x) to x for a 0.5-amplitude sine,
+ * plus the output makeup and loop trim derived from the ratio.
+ * scripts/python/gen_makeup_table.py derives the values.
+ */
 
 namespace MarsDSP::Math
 {
@@ -75,8 +76,7 @@ namespace MarsDSP::Math
         }
     };
 
-    // Catmull-Rom interpolation over a 65-point table indexed by log2(k).
-    // Clamp k below 1 and above 16 to the table ends.
+    /// Catmull-Rom interpolation over the table indexed by log2(k). Clamp k below 1 and above 16.
     inline float makeupInterpolate(const std::array<float, kMakeupTableSize> &t,
                                    float k) noexcept
     {
@@ -88,8 +88,6 @@ namespace MarsDSP::Math
         const float f = fi - static_cast<float>(i);
         const auto idx = static_cast<std::size_t>(i);
         // Linear extrapolation at the boundaries preserves the slope.
-        // This is more accurate than repeating the endpoint on the concave
-        // saturating curve near k = 16.
         const float p0 = (i > 0) ? t[idx - 1] : 2.0f * t[0] - t[1];
         const float p1 = t[idx];
         const float p2 = t[idx + 1];
@@ -100,24 +98,22 @@ namespace MarsDSP::Math
                     + (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * f2 * f);
     }
 
-    // Return the RMS gain of tanh at the given drive.
+    /// Return the RMS gain of tanh at the given drive.
     inline float rmsRatio(const float k) noexcept
     {
         return makeupInterpolate(kRmsRatioTable, k);
     }
 
-    // The inverse of the makeup at k = 1. Multiply by this to normalise
-    // the makeup to unity at zero drive. This keeps the output unchanged
-    // when the drive is 0 dB and preserves the 2.75 dB rise across the sweep.
+    /// Normalising constant: the inverse of the makeup at k = 1.
     inline constexpr float kOutputMakeupUnity = 1.0f / kOutputMakeupTable[0];
 
-    // Return the makeup gain for the output saturator.
+    /// Return the makeup gain for the output saturator.
     inline float outputMakeup(const float k) noexcept
     {
         return makeupInterpolate(kOutputMakeupTable, k);
     }
 
-    // Return the trim gain for the loop output.
+    /// Return the trim gain for the loop output.
     inline float loopTrim(const float k) noexcept
     {
         return makeupInterpolate(kLoopTrimTable, k);

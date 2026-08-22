@@ -3,7 +3,6 @@
 #ifndef CHRONOS_DIFFUSER_H
 #define CHRONOS_DIFFUSER_H
 
-
 #include "FracDelayTap.h"
 #include "LinearSmoother.h"
 #include "Modulation.h"
@@ -238,9 +237,9 @@ namespace MarsDSP::Diffusion
             {
                 for (const int cand: {want - d, want + d})
                 {
-                    if (cand >= 5 && cand < kMaxPrimeScan && isPrime_(cand) && !used.test(static_cast<size_t>(cand)))
+                    if (cand >= 5 && cand < kMaxPrimeScan && isPrime_(cand) && !used.test(static_cast<std::size_t>(cand)))
                     {
-                        used.set(static_cast<size_t>(cand));
+                        used.set(static_cast<std::size_t>(cand));
                         return cand;
                     }
                 }

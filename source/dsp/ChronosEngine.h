@@ -4,6 +4,7 @@
 #define CHRONOS_CHRONOS_ENGINE_H
 
 #include "SimdDelayLine.h"
+#include "OutputFilterStage.h"
 #include "StateVariable.h"
 #include "LinearSmoother.h"
 #include "nonlinear/ADAA1.h"
@@ -41,6 +42,7 @@ namespace MarsDSP
             float gainLin = 1.0f;
             float hpfHz = 20.0f;
             float lpfHz = 20000.0f;
+            int filterMode = 0; // 0: Digital (SimdSVF), 1: Analog (Sallen-Key)
             int bits = 32;
             int adaaOrder = 2;
             // --- feedback / diffusion ---
@@ -60,6 +62,7 @@ namespace MarsDSP
             int delayDivision = 11;
             float delayModDepth = 0.0f;
             float delayModRateHz = 0.35f;
+            int delayMode = 0; // 0: Digital, 1: BBD
         };
 
         void prepare(double sampleRate, int maxBlockSize, int numChannels) noexcept
@@ -72,9 +75,7 @@ namespace MarsDSP
             numChannels_ = numChannels;
             wetBufCapacity_ = std::max(1, 2 * maxBlockSize);
 
-            // the engine-level SimdDelayLine and post-stage Diffuser are
-            // deleted. The feedback line owns the delay and the in-loop
-            // diffuser. 15 scratch spans (undiffWetL_/R_ removed).
+            // The feedback line owns the delay and the in-loop diffuser.
             constexpr int kNumScratch = 15;
             const auto cap = static_cast<std::size_t>(wetBufCapacity_);
             const std::size_t strideFloats = (cap + 15u) & ~static_cast<std::size_t>(15u);
@@ -126,14 +127,15 @@ namespace MarsDSP
             mixSmoother_.reset(sampleRate, kRampSeconds);
             driveSmoother_.reset(sampleRate, kRampSeconds);
 
+            outFilters_.prepare(sampleRate, numChannels);
+
             reset();
         }
 
         void reset() noexcept
         {
             fbDelay_.reset();
-            hpf_.reset();
-            lpf_.reset();
+            outFilters_.reset();
             adaa1L_.reset();
             adaa1R_.reset();
             adaa2L_.reset();
@@ -157,7 +159,6 @@ namespace MarsDSP
 
         void resetParams(const Params &p) noexcept
         {
-            delaySamples_ = p.delaySamples;
             adaaOrder_ = p.adaaOrder;
 
             smoothedHpf_ = p.hpfHz;
@@ -172,12 +173,13 @@ namespace MarsDSP
 
             feedback_ = p.feedback;
             enableDiffuser_ = p.enableDiffuser;
+            outFilters_.setMode(static_cast<Filters::OutputFilterStage::Mode>(p.filterMode));
+            outFilters_.setCutoffs(p.hpfHz, p.lpfHz);
             applyFeedbackParams_(p, /*snap=*/true);
         }
 
         void setParams(const Params &p) noexcept
         {
-            delaySamples_ = p.delaySamples;
             adaaOrder_ = p.adaaOrder;
 
             gainSmoother_.setTargetValue(p.gainLin);
@@ -189,6 +191,8 @@ namespace MarsDSP
 
             feedback_ = p.feedback;
             enableDiffuser_ = p.enableDiffuser;
+            outFilters_.setMode(static_cast<Filters::OutputFilterStage::Mode>(p.filterMode));
+            outFilters_.setCutoffs(p.hpfHz, p.lpfHz);
             applyFeedbackParams_(p, /*snap=*/false);
         }
 
@@ -208,10 +212,8 @@ namespace MarsDSP
             {
                 const int chunk = std::min(wetBufCapacity_, numSamples - offset);
 
-                // ── 1. Wet generation (block-rate) ─────────────────────────
-                // all delay routes through the feedback line. At a feedback
-                // of zero the feedback line degenerates to a plain delay. The
-                // in-loop diffuser inside FeedbackDelay is the only diffuser.
+                // Wet generation at block rate. The feedback line owns
+                // the delay and the in-loop diffuser.
                 fbDelay_.process(data0 + offset,
                                  hasR ? data1 + offset : nullptr,
                                  wetBufL_.data(),
@@ -230,11 +232,7 @@ namespace MarsDSP
                     gainRamp_[static_cast<std::size_t>(s)] = smoothedGain_;
                 }
 
-                // ── 3. SVF coefficients ───────
-                hpf_.setCoeffForBlock(SVF::SVFType::HighPass, fsSafe, hpfRamp_[0], svfQ_, 0.0, chunk);
-                lpf_.setCoeffForBlock(SVF::SVFType::LowPass, fsSafe, lpfRamp_[0], svfQ_, 0.0, chunk);
-
-                // ── 4. Align mode (once per chunk) ────────────────────────
+                // Align the saturator latency, once per chunk.
                 alignL_.setMode(adaaOrder_);
                 alignR_.setMode(adaaOrder_);
 
@@ -282,21 +280,15 @@ namespace MarsDSP
                     if (hasR) satR_[u] = alignR_.processWet(sat1);
                 }
 
-                // ── 7. SVF stage (stateful: IIR + coefficient ramp) ───────
-                for (int s = 0; s < chunk; ++s)
-                {
-                    const auto u = static_cast<std::size_t>(s);
-                    const M128 wetV = MM(set_ps)(0.0f, 0.0f,
-                                                 hasR ? satR_[u] : 0.0f, satL_[u]);
-                    const M128 hpV = hpf_.processBlockStep(wetV);
-                    const M128 lpV = lpf_.processBlockStep(hpV);
-                    alignas(16) std::array<float, 4> out{};
-                    MM(store_ps)(out.data(), lpV);
-                    wetPostSvfL_[u] = out[0];
-                    if (hasR) wetPostSvfR_[u] = out[1];
-                }
+                // Output filter stage.
+                outFilters_.setCutoffs(hpfRamp_[0], lpfRamp_[0]);
+                outFilters_.process(satL_.data(),
+                                    hasR ? satR_.data() : nullptr,
+                                    wetPostSvfL_.data(),
+                                    hasR ? wetPostSvfR_.data() : nullptr,
+                                    chunk);
 
-                // ── 8. Crossfade stage (stateless) ────────────────────────
+                // Equal-power dry/wet crossfade.
                 const float mixVal = mixSmoother_.getCurrentValue();
                 const bool settled = !mixSmoother_.isSmoothing();
                 const bool fullDry = settled && mixVal <= 0.0f;
@@ -532,6 +524,7 @@ namespace MarsDSP
             fp.diffModRateHz = p.diffModRateHz;
             fp.delayModDepth = p.delayModDepth;
             fp.delayModRateHz = p.delayModRateHz;
+            fp.delayMode = p.delayMode;
             if (snap) fbDelay_.resetParams(fp);
             else fbDelay_.setParams(fp);
         }
@@ -541,10 +534,7 @@ namespace MarsDSP
         std::span<float> wetBufR_;
         int wetBufCapacity_{0};
 
-        using SVF = Filters::SimdSVF;
-        SVF hpf_{};
-        SVF lpf_{};
-        static constexpr double svfQ_{0.7071};
+        Filters::OutputFilterStage outFilters_;
 
         Nonlinear::ADAA1<Nonlinear::TanhNL> adaa1L_;
         Nonlinear::ADAA1<Nonlinear::TanhNL> adaa1R_;
@@ -616,7 +606,6 @@ namespace MarsDSP
 
         double sampleRate_{0.0};
         int numChannels_{0};
-        float delaySamples_{0.0f};
         int adaaOrder_{2};
         float feedback_{0.0f};
         bool enableDiffuser_{false};

@@ -1,36 +1,11 @@
-// tests/harnesses/dsp/oversized_block_check.cpp
-// ──────────────────────────────────────────────────────────────────────────
-// invariant test: an oversized host block (larger than samplesPerBlock)
-// chunked at wetBufCapacity (2x samplesPerBlock) must produce output
-// BIT-IDENTICAL to the same signal pushed in samplesPerBlock-sized blocks.
-//
-// The chain is hand-assembled (SharedCode only, no JUCE AudioProcessor) in
-// processBlock order: delay → drive → ADAA → align → HPF → LPF → crossfade
-// → gain + TPDF dither + quantization. Parameters are FLAT (no smoothers).
-// the test isolates the chunking invariant, not the smoothing behaviour.
-// Dither seeds are fixed and reset for both paths, so the RNG state at each
-// sample position is identical regardless of chunk count (the RNG advances
-// 2x per sample per channel, and the total sample count is the same).
-//
-// Why bit-exactness holds for static parameters:
-//  • Delay line: the posSmoother is at its target after the first block, so
-//    processN produces no change — the ring read is identical regardless of
-//    how many process() calls chunk the block.
-//  • SVF: setCoeffForBlock computes da1 = (a1_new - a1_prior) / numSamples.
-//    For static cutoff, a1_new == a1_prior, so da1 = 0 for every call after
-//    the first (which has firstBlock=true, also da1=0). The coefficient ramp
-//    is zero regardless of numSamples.
-//  • ADAA, align, crossfade, dither: all purely per-sample — block-size-
-//    independent.
-//
-// Matrix: blockSize ∈ {64, 65, 128, 129, 512, 1024} × adaaOrder ∈ {0,1,2}.
-// Prepared at samplesPerBlock = 64, wetBufCapacity = 128.
-// Reference: chunk at 64 (samplesPerBlock). Test: chunk at 128 (wetBufCapacity).
-//
-// Conventions (matching latency_null_check): plain main(), exit code, printf,
-// always-live CHECK/FAIL. Links SharedCode only; no JUCE. No forced -O2 so
-// header assert preconditions stay armed in a Debug configure.
-// ──────────────────────────────────────────────────────────────────────────
+/**
+ * Chunking invariant: an oversized host block chunked at wetBufCapacity must
+ * produce output bit-identical to the same signal in samplesPerBlock blocks.
+ * Matrix: blockSize {64, 65, 128, 129, 512, 1024} x adaaOrder {0, 1, 2}.
+ * Bit-exactness holds for static parameters: the delay position smoother is
+ * settled after the first block, the SVF coefficient ramp is zero for a
+ * static cutoff, and the remaining stages are per-sample.
+ */
 
 #include "dsp/SimdDelayLine.h"
 #include "dsp/StateVariable.h"
@@ -44,6 +19,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <print>
 #include <cstdlib>
 #include <cstring>
 #include <numbers>
@@ -62,10 +38,10 @@ constexpr auto   kInterp = MarsDSP::Delays::Interpolation::Lagrange5th;
 const char* g_section = "(startup)";
 
 #define CHECK(cond) \
-    do { if (!(cond)) { std::printf("FAIL [%s] %s:%d: %s\n", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
+    do { if (!(cond)) { std::println("FAIL [{}] {}:{}: {}", g_section, __FILE__, __LINE__, #cond); std::exit(1); } } while (0)
 
-#define FAIL(fmt, ...) \
-    do { std::printf("FAIL [%s] " fmt "\n", g_section, ##__VA_ARGS__); std::exit(1); } while (0)
+#define FAIL(...) \
+    do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
 inline float nextUniform(std::uint32_t& s) noexcept
 {
@@ -80,12 +56,20 @@ inline float nextUniform(std::uint32_t& s) noexcept
 struct Chain
 {
     MarsDSP::Delays::SimdDelayLine delayLine;
-    MarsDSP::Align::SaturatorAlign alignL, alignR;
-    MarsDSP::Nonlinear::ADAA1<MarsDSP::Nonlinear::TanhNL> adaa1L, adaa1R;
-    MarsDSP::Nonlinear::ADAA2<MarsDSP::Nonlinear::TanhNL> adaa2L, adaa2R;
-    MarsDSP::Filters::SimdSVF hpf, lpf;
-    std::uint32_t xsL = 0x12345678u, xsR = 0x9abcdef0u;
-    std::vector<float> wetL, wetR, workL, workR;
+    MarsDSP::Align::SaturatorAlign alignL;
+    MarsDSP::Align::SaturatorAlign alignR;
+    MarsDSP::Nonlinear::ADAA1<MarsDSP::Nonlinear::TanhNL> adaa1L;
+    MarsDSP::Nonlinear::ADAA1<MarsDSP::Nonlinear::TanhNL> adaa1R;
+    MarsDSP::Nonlinear::ADAA2<MarsDSP::Nonlinear::TanhNL> adaa2L;
+    MarsDSP::Nonlinear::ADAA2<MarsDSP::Nonlinear::TanhNL> adaa2R;
+    MarsDSP::Filters::SimdSVF hpf;
+    MarsDSP::Filters::SimdSVF lpf;
+    std::uint32_t xsL = 0x12345678u;
+    std::uint32_t xsR = 0x9abcdef0u;
+    std::vector<float> wetL;
+    std::vector<float> wetR;
+    std::vector<float> workL;
+    std::vector<float> workR;
     int wetBufCapacity = 0;
 
     // Flat parameters.
@@ -142,7 +126,8 @@ struct Chain
             const float wet0 = wetL[static_cast<std::size_t>(s)];
             const float wet1 = wetR[static_cast<std::size_t>(s)];
 
-            float sat0, sat1;
+            float sat0;
+            float sat1;
             switch (mode)
             {
                 case 0:  sat0 = wet0; sat1 = wet1; break;
@@ -201,7 +186,7 @@ void testOne(int blockSize, int mode)
     constexpr int kSamplesPerBlock = 64;
 
     // Generate a test signal: sine + ramp (breaks symmetry so multiple taps
-    // are nonzero — the test that catches indexing/flush bugs, not a DC null).
+    // are nonzero - the test that catches indexing/flush bugs, not a DC null).
     std::vector<float> in(static_cast<std::size_t>(blockSize));
     for (int i = 0; i < blockSize; ++i)
         in[static_cast<std::size_t>(i)] =
@@ -218,7 +203,7 @@ void testOne(int blockSize, int mode)
         c.process(in.data(), ref.data(), blockSize, kSamplesPerBlock);
     }
 
-    // Test: chunk at wetBufCapacity (2 * 64 = 128) — one oversized block.
+    // Test: chunk at wetBufCapacity (2 * 64 = 128) - one oversized block.
     std::vector<float> tst(2 * blockSize);
     {
         Chain c;
@@ -229,28 +214,28 @@ void testOne(int blockSize, int mode)
 
     for (int i = 0; i < 2 * blockSize; ++i)
         if (ref[static_cast<std::size_t>(i)] != tst[static_cast<std::size_t>(i)])
-            FAIL("blockSize=%d mode=%d i=%d: ref=%g tst=%g",
+            FAIL("blockSize={} mode={} i={}: ref={} tst={}",
                  blockSize, mode, i,
-                 (double)ref[static_cast<std::size_t>(i)],
-                 (double)tst[static_cast<std::size_t>(i)]);
+                 static_cast<double>(ref[static_cast<std::size_t>(i)]),
+                 static_cast<double>(tst[static_cast<std::size_t>(i)]));
 
-    std::printf("  blockSize=%-5d mode=%d: BIT-IDENTICAL: PASS\n", blockSize, mode);
+    std::println("  blockSize={:<5} mode={}: BIT-IDENTICAL: PASS", blockSize, mode);
 }
 
 } // namespace
 
 int main()
 {
-    std::printf("=== Chronos oversized_block_check (S1) ===\n");
-    std::printf("samplesPerBlock=64  wetBufCapacity=128  fs=%.0f  bits=%d\n\n", kFs, kBits);
+    std::println("=== Chronos oversized_block_check (S1) ===");
+    std::println("samplesPerBlock=64  wetBufCapacity=128  fs={:.0}  bits={}\n", kFs, kBits);
 
-    const int blockSizes[] = { 64, 65, 128, 129, 512, 1024 };
-    const int modes[]      = { 0, 1, 2 };
+    const std::array<int, 6> blockSizes { { 64, 65, 128, 129, 512, 1024 } };
+    const std::array<int, 3> modes { { 0, 1, 2 } };
 
     for (int bs : blockSizes)
         for (int m : modes)
             testOne(bs, m);
 
-    std::printf("\n=== ALL PROPERTIES HELD ===\n");
+    std::println("\n=== ALL PROPERTIES HELD ===");
     return 0;
 }

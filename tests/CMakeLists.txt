@@ -373,6 +373,82 @@ if(BUILD_TEST_HARNESSES)
         target_compile_options(diffuser_bench PRIVATE "-mfma")
     endif()
 
+    add_executable(rtype_solver_check harnesses/cd/rtype_solver_check.cpp)
+    target_link_libraries(rtype_solver_check PRIVATE SharedCode)
+
+    add_executable(sallen_key_response_check harnesses/dsp/sallen_key_response_check.cpp)
+    target_link_libraries(sallen_key_response_check PRIVATE SharedCode)
+
+    add_executable(sallen_key_stability_check harnesses/dsp/sallen_key_stability_check.cpp)
+    target_link_libraries(sallen_key_stability_check PRIVATE SharedCode)
+
+    add_executable(filter_mode_check harnesses/dsp/filter_mode_check.cpp)
+    target_link_libraries(filter_mode_check PRIVATE SharedCode)
+
+    add_executable(sallen_key_bench harnesses/perf/sallen_key_bench.cpp)
+    target_link_libraries(sallen_key_bench PRIVATE SharedCode)
+    if(MSVC)
+        target_compile_options(sallen_key_bench PRIVATE /O2)
+    else()
+        target_compile_options(sallen_key_bench PRIVATE -O2)
+    endif()
+    if(APPLE)
+        target_compile_options(sallen_key_bench PRIVATE "-Xarch_x86_64" "-mfma")
+    elseif(MSVC)
+        target_compile_options(sallen_key_bench PRIVATE "/arch:AVX2")
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64|AMD64)")
+        target_compile_options(sallen_key_bench PRIVATE "-mfma")
+    endif()
+
+    add_executable(bbd_pole_bank_check harnesses/cd/bbd_pole_bank_check.cpp)
+    target_link_libraries(bbd_pole_bank_check PRIVATE SharedCode)
+
+    add_executable(bbd_line_check harnesses/dsp/bbd_line_check.cpp)
+    target_link_libraries(bbd_line_check PRIVATE SharedCode)
+
+    add_executable(bbd_clock_check harnesses/dsp/bbd_clock_check.cpp)
+    target_link_libraries(bbd_clock_check PRIVATE SharedCode)
+
+    add_executable(bbd_loop_check harnesses/dsp/bbd_loop_check.cpp)
+    target_link_libraries(bbd_loop_check PRIVATE SharedCode)
+
+    add_executable(bbd_response_check harnesses/dsp/bbd_response_check.cpp)
+    target_link_libraries(bbd_response_check PRIVATE SharedCode)
+
+    add_executable(bbd_alias_check harnesses/dsp/bbd_alias_check.cpp)
+    target_link_libraries(bbd_alias_check PRIVATE SharedCode)
+    if(MSVC)
+        target_compile_options(bbd_alias_check PRIVATE /O2)
+    else()
+        target_compile_options(bbd_alias_check PRIVATE -O2)
+    endif()
+    if(APPLE)
+        target_compile_options(bbd_alias_check PRIVATE "-Xarch_x86_64" "-mfma")
+    elseif(MSVC)
+        target_compile_options(bbd_alias_check PRIVATE "/arch:AVX2")
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64|AMD64)")
+        target_compile_options(bbd_alias_check PRIVATE "-mfma")
+    endif()
+
+    add_executable(bbd_fuzz_check harnesses/dsp/bbd_fuzz_check.cpp)
+    target_link_libraries(bbd_fuzz_check PRIVATE SharedCode)
+    target_compile_definitions(bbd_fuzz_check PRIVATE NDEBUG)
+
+    add_executable(bbd_bench harnesses/perf/bbd_bench.cpp)
+    target_link_libraries(bbd_bench PRIVATE SharedCode)
+    if(MSVC)
+        target_compile_options(bbd_bench PRIVATE /O2)
+    else()
+        target_compile_options(bbd_bench PRIVATE -O2)
+    endif()
+    if(APPLE)
+        target_compile_options(bbd_bench PRIVATE "-Xarch_x86_64" "-mfma")
+    elseif(MSVC)
+        target_compile_options(bbd_bench PRIVATE "/arch:AVX2")
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64|AMD64)")
+        target_compile_options(bbd_bench PRIVATE "-mfma")
+    endif()
+
     # ── CTest registration ──────────────────────────────────────────────
     # 25 correctness harnesses: exit 0 = pass. The 6 benchmarks (tan_bench,
     # adaa_bench, delay_line_bench, chain_bench, fb_bench, diffuser_bench) are
@@ -430,6 +506,17 @@ if(BUILD_TEST_HARNESSES)
     add_test(NAME drive_loudness_check          COMMAND drive_loudness_check)
     add_test(NAME loop_dc_check                  COMMAND loop_dc_check)
     add_test(NAME crossfeed_power_check           COMMAND crossfeed_power_check)
+    add_test(NAME rtype_solver_check              COMMAND rtype_solver_check)
+    add_test(NAME sallen_key_response_check       COMMAND sallen_key_response_check)
+    add_test(NAME sallen_key_stability_check      COMMAND sallen_key_stability_check)
+    add_test(NAME filter_mode_check               COMMAND filter_mode_check)
+    add_test(NAME bbd_pole_bank_check             COMMAND bbd_pole_bank_check)
+    add_test(NAME bbd_line_check                  COMMAND bbd_line_check)
+    add_test(NAME bbd_clock_check                 COMMAND bbd_clock_check)
+    add_test(NAME bbd_loop_check                  COMMAND bbd_loop_check)
+    add_test(NAME bbd_response_check              COMMAND bbd_response_check)
+    add_test(NAME bbd_alias_check                 COMMAND bbd_alias_check)
+    add_test(NAME bbd_fuzz_check                  COMMAND bbd_fuzz_check)
 
     # The 6 benchmarks are registered as tests but labeled "bench" so
     # `ctest -LE bench` excludes them. They report numbers, not pass/fail.
@@ -441,8 +528,10 @@ if(BUILD_TEST_HARNESSES)
     add_test(NAME chain_bench        COMMAND chain_bench)
     add_test(NAME fb_bench           COMMAND fb_bench)
     add_test(NAME diffuser_bench     COMMAND diffuser_bench)
+    add_test(NAME sallen_key_bench   COMMAND sallen_key_bench)
+    add_test(NAME bbd_bench          COMMAND bbd_bench)
 
-    # bench_gate: runs every perf harness with --json and compares against the
+    # bench_gate: runs every perf harnesses with --json and compares against the
     # committed baselines in tests/baselines/ via scripts/bench_gate.py. CI runs
     # at 25% tolerance. The owner runs 15% locally on a pinned core:
     #   <bench> --json current.json
@@ -453,5 +542,5 @@ if(BUILD_TEST_HARNESSES)
                 --ci --baselines "${CMAKE_CURRENT_SOURCE_DIR}/baselines"
                 --bindir "${CMAKE_CURRENT_BINARY_DIR}" --tolerance 25)
 
-    set_tests_properties(tan_bench adaa_bench delay_line_bench chain_bench fb_bench diffuser_bench prepare_bench bench_gate PROPERTIES LABELS "bench")
+    set_tests_properties(tan_bench adaa_bench delay_line_bench chain_bench fb_bench diffuser_bench sallen_key_bench bbd_bench prepare_bench bench_gate PROPERTIES LABELS "bench")
 endif()

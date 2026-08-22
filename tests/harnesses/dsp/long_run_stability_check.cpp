@@ -78,9 +78,18 @@ int main()
     std::vector<float> outL(static_cast<std::size_t>(kBlock));
     std::vector<float> outR(static_cast<std::size_t>(kBlock));
 
-    constexpr double kSineFreq = 220.0;
-    constexpr double kSineAmp = 0.001;
-    const double kTwoPi = 2.0 * std::numbers::pi_v<double>;
+    // Broadband noise input. A single tone rides the wandering comb of the
+    // modulated loop, so its window RMS is not stationary at feedback 0.9.
+    // Noise averages the loop response across frequency and gives a
+    // stationary RMS. Deterministic xorshift32 stream.
+    std::uint32_t noiseState = 0x13579BDFu;
+    auto nextNoise = [&noiseState]() noexcept -> float
+    {
+        noiseState ^= noiseState << 13;
+        noiseState ^= noiseState >> 17;
+        noiseState ^= noiseState << 5;
+        return (static_cast<float>(noiseState) * (1.0f / 4294967296.0f) - 0.5f) * 0.002f;
+    };
 
     double rms1MinSumSq = 0.0;
     long long rms1MinCount = 0;
@@ -97,8 +106,7 @@ int main()
                                                  kTotalSamples - pos));
         for (int i = 0; i < n; ++i)
         {
-            const double t = static_cast<double>(pos + i) / kFs;
-            const float v = static_cast<float>(kSineAmp * std::sin(kTwoPi * kSineFreq * t));
+            const float v = nextNoise();
             inL[static_cast<std::size_t>(i)] = v;
             inR[static_cast<std::size_t>(i)] = v;
         }

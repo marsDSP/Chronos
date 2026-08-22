@@ -9,6 +9,8 @@
 #include "LinearSmoother.h"
 #include "Modulation.h"
 #include "Pow2RingBuffer.h"
+#include "bbd/BrigadeLine.h"
+#include "bbd/ClockModel.h"
 #include "math/SaturatorMakeup.h"
 #include "math/Trigonometry.h"
 #include "nonlinear/ADAA1.h"
@@ -22,6 +24,7 @@
 #include <cmath>
 #include <cstdint>
 #include <numbers>
+#include <vector>
 
 namespace MarsDSP::Delays
 {
@@ -52,6 +55,7 @@ namespace MarsDSP::Delays
             bool enableDiffuser = false; // off by default
             float delayModDepth = 0.0f; // cents, 0..50
             float delayModRateHz = 0.35f; // Hz, 0.01..10
+            int delayMode = 0; // 0: Digital, 1: BBD
         };
 
         void prepare(double sampleRate, int maxBlockSize, int maxDelaySamples) noexcept
@@ -67,7 +71,9 @@ namespace MarsDSP::Delays
         static std::size_t ringStorageFloats(double sampleRate, int maxBlockSize, int maxDelaySamples) noexcept
         {
             const int minCap = maxDelaySamples + maxBlockSize + Pow2RingBuffer::kTail + 8;
-            return 2 * Pow2RingBuffer::arenaFloatsFor(minCap) + Diffusion::Diffuser::ringStorageFloats(sampleRate);
+            return 2 * Pow2RingBuffer::arenaFloatsFor(minCap)
+                 + Diffusion::Diffuser::ringStorageFloats(sampleRate)
+                 + BBD::BrigadeLine::bbdStorageFloats(2);
         }
 
         void reset() noexcept
@@ -75,6 +81,8 @@ namespace MarsDSP::Delays
             ringL_.clear();
             ringR_.clear();
             writeIdx_ = 0;
+            bbdL_.reset();
+            bbdR_.reset();
             adaa1L_.reset();
             adaa1R_.reset();
             adaa2L_.reset();
@@ -119,6 +127,7 @@ namespace MarsDSP::Delays
             applyDiffuserParams_(p);
             diffuser_.prime();
             enableDiffuser_ = p.enableDiffuser;
+            delayMode_ = p.delayMode;
             diffState_ = enableDiffuser_ ? DiffuserState::On : DiffuserState::Off;
             diffFade_ = enableDiffuser_ ? 1.0f : 0.0f;
             firstBlock_ = false;
@@ -138,6 +147,7 @@ namespace MarsDSP::Delays
             driveSm_.setTargetValue(std::clamp(p.loopDrive, 0.501f, 15.849f));
             applyDiffuserParams_(p);
             enableDiffuser_ = p.enableDiffuser;
+            delayMode_ = p.delayMode;
         }
 
         void process(const float *inL, const float *inR, float *wetL, float *wetR, int n) noexcept
@@ -157,6 +167,97 @@ namespace MarsDSP::Delays
                 const float baseT = (diffState_ != DiffuserState::Off)
                                         ? diffuser_.transportSamples()
                                         : 0.0f;
+
+                if (delayMode_ == 1)
+                {
+                    const int Lc = std::min(kMaxChunk, remaining);
+                    const bool runDiff = (diffState_ != DiffuserState::Off);
+                    const float gdBank = static_cast<float>(BBD::BrigadeLine::getBankGroupDelayAtDC(sampleRate_)) - 1.0f;
+
+                    for (int i = 0; i < Lc; ++i)
+                    {
+                        const float d = delaySm_.getNextValue();
+                        const float g = fbSm_.getNextValue();
+                        crossSm_.skip();
+                        const float drive = driveSm_.getNextValue();
+                        const float fade = fadeStep_();
+                        dampG_ = dampGSm_.getNextValue();
+                        cutG_ = cutGSm_.getNextValue();
+                        satLatency_ = satLatencySm_.getNextValue();
+                        const float modK = modKSm_.getNextValue();
+                        const float modL = modK * ouL_.next(rngL_);
+                        const float modR = hasR ? modK * ouR_.next(rngR_) : 0.0f;
+
+                        const float dEffL = d + modL - satLatency_ - fade * baseT - gdBank;
+                        bbdL_.setClockHz(BBD::ClockModel::clockFor(dEffL, sampleRate_));
+                        float tapL = bbdL_.readTap();
+
+                        float tapR = tapL;
+                        if (hasR)
+                        {
+                            const float dEffR = d + modR - satLatency_ - fade * baseT - gdBank;
+                            bbdR_.setClockHz(BBD::ClockModel::clockFor(dEffR, sampleRate_));
+                            tapR = bbdR_.readTap();
+                        }
+
+                        if (runDiff)
+                        {
+                            float diffL = tapL;
+                            float diffR = tapR;
+                            diffuser_.processBlockRef(&diffL, hasR ? &diffR : nullptr, 1);
+                            tapL = tapL * (1.0f - fade) + diffL * fade;
+                            if (hasR)
+                                tapR = tapR * (1.0f - fade) + diffR * fade;
+                            else
+                                tapR = tapL;
+                        }
+
+                        const float mixL = hasR ? (crossCos_ * tapL + crossSin_ * tapR) : tapL;
+                        const float mixR = hasR ? (crossCos_ * tapR + crossSin_ * tapL) : tapL;
+                        const float vL = g * mixL;
+                        const float vR = g * mixR;
+
+                        const float makeup = 1.0f / drive;
+                        const float sL = saturate_(adaa1L_, adaa2L_, drive * vL) * makeup;
+                        const float sR = hasR ? saturate_(adaa1R_, adaa2R_, drive * vR) * makeup : sL;
+
+                        dampL_ += dampG_ * (sL - dampL_);
+                        dampR_ += dampG_ * (sR - dampR_);
+
+                        cutLpL_ += cutG_ * (dampL_ - cutLpL_);
+                        cutLpR_ += cutG_ * (dampR_ - cutLpR_);
+                        const float cutL = dampL_ - cutLpL_;
+                        const float cutR = dampR_ - cutLpR_;
+
+                        const float hL = cutL - dcXL_ + dcR_ * dcYL_;
+                        dcXL_ = cutL;
+                        dcYL_ = hL;
+                        const float hR = cutR - dcXR_ + dcR_ * dcYR_;
+                        dcXR_ = cutR;
+                        dcYR_ = hR;
+
+                        float wL = inL[s + i] + hL;
+                        if (!std::isfinite(wL)) wL = 0.0f;
+                        bbdL_.writeSample(wL);
+                        ringL_.writeBlock(&wL, writeIdx_, 1);
+                        ringL_.refreshMirror(writeIdx_, 1);
+
+                        if (hasR)
+                        {
+                            float wR = inR[s + i] + hR;
+                            if (!std::isfinite(wR)) wR = 0.0f;
+                            bbdR_.writeSample(wR);
+                            ringR_.writeBlock(&wR, writeIdx_, 1);
+                            ringR_.refreshMirror(writeIdx_, 1);
+                        }
+                        writeIdx_ = (writeIdx_ + 1) & mask;
+
+                        wetL[s + i] = tapL * loopTrim_;
+                        if (hasR) wetR[s + i] = tapR * loopTrim_;
+                    }
+                    s += Lc;
+                    continue;
+                }
 
                 const float dCur = delaySm_.getCurrentValue();
                 const float dTgt = delaySm_.getTargetValue();
@@ -179,7 +280,7 @@ namespace MarsDSP::Delays
                     {
                         const float d = delaySm_.getNextValue();
                         const float g = fbSm_.getNextValue();
-                        const float cross = crossSm_.getNextValue();
+                        crossSm_.skip();
                         const float drive = driveSm_.getNextValue();
                         const float fade = fadeStep_();
                         dampG_ = dampGSm_.getNextValue();
@@ -190,23 +291,23 @@ namespace MarsDSP::Delays
                         const float modR = hasR ? modK * ouR_.next(rngR_) : 0.0f;
                         processSampleScalar_(inL + s + i, hasR ? inR + s + i : nullptr,
                                              wetL + s + i, hasR ? wetR + s + i : nullptr,
-                                             d, g, cross, drive, hasR, mask,
+                                             d, g, drive, hasR, mask,
                                              fade, runDiff ? baseT : 0.0f, modL, modR);
                     }
                     s += Lc;
                     continue;
                 }
 
-                alignas(16) float dR[kMaxChunk];
-                alignas(16) float gR[kMaxChunk];
-                alignas(16) float crossR[kMaxChunk];
-                alignas(16) float driveR[kMaxChunk];
-                alignas(16) float fadeR[kMaxChunk];
-                alignas(16) float dampGR[kMaxChunk];
-                alignas(16) float satLatR[kMaxChunk];
-                alignas(16) float cutGR[kMaxChunk];
-                alignas(16) float modLR[kMaxChunk];
-                alignas(16) float modRR[kMaxChunk];
+                alignas(16) std::array<float, kMaxChunk> dR{};
+                alignas(16) std::array<float, kMaxChunk> gR{};
+                alignas(16) std::array<float, kMaxChunk> crossR{};
+                alignas(16) std::array<float, kMaxChunk> driveR{};
+                alignas(16) std::array<float, kMaxChunk> fadeR{};
+                alignas(16) std::array<float, kMaxChunk> dampGR{};
+                alignas(16) std::array<float, kMaxChunk> satLatR{};
+                alignas(16) std::array<float, kMaxChunk> cutGR{};
+                alignas(16) std::array<float, kMaxChunk> modLR{};
+                alignas(16) std::array<float, kMaxChunk> modRR{};
                 const bool wasRunning = (diffState_ != DiffuserState::Off);
                 for (int i = 0; i < Lc; ++i)
                 {
@@ -414,7 +515,7 @@ namespace MarsDSP::Delays
                 const float baseT = (diffState_ != DiffuserState::Off) ? diffuser_.transportSamples() : 0.0f;
                 const float d = delaySm_.getNextValue();
                 const float g = fbSm_.getNextValue();
-                const float cross = crossSm_.getNextValue();
+                crossSm_.skip();
                 const float drive = driveSm_.getNextValue();
                 const float fade = fadeStep_();
                 dampG_ = dampGSm_.getNextValue();
@@ -425,7 +526,7 @@ namespace MarsDSP::Delays
                 const float modR = hasR ? modK * ouR_.next(rngR_) : 0.0f;
                 processSampleScalar_(inL + s, hasR ? inR + s : nullptr,
                                      wetL + s, hasR ? wetR + s : nullptr,
-                                     d, g, cross, drive, hasR, mask, fade, baseT,
+                                     d, g, drive, hasR, mask, fade, baseT,
                                      modL, modR);
             }
         }
@@ -520,16 +621,24 @@ namespace MarsDSP::Delays
             sampleRate_ = sampleRate;
             const int minCap = maxDelaySamples + maxBlockSize
                                + Pow2RingBuffer::kTail + 8;
+            constexpr std::size_t perChan = (static_cast<std::size_t>(BBD::BrigadeLine::kStages + 1) + 15u) & ~static_cast<std::size_t>(15u);
             if (arena != nullptr)
             {
                 ringL_.prepare(minCap, *arena);
                 ringR_.prepare(minCap, *arena);
                 diffuser_.prepare(sampleRate, *arena);
+                float *bbdMemL = arena->allocate<float>(perChan, Memory::BumpArena::kBaseAlignment);
+                float *bbdMemR = arena->allocate<float>(perChan, Memory::BumpArena::kBaseAlignment);
+                bbdL_.prepare(sampleRate, bbdMemL);
+                bbdR_.prepare(sampleRate, bbdMemR);
             } else
             {
                 ringL_.prepare(minCap);
                 ringR_.prepare(minCap);
                 diffuser_.prepare(sampleRate);
+                bbdHeapStorage_.resize(BBD::BrigadeLine::bbdStorageFloats(2), 0.0f);
+                bbdL_.prepare(sampleRate, bbdHeapStorage_.data());
+                bbdR_.prepare(sampleRate, bbdHeapStorage_.data() + perChan);
             }
             maxDelay_ = static_cast<float>(
                 ringL_.getCapacity() - Pow2RingBuffer::kTail - 2);
@@ -634,19 +743,43 @@ namespace MarsDSP::Delays
 
         void processSampleScalar_(const float *in, const float *inR,
                                   float *wet, float *wetR,
-                                  float d, float g, float cross, float drive,
+                                  float d, float g, float drive,
                                   bool hasR, int mask,
                                   float fade, float baseT,
                                   float modL, float modR) noexcept
         {
             const float makeup = 1.0f / drive;
-            const float readDelayL = std::max(kMinLoopDelay, d + modL - satLatency_ - fade * baseT);
-            const float readDelayR = std::max(kMinLoopDelay, d + modR - satLatency_ - fade * baseT);
 
-            float tapL = FracDelayTap::read(ringL_, writeIdx_, readDelayL);
-            float tapR = hasR
+            float tapL = 0.0f;
+            float tapR = 0.0f;
+
+            if (delayMode_ == 1)
+            {
+                const float gdBank = static_cast<float>(BBD::BrigadeLine::getBankGroupDelayAtDC(sampleRate_)) - 1.0f;
+                const float dEffL = d + modL - satLatency_ - fade * baseT - gdBank;
+                bbdL_.setClockHz(BBD::ClockModel::clockFor(dEffL, sampleRate_));
+                tapL = bbdL_.readTap();
+                if (hasR)
+                {
+                    const float dEffR = d + modR - satLatency_ - fade * baseT - gdBank;
+                    bbdR_.setClockHz(BBD::ClockModel::clockFor(dEffR, sampleRate_));
+                    tapR = bbdR_.readTap();
+                }
+                else
+                {
+                    tapR = tapL;
+                }
+            }
+            else
+            {
+                const float readDelayL = std::max(kMinLoopDelay, d + modL - satLatency_ - fade * baseT);
+                const float readDelayR = std::max(kMinLoopDelay, d + modR - satLatency_ - fade * baseT);
+
+                tapL = FracDelayTap::read(ringL_, writeIdx_, readDelayL);
+                tapR = hasR
                              ? FracDelayTap::read(ringR_, writeIdx_, readDelayR)
                              : tapL;
+            }
 
             if (baseT > 0.0f) // diffuser running: diffuse, then fade-blend
             {
@@ -688,6 +821,7 @@ namespace MarsDSP::Delays
 
             float wL = *in + hL;
             if (!std::isfinite(wL)) wL = 0.0f;
+            if (delayMode_ == 1) bbdL_.writeSample(wL);
             ringL_.writeBlock(&wL, writeIdx_, 1);
             ringL_.refreshMirror(writeIdx_, 1);
 
@@ -695,6 +829,7 @@ namespace MarsDSP::Delays
             {
                 float wR = *inR + hR;
                 if (!std::isfinite(wR)) wR = 0.0f;
+                if (delayMode_ == 1) bbdR_.writeSample(wR);
                 ringR_.writeBlock(&wR, writeIdx_, 1);
                 ringR_.refreshMirror(writeIdx_, 1);
             }
@@ -752,6 +887,10 @@ namespace MarsDSP::Delays
         alignas(16) std::array<float, static_cast<std::size_t>(kMaxChunk) + Pow2RingBuffer::kTail> tapWinR_{};
 
         Diffusion::Diffuser diffuser_;
+        BBD::BrigadeLine bbdL_;
+        BBD::BrigadeLine bbdR_;
+        std::vector<float> bbdHeapStorage_;
+        int delayMode_ = 0;
         bool enableDiffuser_ = false;
         DiffuserState diffState_ = DiffuserState::Off;
         float diffFade_ = 0.0f; // 0 = raw tap, 1 = diffused tap

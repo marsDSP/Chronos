@@ -39,7 +39,8 @@ namespace MarsDSP::Nonlinear {
             else if (C < kEpsOuter)
             {
                 const double m02 = 0.5 * (x0 + x2_);
-                y = 2.0 * (NL::F1(m02) - d1) / (m02 - x1_);
+                const double denom = m02 - x1_;
+                y = (std::fabs(denom) < 1e-15) ? NL::f(m02) : 2.0 * (NL::F1(m02) - d1) / denom;
             }
             else
             {

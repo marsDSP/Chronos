@@ -111,8 +111,12 @@ namespace MarsDSP::Utils::Helpers::inline TempoSync
         if (beatsPerMinute <= 0.0)
             return 0.0;
 
-        struct NoteSpec { double nominal; double style; };
-        constexpr NoteSpec kSpecs[] = {
+        struct NoteSpec
+        {
+            double nominal;
+            double style;
+        };
+        constexpr std::array<NoteSpec, 20> kSpecs {{
             { 32.0,  1.0        }, // 0:  1/64
             { 16.0,  2.0 / 3.0  }, // 1:  1/32T
             { 16.0,  1.0        }, // 2:  1/32
@@ -132,10 +136,10 @@ namespace MarsDSP::Utils::Helpers::inline TempoSync
             {  1.0,  1.5        }, // 16: 1/2.
             {  0.5,  1.0        }, // 17: 1/1
             {  0.25, 1.0        }, // 18: 2/1
-            {  0.125, 1.0       }, // 19: 4/1
-        };
+            { 0.125, 1.0       }, // 19: 4/1
+        }};
 
-        if (choiceIndex < 0 || choiceIndex >= static_cast<int>(std::size(kSpecs)))
+        if (choiceIndex < 0 || choiceIndex >= static_cast<int>(kSpecs.size()))
             return 0.0;
 
         const auto& spec = kSpecs[static_cast<std::size_t>(choiceIndex)];

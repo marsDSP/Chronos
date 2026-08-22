@@ -8,17 +8,17 @@
 #include <cstdint>
 #include <numbers>
 
-// Random modulation sources.
-// Pcg32 is a PCG-XSH-RR generator with per-instance state.
-// OrnsteinUhlenbeck is an OU process with the exact discrete step.
-// The Gaussian step uses a sum of four uniforms. It needs no branch.
+/**
+ * Random modulation sources.
+ * Pcg32 is a PCG-XSH-RR generator with per-instance state.
+ * OrnsteinUhlenbeck is an OU process with the exact discrete step.
+ */
 
 namespace MarsDSP::Mod {
 
     class Pcg32 {
     public:
-        // Seed from one constant and a stream index. The stream index
-        // decorrelates two generators that share the constant.
+        /// Seed from one constant and a stream index. The stream index decorrelates two generators.
         void seed(std::uint64_t seedValue, std::uint64_t stream) noexcept
         {
             state_ = 0;
@@ -37,7 +37,7 @@ namespace MarsDSP::Mod {
             return (xorshifted >> rot) | (xorshifted << ((0u - rot) & 31u));
         }
 
-        // Return a uniform float in [0, 1).
+        /// Return a uniform float in [0, 1).
         float nextUniform() noexcept
         {
             return static_cast<float>(next() >> 8) * (1.0f / 16777216.0f);
@@ -50,7 +50,7 @@ namespace MarsDSP::Mod {
 
     class OrnsteinUhlenbeck {
     public:
-        static constexpr double kClamp = 4.0; // state bound in sigmas
+        static constexpr double kClamp = 4.0; ///< state bound in sigmas
 
         void setRate(double sampleRate, double rateHz) noexcept
         {
@@ -62,8 +62,7 @@ namespace MarsDSP::Mod {
 
         [[nodiscard]] double state() const noexcept { return x_; }
 
-        // Advance the process once per sample. The state stays inside
-        // kClamp sigmas so the delay read guard has a finite bound.
+        /// Advance the process once. The state stays inside kClamp sigmas.
         float next(Pcg32& rng) noexcept
         {
             const float g = (rng.nextUniform() + rng.nextUniform()
@@ -73,9 +72,7 @@ namespace MarsDSP::Mod {
             return static_cast<float>(x_);
         }
 
-        // Return the RMS of the increment that a windowed average shows,
-        // per sample. The window length is in samples. The OU increment
-        // depends on the window length because the process is not smooth.
+        /// Return the RMS of the windowed increment, per sample.
         [[nodiscard]] double windowedIncrementRms(double windowSamples) const noexcept
         {
             return std::sqrt(2.0 * (1.0 - std::pow(a_, windowSamples))) / windowSamples;

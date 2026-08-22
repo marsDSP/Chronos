@@ -1,0 +1,24 @@
+{
+  "provisional": true,
+  "records": [
+    {"name": "SallenKeyLPF::processSample", "config": "", "ns_per_sample": 23.5},
+    {"name": "SallenKeyHPF::processSample", "config": "", "ns_per_sample": 23.5},
+    {"name": "SallenKeyLPF::setParams", "config": "", "ns_per_sample": 117.0},
+    {"name": "OutputFilterStage (Digital)", "config": "bs=64 ch=1", "ns_per_sample": 6.5},
+    {"name": "OutputFilterStage (Analog)", "config": "bs=64 ch=1", "ns_per_sample": 45.0},
+    {"name": "OutputFilterStage (Digital)", "config": "bs=128 ch=1", "ns_per_sample": 6.5},
+    {"name": "OutputFilterStage (Analog)", "config": "bs=128 ch=1", "ns_per_sample": 45.0},
+    {"name": "OutputFilterStage (Digital)", "config": "bs=256 ch=1", "ns_per_sample": 6.5},
+    {"name": "OutputFilterStage (Analog)", "config": "bs=256 ch=1", "ns_per_sample": 45.0},
+    {"name": "OutputFilterStage (Digital)", "config": "bs=512 ch=1", "ns_per_sample": 6.5},
+    {"name": "OutputFilterStage (Analog)", "config": "bs=512 ch=1", "ns_per_sample": 45.0},
+    {"name": "OutputFilterStage (Digital)", "config": "bs=64 ch=2", "ns_per_sample": 13.0},
+    {"name": "OutputFilterStage (Analog)", "config": "bs=64 ch=2", "ns_per_sample": 90.0},
+    {"name": "OutputFilterStage (Digital)", "config": "bs=128 ch=2", "ns_per_sample": 13.0},
+    {"name": "OutputFilterStage (Analog)", "config": "bs=128 ch=2", "ns_per_sample": 90.0},
+    {"name": "OutputFilterStage (Digital)", "config": "bs=256 ch=2", "ns_per_sample": 13.0},
+    {"name": "OutputFilterStage (Analog)", "config": "bs=256 ch=2", "ns_per_sample": 90.0},
+    {"name": "OutputFilterStage (Digital)", "config": "bs=512 ch=2", "ns_per_sample": 13.0},
+    {"name": "OutputFilterStage (Analog)", "config": "bs=512 ch=2", "ns_per_sample": 90.0}
+  ]
+}

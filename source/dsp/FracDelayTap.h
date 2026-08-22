@@ -7,6 +7,7 @@
 #include "Pow2RingBuffer.h"
 #include "simd/Config.h"
 
+#include <array>
 #include <cassert>
 #include <cmath>
 
@@ -14,7 +15,13 @@ namespace MarsDSP::Delays {
 
     struct FracDelayTap
     {
-        struct Coeffs4 { float c1, c2, c3, c4; };
+        struct Coeffs4
+        {
+            float c1;
+            float c2;
+            float c3;
+            float c4;
+        };
 
         [[nodiscard]] static Coeffs4 lagrange3(float f) noexcept
         {
@@ -48,11 +55,11 @@ namespace MarsDSP::Delays {
             const Coeffs4 k = lagrange3(f);
 
             const float* w = rb.windowPtr(base, 6);
-            float scratch[6];
+            std::array<float, 6> scratch{};
             if (w == nullptr)
             {
-                rb.readWindow(scratch, base, 6);
-                w = scratch;
+                rb.readWindow(scratch.data(), base, 6);
+                w = scratch.data();
             }
 
             const M128 taps = MM(loadu_ps)(w + 1);
@@ -70,11 +77,11 @@ namespace MarsDSP::Delays {
             const int base = (writeIdx - i - 3) & rb.mask();
 
             const Coeffs6 c = makeCoeffs(Interpolation::Lagrange3rd, f);
-            float scratch[6];
-            rb.readWindow(scratch, base, 6);
+            std::array<float, 6> scratch{};
+            rb.readWindow(scratch.data(), base, 6);
             float acc = 0.0f;
             for (int t = 0; t < 6; ++t)
-                acc += scratch[t] * c.c[static_cast<std::size_t>(t)];
+                acc += scratch[static_cast<std::size_t>(t)] * c.c[static_cast<std::size_t>(t)];
             return acc;
         }
     };

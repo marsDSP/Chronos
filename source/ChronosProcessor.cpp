@@ -1,14 +1,14 @@
 #include "ChronosProcessor.h"
-#include "ChronosEditor.h"
 #include "utils/helpers/TempoSync.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <random>
 
 namespace {
     // State schema version written into every saved state tree.
-    constexpr int kStateVersion = 2;
+    constexpr int kStateVersion = 4;
     // Cap on the repeat count for the tail length above self-oscillation.
     constexpr int kMaxTailRepeats = 240;
     // Ring-down margin in samples, added to the delay repeat tail.
@@ -121,6 +121,7 @@ void ChronosProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     p.gainLin = parameters.getRawGainLin();
     p.hpfHz = parameters.getRawHpfHz();
     p.lpfHz = parameters.getRawLpfHz();
+    p.filterMode = parameters.getRawFilterMode();
     p.bits = parameters.getRawBits();
     p.adaaOrder = parameters.getADAAOrder();
     p.feedback = parameters.getRawFeedback();
@@ -136,6 +137,7 @@ void ChronosProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     p.enableDiffuser = parameters.getRawEnableDiffuser();
     p.delaySync = parameters.getRawDelaySync();
     p.delayDivision = parameters.getRawDelayDivision();
+    p.delayMode = parameters.getRawDelayMode();
     p.delayModDepth = parameters.getRawDelayModDepth();
     p.delayModRateHz = parameters.getRawDelayModRateHz();
     engine.resetParams(p);
@@ -212,6 +214,7 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
     p.gainLin = parameters.getRawGainLin();
     p.hpfHz = parameters.getRawHpfHz();
     p.lpfHz = parameters.getRawLpfHz();
+    p.filterMode = parameters.getRawFilterMode();
     p.bits = parameters.getRawBits();
     p.adaaOrder = parameters.getADAAOrder();
     p.feedback = parameters.getRawFeedback();
@@ -227,15 +230,16 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
     p.enableDiffuser = parameters.getRawEnableDiffuser();
     p.delaySync = parameters.getRawDelaySync();
     p.delayDivision = parameters.getRawDelayDivision();
+    p.delayMode = parameters.getRawDelayMode();
     p.delayModDepth = parameters.getRawDelayModDepth();
     p.delayModRateHz = parameters.getRawDelayModRateHz();
     engine.setParams(p);
 
-    float *io[2] = {
+    const std::array<float *, 2> io{
         buffer.getWritePointer(0),
         totalNumInputChannels > 1 ? buffer.getWritePointer(1) : nullptr
     };
-    engine.process(io, totalNumInputChannels, numSamples);
+    engine.process(io.data(), totalNumInputChannels, numSamples);
 }
 
 //==============================================================================
@@ -268,10 +272,11 @@ void ChronosProcessor::setStateInformation(const void *data, int sizeInBytes)
     apvts.replaceState(state);
 }
 
-// static analysis says this should be const
-// that won't compile
-void ChronosProcessor::migrateState_(ValueTree& state, int fromVersion) /*const*/
+void ChronosProcessor::migrateState_(ValueTree& state, int fromVersion)
 {
+    // Schema version 4 added the delay mode parameter.
+    // Schema version 3 added the output filter mode parameter.
+    // The default Digital value needs no conversion.
     if (fromVersion < 2)
     {
         for (int i = state.getNumChildren() - 1; i >= 0; --i)

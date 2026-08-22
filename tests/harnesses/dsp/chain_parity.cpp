@@ -486,7 +486,7 @@ void runStateCarry(long& totalSamples)
         for (int i = 0; i < kBlockSize; ++i)
         {
             const float v = 0.5f * static_cast<float>(std::sin(0.3 * static_cast<double>(b * kBlockSize + i)))
-                          + 0.01f * static_cast<float>(b * kBlockSize + i);
+                          + 0.01f * static_cast<float>(i);
             engL[i] = v; engR[i] = v; refL[i] = v; refR[i] = v;
         }
 

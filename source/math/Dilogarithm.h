@@ -7,6 +7,8 @@
 #include <cmath>
 
 namespace MarsDSP::Math {
+
+    /// Landen-folded Li2(-t) for t in [0, 1].
     inline double dilogSeries(double v) noexcept {
         assert(std::fabs(v) <= 0.5);
         constexpr int kTerms = 50;
@@ -18,6 +20,7 @@ namespace MarsDSP::Math {
         return v * sum;
     }
 
+    /// Li2(-t) for t in [0, 1]. Uses the direct series then the Landen partner.
     inline double dilogNeg(double t) noexcept {
         assert(t >= 0.0 && t <= 1.0);
         if (t <= 0.5) return dilogSeries(-t);

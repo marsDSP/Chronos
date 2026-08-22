@@ -49,6 +49,9 @@ namespace MarsDSP::Smoothers {
             return current_;
         }
 
+        /// Advance the ramp by one sample and discard the value.
+        void skip() noexcept { static_cast<void>(getNextValue()); }
+
         [[nodiscard]] T getCurrentValue() const noexcept { return current_; }
         [[nodiscard]] T getTargetValue() const noexcept { return target_; }
         [[nodiscard]] bool isSmoothing() const noexcept { return countdown_ > 0; }

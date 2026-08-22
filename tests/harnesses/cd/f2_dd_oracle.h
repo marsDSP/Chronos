@@ -1,55 +1,40 @@
-// tests/harnesses/cd/f2_dd_oracle.h
-// ──────────────────────────────────────────────────────────────────────────
-// Shared double-double (DD) oracle for the TanhNL antiderivatives F1 and
-// F2. Test-only: included by f2_oracle_check.cpp and f2_minimax_check.cpp.
-// It must never ship in production code.
-//
-// Why DD arithmetic: long double is 64-bit on arm64, so it is bit-identical
-// to the code under test. DD carries two doubles as an unevaluated sum and
-// gives roughly 31 significant decimal digits.
-//
-// Two independent oracles, cross-checked against each other:
-//   1. f2DD: the same closed form the production code evaluates, but in DD
-//      with a 100-term dilogarithm series. Near x = 0 the closed form
-//      cancels badly, so there it switches to the Taylor series of F2. The
-//      series coefficients come from a recurrence on the tanh series, which
-//      follows from tanh' = 1 - tanh^2. The recurrence is stable and needs
-//      no transcribed constants.
-//   2. quadDD: F2(x) = integral_0^x ln cosh(u) du by composite
-//      Gauss-Legendre-16 with panels of width <= 0.5. Nodes and weights
-//      come from a Newton solve on the Legendre recurrence, computed in DD.
-//      Double nodes and weights would cap the oracle at about 1e-16, which
-//      would void the 1e-25 agreement gate. The integrand ln cosh(u) uses
-//      log1p(2*sinh^2(u/2)) for u <= 0.5. That form has only positive
-//      terms, so it cannot cancel.
-//
-// f1DD is ln cosh in DD (the small-|x| route is again cancellation-free).
-// F1 needs no second oracle beyond this.
-//
-// Usage: call F2Oracle::init() once before any oracle call. init() is
-// idempotent. Everything here is inline so each harness binary keeps its
-// own copy; there is no shared state across processes.
-// ──────────────────────────────────────────────────────────────────────────
+/**
+ * Shared double-double oracle for the TanhNL antiderivatives F1 and F2.
+ * Test-only: included by f2_oracle_check.cpp and f2_minimax_check.cpp.
+ * Never ship in production code.
+ *
+ * Long double is 64-bit on arm64, so it is bit-identical to the code
+ * under test. DD carries two doubles as an unevaluated sum and gives
+ * roughly 31 significant decimal digits.
+ *
+ * Two independent oracles, cross-checked against each other:
+ *   1. f2DD: the same closed form the production code evaluates, in DD
+ *      with a 100-term dilogarithm series. Near x = 0 the closed form
+ *      cancels badly, so it switches to the Taylor series of F2.
+ *   2. quadDD: F2(x) = integral of ln cosh(u) du by composite Gauss-Legendre-16.
+ *
+ * Call F2Oracle::init() once before any oracle call. Idempotent.
+ */
 
 #pragma once
 
 #ifndef CHRONOS_TESTS_F2_DD_ORACLE_H
 #define CHRONOS_TESTS_F2_DD_ORACLE_H
 
+#include <array>
 #include <cassert>
 #include <cmath>
 #include <vector>
 
 namespace F2Oracle {
 
-// ── Double-double arithmetic ─────────────────────────────────────────────
-// A DD value x represents hi + lo, with |lo| <= half a ulp of |hi|.
-// The algorithms are the standard Dekker/Knuth pair. Their error is about
-// 2^-105 times the largest operand magnitude. Every use below keeps the
-// result within a small condition number of the operands, so the relative
-// error stays near 2^-105.
-
-struct DD { double hi, lo; };
+// Double-double arithmetic. A DD value x represents hi + lo,
+// with |lo| <= half a ulp of |hi|. Dekker/Knuth pair algorithms.
+struct DD
+{
+    double hi;
+    double lo;
+};
 
 inline DD dd_from(double v) noexcept { return { v, 0.0 }; }
 inline DD dd_one() noexcept { return { 1.0, 0.0 }; }
@@ -79,7 +64,8 @@ inline DD quickTwoSum(double s, double e) noexcept
 
 inline DD dd_add(DD a, DD b) noexcept
 {
-    double s, e;
+    double s;
+    double e;
     twoSum(a.hi, b.hi, s, e);
     e += a.lo + b.lo;
     return quickTwoSum(s, e);
@@ -87,7 +73,8 @@ inline DD dd_add(DD a, DD b) noexcept
 
 inline DD dd_add_d(DD a, double b) noexcept
 {
-    double s, e;
+    double s;
+    double e;
     twoSum(a.hi, b, s, e);
     e += a.lo;
     return quickTwoSum(s, e);
@@ -97,7 +84,8 @@ inline DD dd_sub(DD a, DD b) noexcept { return dd_add(a, dd_neg(b)); }
 
 inline DD dd_mul(DD a, DD b) noexcept
 {
-    double p, e;
+    double p;
+    double e;
     twoProd(a.hi, b.hi, p, e);
     e += a.hi * b.lo + a.lo * b.hi;
     return quickTwoSum(p, e);
@@ -105,14 +93,15 @@ inline DD dd_mul(DD a, DD b) noexcept
 
 inline DD dd_mul_d(DD a, double s) noexcept
 {
-    double p, e;
+    double p;
+    double e;
     twoProd(a.hi, s, p, e);
     e += a.lo * s;
     return quickTwoSum(p, e);
 }
 
 // Multiply by a small exact integer.
-inline DD dd_mul_int(DD a, int k) noexcept { return dd_mul_d(a, static_cast<double>(k)); }
+inline DD dd_mul_int(DD a, int k) noexcept { return dd_mul_d(a, k); }
 
 inline DD dd_div(DD a, DD b) noexcept
 {
@@ -123,21 +112,19 @@ inline DD dd_div(DD a, DD b) noexcept
 }
 
 // Divide by a small exact integer. A correctly rounded reciprocal would
-// inject about 1e-16 of relative error and void the DD precision, so this
-// uses the full DD division path.
-inline DD dd_div_int(DD a, int k) noexcept { return dd_div(a, dd_from(static_cast<double>(k))); }
+// inject about 1e-16 of relative error, so use the full DD division path.
+inline DD dd_div_int(DD a, int k) noexcept { return dd_div(a, dd_from(k)); }
 
 inline double dd_abs_hi(DD a) noexcept { return std::fabs(a.hi); }
 
 // Relative difference between two DD values, measured on the hi parts.
-// The hi part of a DD difference carries magnitudes down to ~1e-32.
 inline double ddRelDiff(DD a, DD b) noexcept
 {
     const DD d = dd_sub(a, b);
     return dd_abs_hi(d) / std::fabs(b.hi);
 }
 
-// ── DD constants ─────────────────────────────────────────────────────────
+// DD constants.
 
 // ln(2), split hi/lo. The pair sums to ln(2) with a residual of 5.7e-34.
 inline constexpr DD kLn2DD { 0.6931471805599453, 2.3190468138462996e-17 };
@@ -152,8 +139,7 @@ inline constexpr DD kAnchorF2at1   { 0.15258009379489942, -9.965501769494956e-18
 
 constexpr double kLn2 = 0.6931471805599453;
 
-// ── Internal state (built by init()) ─────────────────────────────────────
-
+// Internal state, built by init().
 inline DD gPiSq24;            // pi^2 / 24, from kPiDD in DD
 inline bool gReady = false;
 
@@ -162,18 +148,15 @@ inline bool gReady = false;
 // the tanh coefficients T_k in tanh(x) = sum_k T_k x^(2k-1) satisfy
 //   T_1 = 1,   T_{m+1} = -(sum_{i=1}^{m} T_i T_{m+1-i}) / (2m+1).
 // Integrating twice gives p_k = T_{k+1} / ((2k+2)(2k+3)).
-// The recurrence sums products of same-scale terms, so it is stable in DD.
-// No transcribed constants. T_k decays like (2/pi)^(2k), so 37 terms give
-// a truncation of about 0.101^37 ~ 1e-37 at u = 0.25.
 constexpr int kP2N = 36;                              // terms used at u <= 0.25
-inline DD gT[kP2N + 2];
-inline DD gP2[kP2N];
+inline std::array<DD, kP2N + 2> gT;
+inline std::array<DD, kP2N> gP2;
 
-// ── DD transcendentals ───────────────────────────────────────────────────
+// DD transcendentals.
 
 // e^(-2a) for a >= 0. Reduction r = y - k*ln2 with the hi/lo ln2 pair,
 // then a Taylor series for exp(r), then ldexp for 2^k. For large a the
-// result underflows to exactly +0.0. That is a contract, not an accident.
+// result underflows to exactly +0.0.
 inline DD ddExpNeg2(DD a) noexcept
 {
     assert(a.hi >= 0.0);
@@ -181,18 +164,15 @@ inline DD ddExpNeg2(DD a) noexcept
     const long k = std::lround(y.hi / kLn2);
     const DD r = dd_sub(y, dd_mul_d(kLn2DD, static_cast<double>(k)));
     // |r| <= ln2/2 + a rounding whisker. exp(r) by Horner on r^m/m!.
-    // Divisions stay exact through dd_div_int.
     DD acc = dd_one();
     for (int m = 26; m >= 1; --m)
         acc = dd_add_d(dd_div_int(dd_mul(r, acc), m), 1.0);
-    // 0.35^26 / 26! ~ 3e-41, far below the DD floor.
     const int ki = static_cast<int>(k);
     return { std::ldexp(acc.hi, ki), std::ldexp(acc.lo, ki) };
 }
 
 // log1p(y) for 0 <= y <= 1, through log1p(y) = 2*atanh(z), z = y/(2+y).
-// z <= 1/3, so the odd series converges fast. All terms are positive for
-// y >= 0, so there is no cancellation.
+// z <= 1/3, so the odd series converges fast. All terms are positive.
 inline DD ddLog1p(DD y) noexcept
 {
     assert(y.hi >= 0.0 && y.hi <= 1.0);
@@ -207,14 +187,13 @@ inline DD ddLog1p(DD y) noexcept
     return dd_mul_d(dd_mul(z, acc), 2.0);
 }
 
-// sinh(y) for 0 <= y <= 0.25, Horner on y^2 with factorial coefficients
-// from an exact integer recurrence. All terms positive.
+// sinh(y) for 0 <= y <= 0.25, Horner on y^2 with factorial coefficients.
 inline DD ddSinhSmall(DD y) noexcept
 {
     assert(y.hi >= 0.0 && y.hi <= 0.25);
     const DD v = dd_mul(y, y);
     constexpr int N = 13;                            // v^14/29! ~ 2e-47
-    DD c[N + 1];
+    std::array<DD, N + 1> c;
     c[0] = dd_one();                                 // c_m = 1/(2m+1)!
     for (int m = 1; m <= N; ++m)
         c[m] = dd_div_int(c[m - 1], 2 * m * (2 * m + 1));
@@ -225,8 +204,7 @@ inline DD ddSinhSmall(DD y) noexcept
 }
 
 // ln cosh(a) for a >= 0. Two routes, both free of cancellation:
-//   a <= 0.5: log1p(2*sinh^2(a/2)). cosh(a) - 1 = 2*sinh^2(a/2) is an
-//             exact identity, and every term is positive.
+//   a <= 0.5: log1p(2*sinh^2(a/2)). cosh(a) - 1 = 2*sinh^2(a/2) is exact.
 //   a >  0.5: a - ln2 + log1p(e^-2a). The terms cancel at most a factor
 //             of about 6 at a = 0.5, which DD absorbs.
 inline DD ddLnCosh(DD a) noexcept
@@ -243,9 +221,7 @@ inline DD ddLnCosh(DD a) noexcept
 }
 
 // Li2(-t) for 0 <= t <= 0.5, alternating Horner, 100 terms. Mirrors the
-// structure of the production dilogSeries, lifted to DD. The Landen fold
-// is not needed: the closed-form F2 below only runs for a > 0.5, where
-// t < e^-1 < 0.5 always.
+// structure of the production dilogSeries, lifted to DD.
 inline DD ddDilogNegDirect(DD t) noexcept
 {
     assert(t.hi >= 0.0 && t.hi <= 0.5);
@@ -257,8 +233,7 @@ inline DD ddDilogNegDirect(DD t) noexcept
     return dd_neg(dd_mul(t, acc));
 }
 
-// ── Gauss-Legendre-16 in DD ──────────────────────────────────────────────
-
+// Gauss-Legendre-16 in DD.
 struct GaussDD
 {
     static constexpr int N = 16;
@@ -302,8 +277,7 @@ inline GaussDD g_gl;
 constexpr int kMaxPanels = 2000;                     // covers a <= 1000
 inline std::vector<DD> g_prefix;                     // prefix sums, size 2001
 
-// ── init: idempotent one-time build ──────────────────────────────────────
-
+// init: idempotent one-time build.
 inline void init() noexcept
 {
     if (gReady) return;
@@ -337,8 +311,7 @@ inline void init() noexcept
     gReady = true;
 }
 
-// ── Closed-form oracle ───────────────────────────────────────────────────
-
+// Closed-form oracle.
 inline DD f2DD(double x) noexcept
 {
     const double a = std::fabs(x);
@@ -371,12 +344,8 @@ inline DD f1DD(double x) noexcept
     return ddLnCosh(dd_from(std::fabs(x)));
 }
 
-// ── Quadrature oracle ────────────────────────────────────────────────────
-// Composite Gauss-Legendre-16 over panels of width 0.5, prefix-summed once
-// up to a = 1000. A partial panel at the top covers the remainder. The
-// panel centre and half-width of the partial panel are exact in DD:
+// Quadrature oracle. Composite Gauss-Legendre-16 over panels of width 0.5.
 // a - b is a Sterbenz-exact subtraction and the centre uses a DD add.
-
 inline DD quadDD(double x) noexcept
 {
     const double a = std::fabs(x);
@@ -387,8 +356,6 @@ inline DD quadDD(double x) noexcept
     const double b = 0.5 * static_cast<double>(full);
     if (a > b)
     {
-        // b <= a <= 2b for b >= 0.5, so a - b is exact (Sterbenz).
-        // b == 0 gives a - b = a, also exact.
         const DD r = dd_mul_d(dd_from(a - b), 0.5);
         const DD c = dd_mul_d(dd_add(dd_from(a), dd_from(b)), 0.5);
         DD s = dd_from(0.0);

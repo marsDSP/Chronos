@@ -8,67 +8,27 @@
 
 #include "math/Dilogarithm.h"
 
-// ──────────────────────────────────────────────────────────────────────────
-// Regional minimax kernels for the antiderivatives of tanh:
-//   F1(x) = ln cosh(x)          (F1' = tanh, even)
-//   F2(x) = int_0^x ln cosh(u) du   (F2' = F1, odd)
-//
-// These replace the dilogarithm-based closed form. The closed form cancels
-// from ~0.4-sized terms down to x^3/6 near x = 0, so its relative error is
-// unbounded there (about 4.6e8 at x = 1e-8). The factored forms below carry
-// no cancellation at all near zero, so the assembled relative error equals
-// the polynomial's relative error plus the rounding of the assembly.
-//
-// Regions (a0 = 1, a1 = 19):
-//   I    |x| <= a0:  F2 = x*u*P(u),  F1 = u*S(u),  u = x^2.
-//        No transcendental at all. F2(0) == 0 and F1(0) == 0 are exact by
-//        construction. Parity is bit-exact: the sign of F2 rides the
-//        leading x, and F1 depends on x only through u = x^2.
-//   II   a0 < |x| < a1:  F2 = (1/2)h^2 + C2 - (1/2)t*psi(t),
-//        F1 = h + t*L(t),  h = a - ln2,  t = e^(-2a).
-//        The completed square keeps the cancellation condition small
-//        (kappa <= 1.9 over the region). ln2 is subtracted as a hi/lo pair
-//        so its rounding does not enter h.
-//   III  |x| >= a1:  F2 = (1/2)h^2 + C2,  F1 = h.
-//        The dropped terms are below 1e-17 relative by the choice of a1.
-//
-// Both region-I fits and both region-II fits are constrained to interpolate
-// the true value at the a0 seam, so the seam discontinuity is evaluation
-// rounding (measured under 1 ulp), not the sum of two independent fit
-// errors.
-//
-// Evaluation:
-//   - Polynomial, not rational. A [4/4] rational matches the degree-14
-//     accuracy and a [3/3] matches the degree-10 accuracy, but each costs a
-//     division per call. In a throughput-bound kernel two divisions per
-//     sample is the worse trade on the target ISAs.
-//   - Estrin, not Horner. A degree-14 Horner is a 14-deep serial FMA chain.
-//     The Estrin split below has dependency depth 4. The op order is:
-//     pairs on u, then combines on u^2, u^4, u^8, all with fused
-//     multiply-adds. Coefficients are padded with implicit zeros to a
-//     power-of-two count, so c[14] enters as a lone pair.
-//
-// The coefficients are derived and regression-checked by the python scripts
-// (relative-error Remez in mpmath at 45 digits). Do not edit them by hand.
-// The scripts exit non-zero if a fresh derivation drifts from these values.
-// ──────────────────────────────────────────────────────────────────────────
+/**
+ * Regional minimax kernels for the tanh antiderivatives F1 and F2.
+ * F1(x) = ln cosh(x) is even; F2(x) = integral of ln cosh is odd.
+ * Three regions with crossovers a0 = 1 and a1 = 19. See dsp-notes.md
+ * for the derivation and the seam and evaluation reasoning.
+ * Coefficients are derived and checked by scripts/python/remez_*.py.
+ */
 
 namespace MarsDSP::Math
 {
     inline constexpr double kTanA0 = 1.0; // region I/II crossover
     inline constexpr double kTanA1 = 19.0; // region II/III crossover
 
-    // C2 = pi^2/24 - ln^2(2)/2 = 0.1710070097529558967845525...
-    // The nearest double suffices: at a = 1 its rounding contributes about
-    // 0.2 ulp of F2, and its weight only falls as a grows.
+    // C2 = pi^2/24 - ln^2(2)/2. The nearest double suffices.
     inline constexpr double kTanC2 = 0.1710070097529559;
 
     // ln(2) as a hi/lo pair: |ln2 - (hi + lo)| = 5.7e-34.
     inline constexpr double kTanLn2Hi = 0.6931471805599453;
     inline constexpr double kTanLn2Lo = 2.3190468138462996e-17;
 
-    // P(u), degree 14: F2(x) = x*u*P(u), u = x^2, |x| <= 1. P(0) = 1/6.
-    // Minimax relative error 9.8e-19 on [0, 1], seam-constrained at u = 1.
+    // P(u), degree 14. F2(x) = x*u*P(u), u = x^2, |x| <= 1. P(0) = 1/6.
     inline constexpr std::array<double, 15> kF2RegionI{
         {
             0.16666666666666666, // 0x1.5555555555555p-3
@@ -89,8 +49,7 @@ namespace MarsDSP::Math
         }
     };
 
-    // S(u), degree 14: F1(x) = u*S(u), u = x^2, |x| <= 1. S(0) = 1/2.
-    // Minimax relative error 9.5e-18 on [0, 1], seam-constrained at u = 1.
+    // S(u), degree 14. F1(x) = u*S(u), u = x^2, |x| <= 1. S(0) = 1/2.
     inline constexpr std::array<double, 15> kF1RegionI{
         {
             0.5, // 0x1.0000000000000p-1
@@ -112,8 +71,6 @@ namespace MarsDSP::Math
     };
 
     // psi(t) = -Li2(-t)/t, degree 10 on [0, e^-2]. psi(0) = 1.
-    // Minimax relative error 5.1e-19, seam-constrained at t = e^-2.
-    // The dilogarithm fold never fires here: region II only sees t <= 0.1354.
     inline constexpr std::array<double, 11> kF2RegionIIPsi{
         {
             1.0, // 0x1.0000000000000p+0
@@ -131,7 +88,6 @@ namespace MarsDSP::Math
     };
 
     // L(t) = log1p(t)/t, degree 10 on [0, e^-2]. L(0) = 1.
-    // Minimax relative error 5.9e-18, seam-constrained at t = e^-2.
     inline constexpr std::array<double, 11> kF1RegionIIL{
         {
             1.0, // 0x1.0000000000000p+0
@@ -150,8 +106,7 @@ namespace MarsDSP::Math
 
     namespace detail
     {
-        // Estrin evaluation, degree 14 (15 coefficients), depth 4.
-        // Pair on u, combine on u^2, u^4, u^8; c[14] enters as a lone pair.
+        // Estrin evaluation, degree 14, depth 4.
         inline double estrin15(const std::array<double, 15> &c, double u) noexcept
         {
             const double u2 = u * u;
@@ -174,7 +129,7 @@ namespace MarsDSP::Math
             return std::fma(r1, u8, r0);
         }
 
-        // Estrin evaluation, degree 10 (11 coefficients), depth 4. Same pairing.
+        // Estrin evaluation, degree 10, depth 4.
         inline double estrin11(const std::array<double, 11> &c, double u) noexcept
         {
             const double u2 = u * u;
@@ -194,7 +149,7 @@ namespace MarsDSP::Math
         }
     } // namespace detail
 
-    // F2(x) = int_0^x ln cosh(u) du. Odd. F2(0) == 0.0 exactly.
+    /// F2(x) = integral of ln cosh. Odd. F2(0) is exactly zero.
     inline double f2Tanh(const double x) noexcept
     {
         const double a = std::fabs(x);
@@ -218,8 +173,7 @@ namespace MarsDSP::Math
         return x < 0.0 ? -m : m;
     }
 
-    // F1(x) = ln cosh(x). Even. F1(0) == 0.0 exactly, and F1 >= 0 for all x
-    // (S(u) > 0 on [0, 1]; h + t*L(t) > 0 for a > 1; h > 0 for a >= 19).
+    /// F1(x) = ln cosh(x). Even. F1(0) is exactly zero. F1 is non-negative.
     inline double f1Tanh(const double x) noexcept
     {
         const double a = std::fabs(x);
@@ -237,24 +191,20 @@ namespace MarsDSP::Math
         return h;
     }
 
-    // The previous dilogarithm-based implementations, preserved as the test
-    // oracle. The constants mirror the dilog-era header values.
+    // Reference twins for the test oracle. Keep them; do not optimize.
     namespace Ref
     {
-        // reference only — do not optimize, do not delete
         inline double signRef(const double x) noexcept
         {
             return x > 0.0 ? 1.0 : (x < 0.0 ? -1.0 : 0.0);
         }
 
-        // reference only — do not optimize, do not delete
         inline double f1TanhRef(const double x) noexcept
         {
             const double a = std::fabs(x);
             return a - 0.6931471805599453 + std::log1p(std::exp(-2.0 * a));
         }
 
-        // reference only — do not optimize, do not delete
         inline double f2TanhRef(const double x) noexcept
         {
             const double a = std::fabs(x);

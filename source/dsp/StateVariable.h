@@ -140,8 +140,12 @@ namespace MarsDSP::Filters {
 
             if (firstBlock)
             {
-                da1 = MM(setzero_ps)();  da2 = MM(setzero_ps)();  da3 = MM(setzero_ps)();
-                dm0 = MM(setzero_ps)();  dm1 = MM(setzero_ps)();  dm2 = MM(setzero_ps)();
+                da1 = MM(setzero_ps)();
+                da2 = MM(setzero_ps)();
+                da3 = MM(setzero_ps)();
+                dm0 = MM(setzero_ps)();
+                dm1 = MM(setzero_ps)();
+                dm2 = MM(setzero_ps)();
                 firstBlock = false;
                 return;
             }
@@ -154,8 +158,12 @@ namespace MarsDSP::Filters {
             dm1 = MM(mul_ps)(MM(sub_ps)(m1, m1_prior), obs);
             dm2 = MM(mul_ps)(MM(sub_ps)(m2, m2_prior), obs);
 
-            a1 = a1_prior;  a2 = a2_prior;  a3 = a3_prior;
-            m0 = m0_prior;  m1 = m1_prior;  m2 = m2_prior;
+            a1 = a1_prior;
+            a2 = a2_prior;
+            a3 = a3_prior;
+            m0 = m0_prior;
+            m1 = m1_prior;
+            m2 = m2_prior;
         }
 
         M128 processBlockStep(const M128 input) noexcept
