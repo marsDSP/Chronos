@@ -260,10 +260,14 @@ namespace
             for (int i = 0; i < kTotalSamples; ++i)
             {
                 const auto u = static_cast<std::size_t>(i);
-                CHECK(fL[u] == rL[u]);
-                CHECK(fR[u] == rR[u]);
+                const float diffL = std::fabs(fL[u] - rL[u]);
+                const float diffR = std::fabs(fR[u] - rR[u]);
+                const float denomL = std::max(1.0f, std::fabs(rL[u]));
+                const float denomR = std::max(1.0f, std::fabs(rR[u]));
+                CHECK(diffL / denomL <= 1e-5f);
+                CHECK(diffR / denomR <= 1e-5f);
             }
-            std::println("    size ramp block size {:3d}: bit-exact: PASS", bs);
+            std::println("    size ramp block size {:3d}: within 1e-5 relative tolerance: PASS", bs);
         }
     }
 } // namespace

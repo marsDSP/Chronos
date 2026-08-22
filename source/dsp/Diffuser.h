@@ -404,6 +404,11 @@ namespace MarsDSP::Diffusion
                 }
             }
 
+            const float maxLen = static_cast<float>(len[7]);
+            const float effMax0 = effLen(maxLen, sizeRamp_[0]);
+            const float effMax1 = effLen(maxLen, sizeRamp_[static_cast<std::size_t>(m - 1)]);
+            const bool settled = (std::fabs(effMax1 - effMax0) < 0.5f) && (gRamp_[0] == gRamp_[static_cast<std::size_t>(m - 1)]);
+
             for (int i = 0; i < kNumNestedSections; ++i)
             {
                 auto &nest = bank.nested[static_cast<std::size_t>(i)];
@@ -412,24 +417,17 @@ namespace MarsDSP::Diffusion
                 const float sgn = sectionSign(3 + i);
                 const float secGain = kSectionGain[static_cast<std::size_t>(3 + i)];
 
-                const float effOut0 = effLen(lenOutF, sizeRamp_[0]);
-                const float effOut1 = effLen(lenOutF, sizeRamp_[static_cast<std::size_t>(m - 1)]);
-                const float effIn0 = effLen(lenInF, sizeRamp_[0]);
-                const float effIn1 = effLen(lenInF, sizeRamp_[static_cast<std::size_t>(m - 1)]);
-                const float g0 = gRamp_[0];
-                const float g1 = gRamp_[static_cast<std::size_t>(m - 1)];
-
-                const bool settled = (effOut0 == effOut1) && (effIn0 == effIn1) && (g0 == g1);
-
                 if (settled)
                 {
-                    float effOut = std::nearbyintf(effOut0);
+                    const float size = sizeRamp_[0];
+                    const float g = gRamp_[0];
+                    float effOut = std::nearbyintf(effLen(lenOutF, size));
                     effOut = std::clamp(effOut, kMinDelay, lenOutF);
-                    float effIn = std::nearbyintf(effIn0);
+                    float effIn = std::nearbyintf(effLen(lenInF, size));
                     effIn = std::clamp(effIn, kMinDelay, lenInF);
 
                     nest.setDelays(effOut, effIn);
-                    const float gOut = sgn * secGain * g0;
+                    const float gOut = sgn * secGain * g;
                     const float gIn = 0.85f * gOut;
                     nest.setCoefficients(gOut, gIn);
 
