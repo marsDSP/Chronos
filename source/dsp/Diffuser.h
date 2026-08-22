@@ -166,8 +166,8 @@ namespace MarsDSP::Diffusion
                     depthRamp_[static_cast<std::size_t>(j)] = depthSm_.getNextValue();
                 }
 
-                chunk_(secL_, left + off, m, sectionLenCache_.lenL);
-                if (right != nullptr) chunk_(secR_, right + off, m, sectionLenCache_.lenR);
+                chunk_(secL_, left + off, m, lenL_);
+                if (right != nullptr) chunk_(secR_, right + off, m, lenR_);
             }
         }
 
@@ -180,15 +180,15 @@ namespace MarsDSP::Diffusion
                 const float g = std::clamp(coefSm_.getNextValue(), -kMaxCoefficient, kMaxCoefficient);
                 const float depth = depthSm_.getNextValue();
 
-                left[s] = chain_(secL_, left[s], size, g, depth, sectionLenCache_.lenL);
-                if (right != nullptr) right[s] = chain_(secR_, right[s], size, g, depth, sectionLenCache_.lenR);
+                left[s] = chain_(secL_, left[s], size, g, depth, lenL_);
+                if (right != nullptr) right[s] = chain_(secR_, right[s], size, g, depth, lenR_);
             }
         }
 
         [[nodiscard]] static constexpr int latencySamples() noexcept { return 0; }
 
-        [[nodiscard]] int sectionLenL(int i) const noexcept { return sectionLenCache_.lenL[static_cast<std::size_t>(i)]; }
-        [[nodiscard]] int sectionLenR(int i) const noexcept { return sectionLenCache_.lenR[static_cast<std::size_t>(i)]; }
+        [[nodiscard]] int sectionLenL(int i) const noexcept { return lenL_[static_cast<std::size_t>(i)]; }
+        [[nodiscard]] int sectionLenR(int i) const noexcept { return lenR_[static_cast<std::size_t>(i)]; }
         [[nodiscard]] float getSizeCurrent() const noexcept { return sizeSm_.getCurrentValue(); }
         [[nodiscard]] float getCoefCurrent() const noexcept { return coefSm_.getCurrentValue(); }
 
@@ -250,32 +250,20 @@ namespace MarsDSP::Diffusion
 
     public:
         // Compute the section lengths from the acoustic path tables.
-        // The prepare path and the arena size query call this function.
-        // The cache holds the result so the prime scan runs once per rate.
+        // Pure function with stack-local state for thread safety.
         static void computeSectionLens(double sampleRate, int *outL, int *outR) noexcept
         {
-            if (sectionLenCache_.valid && sectionLenCache_.sr == sampleRate)
-            {
-                std::copy_n(sectionLenCache_.lenL.data(), kNumDelaysPerBank, outL);
-                std::copy_n(sectionLenCache_.lenR.data(), kNumDelaysPerBank, outR);
-                return;
-            }
-
             const double samplesPerMeter = sampleRate / kSpeedOfSoundMps;
-            sectionLenCache_.used.reset();
+            std::bitset<kMaxPrimeScan> used;
             for (int i = 0; i < kNumDelaysPerBank; ++i)
             {
                 const auto wantL = static_cast<int>(std::lround(
                     static_cast<double>(kTotalMetersL * kPathRatios[static_cast<std::size_t>(i)]) * samplesPerMeter));
                 const auto wantR = static_cast<int>(std::lround(
                     static_cast<double>(kTotalMetersR * kPathRatios[static_cast<std::size_t>(i)]) * samplesPerMeter));
-                sectionLenCache_.lenL[static_cast<std::size_t>(i)] = distinctPrimeNear_(wantL, sectionLenCache_.used);
-                sectionLenCache_.lenR[static_cast<std::size_t>(i)] = distinctPrimeNear_(wantR, sectionLenCache_.used);
+                outL[i] = distinctPrimeNear_(wantL, used);
+                outR[i] = distinctPrimeNear_(wantR, used);
             }
-            sectionLenCache_.sr = sampleRate;
-            sectionLenCache_.valid = true;
-            std::copy_n(sectionLenCache_.lenL.data(), kNumDelaysPerBank, outL);
-            std::copy_n(sectionLenCache_.lenR.data(), kNumDelaysPerBank, outR);
         }
 
     private:
@@ -285,26 +273,29 @@ namespace MarsDSP::Diffusion
             assert(sampleRate > 0.0);
             sampleRate_ = sampleRate;
 
-            int lenL[kNumDelaysPerBank];
-            int lenR[kNumDelaysPerBank];
-            computeSectionLens(sampleRate, lenL, lenR);
+            if (!cacheValid_ || cacheSr_ != sampleRate)
+            {
+                computeSectionLens(sampleRate, lenL_.data(), lenR_.data());
+                cacheSr_ = sampleRate;
+                cacheValid_ = true;
+            }
 
             kModHeadroom_ = modHeadroomFor(sampleRate);
             for (auto *bank: {&secL_, &secR_})
             {
-                const auto &len = (bank == &secL_) ? lenL : lenR;
+                const auto &len = (bank == &secL_) ? lenL_ : lenR_;
                 for (int i = 0; i < kNumPlainSections; ++i)
                 {
                     auto &s = bank->plain[static_cast<std::size_t>(i)];
-                    s.len = len[i];
+                    s.len = len[static_cast<std::size_t>(i)];
                     const int minCap = s.len + kModHeadroom_ + Delays::Pow2RingBuffer::kTail + 8;
                     if (arena != nullptr) s.ring.prepare(minCap, *arena);
                     else s.ring.prepare(minCap);
                 }
                 for (int i = 0; i < kNumNestedSections; ++i)
                 {
-                    const int dOut = len[3 + 2 * i];
-                    const int dIn = len[4 + 2 * i];
+                    const int dOut = len[static_cast<std::size_t>(3 + 2 * i)];
+                    const int dIn = len[static_cast<std::size_t>(4 + 2 * i)];
                     const int minCapOut = dOut + kModHeadroom_;
                     const int minCapIn = dIn + kModHeadroom_;
                     auto &nest = bank->nested[static_cast<std::size_t>(i)];
@@ -367,7 +358,7 @@ namespace MarsDSP::Diffusion
                 }
                 return sum;
             };
-            return {sumBank(secL_, sectionLenCache_.lenL), sumBank(secR_, sectionLenCache_.lenR)};
+            return {sumBank(secL_, lenL_), sumBank(secR_, lenR_)};
         }
 
         [[nodiscard]] float baseTransportSamples(float size01) const noexcept
@@ -529,25 +520,14 @@ namespace MarsDSP::Diffusion
         Bank secL_{};
         Bank secR_{};
         double sampleRate_ = 48000.0;
+        std::array<int, kNumDelaysPerBank> lenL_{};
+        std::array<int, kNumDelaysPerBank> lenR_{};
+        double cacheSr_ = 0.0;
+        bool cacheValid_ = false;
 
         Smoothers::LinearSmoother<float> sizeSm_;
         Smoothers::LinearSmoother<float> coefSm_;
         Smoothers::LinearSmoother<float> depthSm_;
-
-        // Cache for the section length prime scan. Holds the result per
-        // sample rate so the scan runs once. The bitset replaces the old
-        // 64 kB stack array. The prepare path is single-threaded.
-        struct SectionLenCache
-        {
-            SectionLenCache() noexcept : sr{0.0}, lenL{}, lenR{}, valid{false} {}
-            double sr;
-            std::array<int, kNumDelaysPerBank> lenL;
-            std::array<int, kNumDelaysPerBank> lenR;
-            std::bitset<kMaxPrimeScan> used;
-            bool valid;
-        };
-
-        static inline SectionLenCache sectionLenCache_{};
     };
 }
 #endif
