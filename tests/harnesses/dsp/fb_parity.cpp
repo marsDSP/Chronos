@@ -54,6 +54,7 @@ struct Cfg
     float diffSize  = 0.5f;   // section length scale
     float delayModDepth  = 0.0f;  // cents; 0 keeps the settled path reachable
     float delayModRateHz = 1.0f;  // Hz
+    int   delayMode  = 0;        // 0: Digital, 1: BBD
 };
 
 // Per-1024-sample RMS of a buffer, in dB relative to a reference RMS.
@@ -86,6 +87,7 @@ void runOne(const Cfg& c, bool automateDelay, bool automateDampCross)
     p.diffModRateHz  = 0.5f;
     p.delayModDepth  = c.delayModDepth;
     p.delayModRateHz = c.delayModRateHz;
+    p.delayMode     = c.delayMode;
     fast.resetParams(p);
     ref.resetParams(p);   // resetParams snaps: diffuser state On/Off, no fade
 
@@ -375,6 +377,20 @@ int main()
             ++g_tolOk;
             ++configs;
         }
+    }
+
+    // BBD crossfeed cells: verify chunked process() vs processRef() for the
+    // BBD delay core at crossfeed 0, 0.5, 1.0 (S67).
+    g_section = "bbd-crossfeed";
+    for (int delay : { 480, 4800 })
+    for (float fbk : { 0.5f, 0.95f })
+    for (float cr : { 0.0f, 0.5f, 1.0f })
+    for (int sat : { 0, 2 })
+    for (int blk : { 64, 256 })
+    for (bool stereo : stereos)
+    {
+        runOne({ delay, fbk, cr, sat, blk, stereo, false, 0.7f, 0.5f, 25.0f, 1.5f, 1 }, false, false);
+        ++configs;
     }
 
     std::println("matrix ({} configs):", configs);
