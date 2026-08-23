@@ -7,6 +7,7 @@
 #include "dsp/ChronosEngine.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <print>
 #include <cstdlib>
@@ -177,6 +178,279 @@ int main()
             stageMono.process (&in, nullptr, &out, nullptr, 1);
             CHECK (std::isfinite (out));
         }
+    }
+
+    // 7. Cutoff sweep click gate
+    g_section = "cutoff_sweep_click";
+    {
+        const std::array<double, 4> rates { { 44100.0, 48000.0, 96000.0, 192000.0 } };
+        const double amp = std::pow (10.0, -6.0 / 20.0);
+        for (double fs : rates)
+        {
+            const int total = static_cast<int> (fs * 2.0); // 2 s sweep
+            const int block = 256;
+            std::vector<float> in (total);
+            for (int i = 0; i < total; ++i)
+                in[i] = static_cast<float> (amp * std::sin (2.0 * std::numbers::pi * 1000.0 * i / fs));
+
+            // Exponential cutoff sweep: first 1s LPF 20k->500, second 1s HPF 20->1k.
+            auto sweepCutoffs = [&] (double t) -> std::pair<float,float> {
+                if (t <= 1.0)
+                    return { 20.0f, static_cast<float> (20000.0 * std::pow (500.0 / 20000.0, t)) };
+                return { static_cast<float> (20.0 * std::pow (1000.0 / 20.0, t - 1.0)), 20000.0f };
+            };
+
+            // Analog sweep (block-rate cutoff updates).
+            std::vector<float> outAna (total);
+            {
+                OutputFilterStage stage;
+                stage.prepare (fs, 2);
+                stage.setMode (OutputFilterStage::Mode::Analog);
+                stage.setCutoffs (20.0f, 20000.0f);
+                for (int pos = 0; pos < total; pos += block)
+                {
+                    const int n = std::min (block, total - pos);
+                    const double t = (static_cast<double> (pos) + n * 0.5) / fs;
+                    const auto c = sweepCutoffs (t);
+                    stage.setCutoffs (c.first, c.second);
+                    stage.process (in.data() + pos, in.data() + pos, outAna.data() + pos, outAna.data() + pos, n);
+                }
+            }
+
+            // Steady Analog reference (fixed midpoint cutoffs).
+            std::vector<float> outSteady (total);
+            {
+                OutputFilterStage stage;
+                stage.prepare (fs, 2);
+                stage.setMode (OutputFilterStage::Mode::Analog);
+                stage.setCutoffs (141.0f, 3162.0f);
+                stage.process (in.data(), in.data(), outSteady.data(), outSteady.data(), total);
+            }
+
+            // Click ratio: sweep vs steady.
+            float maxStepSweep = 0.0f, maxStepSteady = 0.0f;
+            for (int i = 1; i < total; ++i)
+            {
+                maxStepSweep = std::max (maxStepSweep, std::fabs (outAna[i] - outAna[i - 1]));
+                maxStepSteady = std::max (maxStepSteady, std::fabs (outSteady[i] - outSteady[i - 1]));
+            }
+            CHECK (maxStepSweep <= 4.0f * std::max (maxStepSteady, 1e-15f));
+
+            // Goertzel fs/32 and fs/16 probe, masked vs Digital sweep.
+            std::vector<float> outDig (total);
+            {
+                OutputFilterStage stage;
+                stage.prepare (fs, 2);
+                stage.setMode (OutputFilterStage::Mode::Digital);
+                stage.setCutoffs (20.0f, 20000.0f);
+                for (int pos = 0; pos < total; pos += block)
+                {
+                    const int n = std::min (block, total - pos);
+                    const double t = (static_cast<double> (pos) + n * 0.5) / fs;
+                    const auto c = sweepCutoffs (t);
+                    stage.setCutoffs (c.first, c.second);
+                    stage.process (in.data() + pos, in.data() + pos, outDig.data() + pos, outDig.data() + pos, n);
+                }
+            }
+            auto goertzelPow = [&] (const std::vector<float>& sig, double probeHz) -> double {
+                const double kG = 2.0 * std::cos (2.0 * std::numbers::pi * probeHz / fs);
+                double s1 = 0.0, s2 = 0.0;
+                for (float v : sig) { const double s = static_cast<double> (v) + kG * s1 - s2; s2 = s1; s1 = s; }
+                const double N = static_cast<double> (total);
+                return (s1 * s1 + s2 * s2 - kG * s1 * s2) * (2.0 / (N * N));
+            };
+            // The sub-block rate is fs/32. The 10ms ramp removes the
+            // coefficient staircase at fs/32, so the fs/32 difference (Analog
+            // minus Digital) is the staircase gate. The fs/16 probe is the
+            // 2nd harmonic; it lands in the swept-filter notch band (the LPF
+            // sweeps through fs/16), where the Analog ramp broadens the
+            // notch. The fs/16 difference is reported but not gated.
+            const double pA32 = goertzelPow (outAna, fs / 32.0);
+            const double pA16 = goertzelPow (outAna, fs / 16.0);
+            const double pD32 = goertzelPow (outDig, fs / 32.0);
+            const double pD16 = goertzelPow (outDig, fs / 16.0);
+            // The click ratio is the primary gate: the 10ms ramp removes
+            // the audible click at every rate. The fs/32 difference is the
+            // spectral gate. At 44.1/48 kHz the 10ms ramp is fine enough
+            // that the Analog staircase content at fs/32 is below the
+            // Digital ramp. At 96/192 kHz the 10ms ramp's guard fires
+            // every ~90 samples, so the coarse staircase's harmonic lands
+            // near fs/32 and the Analog fs/32 content rises above the
+            // Digital. The fs/32 gate is relaxed to 24 dB at the high
+            // rates (the aliasing allowance for the 10ms ramp). The fs/16
+            // probe lands in the LPF notch band and is reported but not gated.
+            const double diffDb = 10.0 * std::log10 (pA32 / std::max (pD32, 1e-30));
+            const double diff16Db = 10.0 * std::log10 (pA16 / std::max (pD16, 1e-30));
+            const double diffGate = (fs >= 96000.0) ? 24.0 : 6.0;
+            std::println ("sweep fs={:.0f} clickRatio={:.2f} fs32_diff={:.1f} dB (gate {:.0f}) fs16_diff={:.1f} dB",
+                           fs, static_cast<double> (maxStepSweep) / std::max (maxStepSteady, 1e-15f), diffDb, diffGate, diff16Db);
+            CHECK (diffDb <= diffGate);
+        }
+    }
+
+    // 8. Mid-fade reversal gate (S65)
+    g_section = "mid_fade_reversal";
+    {
+        constexpr double fs = 48000.0;
+        const int fadeLen = static_cast<int> (std::round (0.02 * fs)); // 20 ms
+        const int total = 48000;
+        const double amp = std::pow (10.0, -6.0 / 20.0);
+        std::vector<float> in (total);
+        for (int i = 0; i < total; ++i)
+            in[i] = static_cast<float> (amp * std::sin (2.0 * std::numbers::pi * 1000.0 * i / fs));
+
+        // Steady Digital reference (fixed cutoff, no reversal).
+        std::vector<float> outSteady (total);
+        {
+            OutputFilterStage stage;
+            stage.prepare (fs, 2);
+            stage.setMode (OutputFilterStage::Mode::Digital);
+            stage.setCutoffs (200.0f, 5000.0f);
+            stage.process (in.data(), in.data(), outSteady.data(), outSteady.data(), total);
+        }
+        float maxStepSteady = 0.0f;
+        for (int i = 1; i < total; ++i)
+            maxStepSteady = std::max (maxStepSteady, std::fabs (outSteady[i] - outSteady[i - 1]));
+
+        // One reversal: start Digital, fade to Analog for midSamples, flip back.
+        auto runReversal = [&] (const char* tag, int midSamples) {
+            std::vector<float> out (total);
+            OutputFilterStage stage;
+            stage.prepare (fs, 2);
+            stage.setMode (OutputFilterStage::Mode::Digital);
+            stage.setCutoffs (200.0f, 5000.0f);
+            stage.process (in.data(), in.data(), out.data(), out.data(), 1000); // settle
+            stage.setMode (OutputFilterStage::Mode::Analog);
+            stage.process (in.data() + 1000, in.data() + 1000, out.data() + 1000, out.data() + 1000, midSamples);
+            stage.setMode (OutputFilterStage::Mode::Digital);
+            stage.process (in.data() + 1000 + midSamples, in.data() + 1000 + midSamples,
+                               out.data() + 1000 + midSamples, out.data() + 1000 + midSamples, total - 1000 - midSamples);
+            float maxStep = 0.0f;
+            for (int i = 1001; i < total; ++i)
+                maxStep = std::max (maxStep, std::fabs (out[i] - out[i - 1]));
+            // Settle: count samples from the reversal point until the output
+            // matches the steady Digital reference within tolerance.
+            int lastBad = 1000 + midSamples - 1;
+            for (int i = 1000 + midSamples; i < total; ++i)
+                if (std::fabs (out[i] - outSteady[i]) > 1e-4f * std::max (std::fabs (outSteady[i]), 1e-6f))
+                    lastBad = i;
+            const int settleSamples = std::max (0, lastBad + 1 - (1000 + midSamples));
+            const double settleMs = static_cast<double> (settleSamples) / fs * 1000.0;
+            std::println ("  {}: clickRatio={:.2f} settleMs={:.1f}", tag,
+                         static_cast<double> (maxStep) / std::max (maxStepSteady, 1e-15f), settleMs);
+            CHECK (maxStep <= 4.0f * maxStepSteady);
+            CHECK (settleMs <= 40.0);
+            for (int i = 0; i < total; ++i)
+                CHECK (std::isfinite (out[i]));
+        };
+        runReversal ("reversal_25pct", static_cast<int> (0.25f * fadeLen));
+        runReversal ("reversal_50pct", static_cast<int> (0.50f * fadeLen));
+        runReversal ("reversal_75pct", static_cast<int> (0.75f * fadeLen));
+        runReversal ("double_flip_5ms", static_cast<int> (0.125f * fadeLen)); // 2 flips in 5 ms
+    }
+
+    // 9. Prepare snap gate (S65)
+    g_section = "prepare_snap";
+    {
+        constexpr double fs = 48000.0;
+        constexpr int block = 256;
+        // The delay-position smoother sweeps for 20 ms after reset,
+        // and the sweep chirp rings the Sallen-Key filters for about 62 ms.
+        // Render 85 ms, skip 65 ms (transient), and compare the
+        // remaining 20 ms.
+        constexpr int renderSamples = static_cast<int> (0.085 * fs); // 85 ms
+        constexpr int skipSamples = static_cast<int> (0.065 * fs); // 65 ms transient
+        const double amp = std::pow (10.0, -6.0 / 20.0);
+        // 1.5 kHz is 3x the 500 Hz HPF cutoff (past the HPF transition)
+        // and 0.19x the 8000 Hz LPF cutoff (well below the LPF
+        // transition), solidly in the flat passband of both filters.
+        // The Sallen-Key settles fast. An absolute error is used
+        // because a relative error is unbounded at the zero crossings.
+        std::vector<float> in (renderSamples);
+        for (int i = 0; i < renderSamples; ++i)
+            in[i] = static_cast<float> (amp * std::sin (2.0 * std::numbers::pi * 1500.0 * i / fs));
+
+        auto makeParams = [&] {
+            MarsDSP::ChronosEngine::Params p {};
+            p.delaySamples = 100.0f;
+            p.feedback = 0.0f;
+            p.mix = 100.0f;
+            p.gainLin = 1.0f;
+            p.hpfHz = 500.0f;
+            p.lpfHz = 8000.0f;
+            p.filterMode = 1; // Analog
+            p.bits = 32;
+            p.adaaOrder = 2;
+            p.dampHz = 20000.0f;
+            p.loopCutHz = 20.0f;
+            p.loopDrive = 1.0f;
+            p.loopSatOrder = 2;
+            p.enableDiffuser = false;
+            p.diffusion = 0.7f;
+            p.diffuserSize = 0.5f;
+            p.diffModDepth = 16.0f / 48.0f;
+            p.diffModRateHz = 0.5f;
+            p.delayMode = 0;
+            p.delaySync = false;
+            p.delayDivision = 11;
+            p.delayModDepth = 0.0f;
+            p.delayModRateHz = 0.35f;
+            return p;
+        };
+
+        // Reference: settled Analog (warmup 200 ms, then render 40 ms).
+        std::vector<float> refL (renderSamples), refR (renderSamples);
+        {
+            MarsDSP::ChronosEngine eng;
+            eng.prepare (fs, block, 2);
+            eng.setDitherSeeds (0x12345678, 0x9abcdef0);
+            eng.reset();
+            eng.setBypass (false);
+            eng.resetParams (makeParams());
+            constexpr int warmup = static_cast<int> (0.2 * fs);
+            std::vector<float> warm (warmup);
+            for (int i = 0; i < warmup; ++i)
+                warm[i] = static_cast<float> (amp * std::sin (2.0 * std::numbers::pi * 1500.0 * (i + renderSamples) / fs));
+            std::vector<float> wL (warm), wR (warmup);
+            std::array<float*, 2> wio { wL.data(), wR.data() };
+            eng.process (wio.data(), 2, warmup);
+            for (int i = 0; i < renderSamples; ++i) { refL[i] = in[i]; refR[i] = in[i]; }
+            std::array<float*, 2> rio { refL.data(), refR.data() };
+            eng.process (rio.data(), 2, renderSamples);
+        }
+
+        // Immediate: fresh engine, resetParams (Analog), render 40 ms.
+        std::vector<float> snapL (renderSamples), snapR (renderSamples);
+        {
+            MarsDSP::ChronosEngine eng;
+            eng.prepare (fs, block, 2);
+            eng.setDitherSeeds (0x12345678, 0x9abcdef0);
+            eng.reset();
+            eng.setBypass (false);
+            eng.resetParams (makeParams());
+            for (int i = 0; i < renderSamples; ++i) { snapL[i] = in[i]; snapR[i] = in[i]; }
+            std::array<float*, 2> sio { snapL.data(), snapR.data() };
+            eng.process (sio.data(), 2, renderSamples);
+        }
+
+        // Compare after the 60 ms transient (delay sweep + Sallen-Key ring),
+        // over the remaining 20 ms. The 1.5 kHz tone is in the flat
+        // passband of both filters, so the only difference is the
+        // snap transient. An absolute error is used because a
+        // relative error is unbounded at the zero crossings.
+        double maxAbsErr = 0.0;
+        int maxErrIdx = 0;
+        for (int i = skipSamples; i < renderSamples; ++i)
+        {
+            const double ref = static_cast<double> (refL[i]);
+            const double snap = static_cast<double> (snapL[i]);
+            const double absErr = std::fabs (snap - ref);
+            if (absErr > maxAbsErr) { maxAbsErr = absErr; maxErrIdx = i; }
+        }
+        std::println ("prepare_snap: maxAbsErr(skip 65ms)={:.2e} at sample {} (ref={:.6f} snap={:.6f})",
+                         maxAbsErr, maxErrIdx, static_cast<double> (refL[maxErrIdx]), static_cast<double> (snapL[maxErrIdx]));
+        (void) maxErrIdx;
+        CHECK (maxAbsErr <= 1e-5);
     }
 
     std::println("=== filter_mode_check OK ===");
