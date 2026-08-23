@@ -26,16 +26,11 @@ namespace MarsDSP::BBD
             return static_cast<float>(100.0 * sampleRate);
         }
 
+        // The formula lives in BrigadeLine::clockForDelay so the line
+        // and the loop share one clock authority.
         [[nodiscard]] static float clockFor(float dEffSamples, double sampleRate) noexcept
         {
-            const float minClk = minClockHz(sampleRate);
-            const float maxClk = maxClockHz(sampleRate);
-
-            const auto kStages = static_cast<double>(BrigadeLine::kStages);
-            const double minDelay = (2.0 * kStages + 0.5) * sampleRate / static_cast<double>(maxClk);
-            const double safeDelay = std::max(minDelay, static_cast<double>(dEffSamples));
-            const double fClk = (2.0 * kStages + 0.5) * sampleRate / safeDelay;
-            return std::clamp(static_cast<float>(fClk), minClk, maxClk);
+            return BrigadeLine::clockForDelay(dEffSamples, sampleRate);
         }
 
         [[nodiscard]] static float achievedDelaySamples(float clockHz, double sampleRate) noexcept

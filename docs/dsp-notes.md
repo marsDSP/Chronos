@@ -116,3 +116,67 @@ advances once per 32-sample sub-block in closed form. The stage calls
 since the last solve. The `1e-4` guard is a numeric no-op, not an audible
 deadband: the 10 ms trajectory crosses it while moving and settles below
 it at rest, so the solve cost at rest is zero.
+
+## BrigadeLine — split-step transport
+
+The BBD timing compensation subtracts a group-delay term from the effective
+delay before it maps to the clock:
+
+    dEff = d + mod - satLatency - fade * baseT - gdBank
+
+where `gdBank = getBankGroupDelayAtDC(fs) + kSplitStepOffset`. The bank term
+is the input plus output anti-aliasing pole-bank group delay at DC, in
+samples. The split-step offset `kSplitStepOffset = -1.0` is the
+read-before-write hand-off between `readTap` and `writeSample`.
+
+The FeedbackDelay BBD path calls `readTap()` then `writeSample()` per sample
+(read before write). `writeSample(u_n)` stores `u_n` in `lastIn_`. The even
+phase of the next `readTap()` consumes `lastIn_` and writes the charge into
+the bucket register, so the charge written at sample n enters the register
+one audio sample after the write call. The ring-read (Digital) core writes
+the input to the ring, then reads the tap `readDelay` samples back, so the
+write and the read it feeds share the same sample step. The split step
+therefore shifts the BBD line delay by one sample relative to the ring core.
+
+The sign and magnitude come from the loop-period identity, not from a fit.
+The loop period is the round trip from `writeSample(w_n)` to the tap that
+returns `w_n`. `bbd_loop_check` measures the BBD repeat centroids against
+the `n * d` grid at crossfeed 0. With the offset at -1.0 the centroids land
+within the gate with no systematic drift. A +1.0 offset would shift the loop
+period by two samples and fail the gate at the second repeat, so the
+derivation and the measurement agree on -1.0. The constant replaces the
+former undocumented `-1.0f` fudge; the numeric value is unchanged.
+
+## FeedbackDelay — BBD clock authority
+
+The BBD branch programs the bucket-brigade clock per sample. A BBD clock
+change retimes all in-flight charge: the achieved delay of a sample is the
+transit integral of the clock history over its whole traversal, not the
+instantaneous effective delay at read time. The two channels ran independent
+clocks, so each channel accumulated a random-walk timing offset from its own
+Ornstein-Uhlenbeck history. The crossfeed rotation then summed two taps whose
+offsets differed, so the repeats flammed and left the `n * d` grid.
+
+The fix shares one clock base across the channel pair and scales only the
+differential wobble by the crossfeed amount. Per sample:
+
+    dBase   = d - satLatency - fade * baseT - gdBank
+    modMean = 0.5 * (modL + modR)           (stereo; mono collapses to modL)
+    modMix  = clamp(crossCos^2 - crossSin^2, 0, 1)   (= cos 2*theta)
+    dEffL   = dBase + modMix * (modL - modMean) + modMean
+    dEffR   = dBase + modMix * (modR - modMean) + modMean
+
+At crossfeed 0, `modMix = 1` and each channel keeps its independent wobble,
+so the behaviour matches the single-clock path bit for bit. At crossfeed 1,
+`modMix = 0` and both channels run one clock (the mean), so the two lines
+stay time-aligned and the rotation sums coherent taps. Between, the
+differential component scales down exactly as fast as the rotation mixes the
+channels.
+
+The Ornstein-Uhlenbeck draw order does not change. The generators advance
+once per sample per channel in the same order as before, so the Digital core
+stays bit-exact and the zero-crossfeed BBD path stays bit-identical.
+
+The stereo wobble decorrelation collapses to a common wobble at full
+ping-pong. This is the authentic behaviour of a two-channel bucket-brigade
+line driven by one clock.

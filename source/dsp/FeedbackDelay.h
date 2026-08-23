@@ -171,6 +171,7 @@ namespace MarsDSP::Delays
 
             updateCrossRotation_(); // block-rate equal-power cross-feed coefficients
             diffuserTransition_(); // block-rate enable edge (primes on rising)
+            const float modMix = std::clamp(crossCos_ * crossCos_ - crossSin_ * crossSin_, 0.0f, 1.0f);
 
             int s = 0;
             while (s < n)
@@ -185,7 +186,8 @@ namespace MarsDSP::Delays
                 {
                     const int Lc = std::min(kMaxChunk, remaining);
                     const bool runDiff = (diffState_ != DiffuserState::Off);
-                    const float gdBank = static_cast<float>(BBD::BrigadeLine::getBankGroupDelayAtDC(sampleRate_)) - 1.0f;
+                    const float gdBank = static_cast<float>(BBD::BrigadeLine::getBankGroupDelayAtDC(sampleRate_))
+                                          + BBD::BrigadeLine::kSplitStepOffset;
 
                     for (int i = 0; i < Lc; ++i)
                     {
@@ -201,16 +203,25 @@ namespace MarsDSP::Delays
                         const float modL = modK * ouL_.next(rngL_);
                         const float modR = hasR ? modK * ouR_.next(rngR_) : 0.0f;
 
-                        const float dEffL = d + modL - satLatency_ - fade * baseT - gdBank;
-                        bbdL_.setClockHz(BBD::ClockModel::clockFor(dEffL, sampleRate_));
-                        float tapL = expL_.processSample(bbdL_.readTap());
-
-                        float tapR = tapL;
+                        const float dBase = d - satLatency_ - fade * baseT - gdBank;
+                        float tapL;
+                        float tapR;
                         if (hasR)
                         {
-                            const float dEffR = d + modR - satLatency_ - fade * baseT - gdBank;
+                            const float modMean = 0.5f * (modL + modR);
+                            const float dEffL = dBase + modMix * (modL - modMean) + modMean;
+                            const float dEffR = dBase + modMix * (modR - modMean) + modMean;
+                            bbdL_.setClockHz(BBD::ClockModel::clockFor(dEffL, sampleRate_));
                             bbdR_.setClockHz(BBD::ClockModel::clockFor(dEffR, sampleRate_));
+                            tapL = expL_.processSample(bbdL_.readTap());
                             tapR = expR_.processSample(bbdR_.readTap());
+                        }
+                        else
+                        {
+                            const float dEffL = d + modL - satLatency_ - fade * baseT - gdBank;
+                            bbdL_.setClockHz(BBD::ClockModel::clockFor(dEffL, sampleRate_));
+                            tapL = expL_.processSample(bbdL_.readTap());
+                            tapR = tapL;
                         }
 
                         if (runDiff)
@@ -307,7 +318,7 @@ namespace MarsDSP::Delays
                         processSampleScalar_(inL + s + i, hasR ? inR + s + i : nullptr,
                                              wetL + s + i, hasR ? wetR + s + i : nullptr,
                                              d, g, drive, hasR, mask,
-                                             fade, runDiff ? baseT : 0.0f, modL, modR);
+                                             fade, runDiff ? baseT : 0.0f, modL, modR, modMix);
                     }
                     s += Lc;
                     continue;
@@ -524,6 +535,7 @@ namespace MarsDSP::Delays
 
             updateCrossRotation_(); // block-rate equal-power cross-feed coefficients
             diffuserTransition_();
+            const float modMix = std::clamp(crossCos_ * crossCos_ - crossSin_ * crossSin_, 0.0f, 1.0f);
 
             for (int s = 0; s < n; ++s)
             {
@@ -542,7 +554,7 @@ namespace MarsDSP::Delays
                 processSampleScalar_(inL + s, hasR ? inR + s : nullptr,
                                      wetL + s, hasR ? wetR + s : nullptr,
                                      d, g, drive, hasR, mask, fade, baseT,
-                                     modL, modR);
+                                     modL, modR, modMix);
             }
         }
 
@@ -765,7 +777,7 @@ namespace MarsDSP::Delays
                                   float d, float g, float drive,
                                   bool hasR, int mask,
                                   float fade, float baseT,
-                                  float modL, float modR) noexcept
+                                  float modL, float modR, float modMix) noexcept
         {
             const float makeup = 1.0f / drive;
 
@@ -774,18 +786,24 @@ namespace MarsDSP::Delays
 
             if (delayMode_ == 1)
             {
-                const float gdBank = static_cast<float>(BBD::BrigadeLine::getBankGroupDelayAtDC(sampleRate_)) - 1.0f;
-                const float dEffL = d + modL - satLatency_ - fade * baseT - gdBank;
-                bbdL_.setClockHz(BBD::ClockModel::clockFor(dEffL, sampleRate_));
-                tapL = expL_.processSample(bbdL_.readTap());
+                const float gdBank = static_cast<float>(BBD::BrigadeLine::getBankGroupDelayAtDC(sampleRate_))
+                                     + BBD::BrigadeLine::kSplitStepOffset;
+                const float dBase = d - satLatency_ - fade * baseT - gdBank;
                 if (hasR)
                 {
-                    const float dEffR = d + modR - satLatency_ - fade * baseT - gdBank;
+                    const float modMean = 0.5f * (modL + modR);
+                    const float dEffL = dBase + modMix * (modL - modMean) + modMean;
+                    const float dEffR = dBase + modMix * (modR - modMean) + modMean;
+                    bbdL_.setClockHz(BBD::ClockModel::clockFor(dEffL, sampleRate_));
                     bbdR_.setClockHz(BBD::ClockModel::clockFor(dEffR, sampleRate_));
+                    tapL = expL_.processSample(bbdL_.readTap());
                     tapR = expR_.processSample(bbdR_.readTap());
                 }
                 else
                 {
+                    const float dEffL = d + modL - satLatency_ - fade * baseT - gdBank;
+                    bbdL_.setClockHz(BBD::ClockModel::clockFor(dEffL, sampleRate_));
+                    tapL = expL_.processSample(bbdL_.readTap());
                     tapR = tapL;
                 }
             }

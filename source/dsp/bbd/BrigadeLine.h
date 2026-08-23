@@ -23,6 +23,11 @@ namespace MarsDSP::BBD
     public:
         static constexpr int kStages = 4096;
 
+        // The split-step transport offset for the BBD timing compensation.
+        // The read-before-write hand-off shifts the line delay by one sample.
+        // See docs/dsp-notes.md, "BrigadeLine split-step transport".
+        static constexpr float kSplitStepOffset = -1.0f;
+
         static constexpr std::size_t bbdStorageFloats (int numChannels) noexcept
         {
             constexpr std::size_t perChan = (static_cast<std::size_t> (kStages + 1) + 15u) & ~static_cast<std::size_t> (15u);
@@ -90,11 +95,24 @@ namespace MarsDSP::BBD
             outputBank_.set_delta (deltaNorm);
         }
 
+        // One clock authority for the line and the loop. The formula
+        // (2 * kStages + 0.5) * fs / delay matches ClockModel. See
+        // docs/dsp-notes.md, "BrigadeLine split-step transport".
+        [[nodiscard]] static float clockForDelay (float dEffSamples, double sampleRate) noexcept
+        {
+            const float minClk = static_cast<float> (sampleRate / 30.0);
+            const float maxClk = static_cast<float> (100.0 * sampleRate);
+            const auto kStagesD = static_cast<double> (kStages);
+            const double minDelay = (2.0 * kStagesD + 0.5) * sampleRate / static_cast<double> (maxClk);
+            const double safeDelay = std::max (minDelay, static_cast<double> (dEffSamples));
+            const double fClk = (2.0 * kStagesD + 0.5) * sampleRate / safeDelay;
+            return std::clamp (static_cast<float> (fClk), minClk, maxClk);
+        }
+
         void setDelaySeconds (float delaySec) noexcept
         {
-            const float d = std::max (Ts_, delaySec);
-            const float clockRateHz = (2.0f * static_cast<float> (kStages)) / d;
-            setClockHz (clockRateHz);
+            const float dSamples = std::max (Ts_, delaySec) * fs_;
+            setClockHz (clockForDelay (dSamples, static_cast<double> (fs_)));
         }
 
         [[nodiscard]] float getClockHz() const noexcept
