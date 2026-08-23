@@ -354,18 +354,13 @@ int main()
     {
         constexpr double fs = 48000.0;
         constexpr int block = 256;
-        // The delay-position smoother sweeps for 20 ms after reset,
-        // and the sweep chirp rings the Sallen-Key filters for about 62 ms.
-        // Render 85 ms, skip 65 ms (transient), and compare the
-        // remaining 20 ms.
-        constexpr int renderSamples = static_cast<int> (0.085 * fs); // 85 ms
-        constexpr int skipSamples = static_cast<int> (0.065 * fs); // 65 ms transient
+        // The Sallen-Key cold-start ring decays below 1e-5 at 100 ms.
+        // Render 150 ms, skip 100 ms, and compare the last 50 ms.
+        constexpr int renderSamples = static_cast<int> (0.150 * fs); // 150 ms
+        constexpr int skipSamples = static_cast<int> (0.100 * fs);  // 100 ms transient
         const double amp = std::pow (10.0, -6.0 / 20.0);
-        // 1.5 kHz is 3x the 500 Hz HPF cutoff (past the HPF transition)
-        // and 0.19x the 8000 Hz LPF cutoff (well below the LPF
-        // transition), solidly in the flat passband of both filters.
-        // The Sallen-Key settles fast. An absolute error is used
-        // because a relative error is unbounded at the zero crossings.
+        // 1.5 kHz is 3x the 500 Hz HPF cutoff and 0.19x the 8000 Hz
+        // LPF cutoff. The tone sits in the flat passband of both filters.
         std::vector<float> in (renderSamples);
         for (int i = 0; i < renderSamples; ++i)
             in[i] = static_cast<float> (amp * std::sin (2.0 * std::numbers::pi * 1500.0 * i / fs));
@@ -409,8 +404,10 @@ int main()
             eng.resetParams (makeParams());
             constexpr int warmup = static_cast<int> (0.2 * fs);
             std::vector<float> warm (warmup);
+            // The warmup precedes the render in phase. The sine stays
+            // continuous at the boundary and the filters do not ring.
             for (int i = 0; i < warmup; ++i)
-                warm[i] = static_cast<float> (amp * std::sin (2.0 * std::numbers::pi * 1500.0 * (i + renderSamples) / fs));
+                warm[i] = static_cast<float> (amp * std::sin (2.0 * std::numbers::pi * 1500.0 * (i - warmup) / fs));
             std::vector<float> wL (warm), wR (warmup);
             std::array<float*, 2> wio { wL.data(), wR.data() };
             eng.process (wio.data(), 2, warmup);
@@ -433,13 +430,10 @@ int main()
             eng.process (sio.data(), 2, renderSamples);
         }
 
-        // Compare after the 60 ms transient (delay sweep + Sallen-Key ring),
-        // over the remaining 20 ms. The 1.5 kHz tone is in the flat
-        // passband of both filters, so the only difference is the
-        // snap transient. An absolute error is used because a
-        // relative error is unbounded at the zero crossings.
+        // Gate 1: the snap reaches the settled Analog steady state.
+        // Skip 100 ms for the cold-start ring. Compare the last 50 ms.
         double maxAbsErr = 0.0;
-        int maxErrIdx = 0;
+        int maxErrIdx = skipSamples;
         for (int i = skipSamples; i < renderSamples; ++i)
         {
             const double ref = static_cast<double> (refL[i]);
@@ -447,9 +441,8 @@ int main()
             const double absErr = std::fabs (snap - ref);
             if (absErr > maxAbsErr) { maxAbsErr = absErr; maxErrIdx = i; }
         }
-        std::println ("prepare_snap: maxAbsErr(skip 65ms)={:.2e} at sample {} (ref={:.6f} snap={:.6f})",
-                         maxAbsErr, maxErrIdx, static_cast<double> (refL[maxErrIdx]), static_cast<double> (snapL[maxErrIdx]));
-        (void) maxErrIdx;
+        std::println ("prepare_snap: maxAbsErr(skip 100ms)={:.2e} at sample {} (gate <= 1e-5)",
+                         maxAbsErr, maxErrIdx);
         CHECK (maxAbsErr <= 1e-5);
     }
 
