@@ -180,3 +180,21 @@ stays bit-exact and the zero-crossfeed BBD path stays bit-identical.
 The stereo wobble decorrelation collapses to a common wobble at full
 ping-pong. This is the authentic behaviour of a two-channel bucket-brigade
 line driven by one clock.
+
+## FeedbackDelay — BBD mode-flip priming
+
+A digital-to-bbd mode flip drops the in-flight repeats unless the bucket
+register holds the recent audio. The ring write runs in both modes, so the
+ring carries the most recent samples at the flip. `setParams` detects the
+0-to-1 edge and copies the most recent `min(kStages, writeIdx_)` ring
+samples into each `BrigadeLine` through `primeFrom`.
+
+`primeFrom` fills the bucket storage oldest-to-newest, so the newest sample
+lands at `bufferPtr_ - 1`. It resets the pole banks and `yBBD_old_` but
+leaves the clock untouched. The primed audio plays at the bucket clock, not
+the audio rate. A real bucket-brigade line that receives a clock change plays
+its existing charge at the new clock, so no sample-rate conversion is
+performed. The first bbd repeats continue the material.
+
+The reverse bbd-to-digital edge needs no work. The ring write runs in both
+modes, so the ring already carries the audio when the mode flips back.

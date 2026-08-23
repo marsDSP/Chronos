@@ -111,6 +111,7 @@ namespace MarsDSP::Delays
             rngL_.seed(kModSeed, 1);
             rngR_.seed(kModSeed, 2);
             firstBlock_ = true;
+            lastDelayMode_ = 0;
         }
 
         void resetParams(const Params &p) noexcept
@@ -136,6 +137,7 @@ namespace MarsDSP::Delays
             diffState_ = enableDiffuser_ ? DiffuserState::On : DiffuserState::Off;
             diffFade_ = enableDiffuser_ ? 1.0f : 0.0f;
             firstBlock_ = false;
+            lastDelayMode_ = p.delayMode;
         }
 
         void setEnvelopeFreeze(bool freeze) noexcept
@@ -160,7 +162,12 @@ namespace MarsDSP::Delays
             driveSm_.setTargetValue(std::clamp(p.loopDrive, 0.501f, 15.849f));
             applyDiffuserParams_(p);
             enableDiffuser_ = p.enableDiffuser;
+            // On the digital-to-bbd edge, prime the bucket register
+            // from the ring. The first bbd repeats continue the audio.
+            if (lastDelayMode_ == 0 && p.delayMode == 1)
+                primeBbdFromRing_();
             delayMode_ = p.delayMode;
+            lastDelayMode_ = p.delayMode;
         }
 
         void process(const float *inL, const float *inR, float *wetL, float *wetR, int n) noexcept
@@ -606,6 +613,28 @@ namespace MarsDSP::Delays
                 diffState_ = DiffuserState::FadingOut; // reverse
         }
 
+        // Copy the most recent ring audio into the bucket register.
+        // The ring write runs in both modes, so the reverse edge needs
+        // no work. See docs/dsp-notes.md, "BBD mode-flip priming".
+        void primeBbdFromRing_() noexcept
+        {
+            const int ringFill = std::min (writeIdx_, BBD::BrigadeLine::kStages);
+            if (ringFill <= 0)
+            {
+                bbdL_.primeFrom (nullptr, 0);
+                bbdR_.primeFrom (nullptr, 0);
+                return;
+            }
+            const int mask = ringL_.mask();
+            const int startL = (writeIdx_ - ringFill + mask + 1) & mask;
+            bbdL_.primeFrom (ringL_.windowPtr (startL, ringFill), ringFill);
+            if (ringR_.getCapacity() > 0)
+            {
+                const int startR = (writeIdx_ - ringFill + mask + 1) & mask;
+                bbdR_.primeFrom (ringR_.windowPtr (startR, ringFill), ringFill);
+            }
+        }
+
         float fadeStep_() noexcept
         {
             const float a = diffFade_;
@@ -940,6 +969,7 @@ namespace MarsDSP::Delays
         BBD::ExpanderCell expR_;
         std::vector<float> bbdHeapStorage_;
         int delayMode_ = 0;
+        int lastDelayMode_ = 0;
         bool enableDiffuser_ = false;
         DiffuserState diffState_ = DiffuserState::Off;
         float diffFade_ = 0.0f; // 0 = raw tap, 1 = diffused tap

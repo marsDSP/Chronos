@@ -115,6 +115,40 @@ namespace MarsDSP::BBD
             setClockHz (clockForDelay (dSamples, static_cast<double> (fs_)));
         }
 
+        // Fill the bucket register from external samples. The samples
+        // are the most recent ring contents, oldest first. The newest
+        // sample lands at bufferPtr_ - 1. The clock stays untouched.
+        // The primed audio plays at the bucket clock, not the audio rate.
+        void primeFrom (const float* samples, int n) noexcept
+        {
+            if (storage_ == nullptr || n <= 0)
+            {
+                reset();
+                return;
+            }
+            const int count = std::min (n, kStages);
+            // The newest sample lands at bufferPtr_ - 1.
+            bufferPtr_ = 0;
+            for (int i = 0; i < count; ++i)
+            {
+                storage_[bufferPtr_] = samples[i];
+                bufferPtr_ = (bufferPtr_ + 1) % kStages;
+            }
+            // Clear any unfilled buckets.
+            for (int i = count; i < kStages; ++i)
+            {
+                storage_[bufferPtr_] = 0.0f;
+                bufferPtr_ = (bufferPtr_ + 1) % kStages;
+            }
+            bufferPtr_ = 0;
+            yBBD_old_ = (count > 0) ? samples[count - 1] : 0.0f;
+            tn_ = 0.0f;
+            evenOn_ = true;
+            inputBank_.reset();
+            outputBank_.reset();
+            H0_ = outputBank_.calcH0();
+        }
+
         [[nodiscard]] float getClockHz() const noexcept
         {
             return Ts_bbd_ > 0.0f ? (1.0f / Ts_bbd_) : kMinClockHz_;
