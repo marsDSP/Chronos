@@ -6,6 +6,7 @@
 #include "SallenKeyLPF.h"
 #include "SallenKeyHPF.h"
 #include "StateVariable.h"
+#include "OnePoleSmoother.h"
 #include "nonlinear/ADAA1.h"
 #include "nonlinear/Nonlinearities.h"
 #include "simd/Config.h"
@@ -17,10 +18,10 @@
 namespace MarsDSP::Filters
 {
     /** Output filter stage with two topologies.
-     *  Digital runs a stereo-pair SIMD state-variable HPF/LPF cascade.
-     *  Analog runs scalar wave-digital Sallen-Key sections with an
-     *  out-of-loop ADAA1 tanh saturator per filter output. The mode switch
-     *  is a 20 ms linear crossfade; both modes are zero latency.
+     *  The Digital topology runs a stereo SIMD state-variable HPF
+     *  and LPF. The Analog topology runs scalar Sallen-Key sections
+     *  with an ADAA1 tanh saturator on each filter output. The mode
+     *  switch is a 20 ms linear crossfade. Both modes are zero latency.
      */
     class OutputFilterStage
     {
@@ -50,10 +51,14 @@ namespace MarsDSP::Filters
             adaaLpfR_.reset();
 
             fadeLengthSamples_ = std::max (1, static_cast<int> (std::round (0.02 * sampleRate_)));
-            fadeStep_ = 0;
-            isFading_ = false;
-            currentMode_ = Mode::Digital;
+            fadeStep_ = 1.0f / static_cast<float> (fadeLengthSamples_ > 1 ? fadeLengthSamples_ - 1 : 1);
+            fadePos_ = 0.0f;
             targetMode_ = Mode::Digital;
+
+            hpfSm_.reset (sampleRate_, 0.01, 32);
+            lpfSm_.reset (sampleRate_, 0.01, 32);
+            hpfSm_.setCurrentAndTargetValue (20.0f);
+            lpfSm_.setCurrentAndTargetValue (20000.0f);
 
             lastHpfHz_ = -1.0f;
             lastLpfHz_ = -1.0f;
@@ -78,9 +83,9 @@ namespace MarsDSP::Filters
             adaaLpfL_.reset();
             adaaLpfR_.reset();
 
-            fadeStep_ = 0;
-            isFading_ = false;
-            currentMode_ = targetMode_;
+            fadePos_ = (targetMode_ == Mode::Analog) ? 1.0f : 0.0f;
+            hpfSm_.setCurrentAndTargetValue (hpfHz_);
+            lpfSm_.setCurrentAndTargetValue (lpfHz_);
 
             lastHpfHz_ = -1.0f;
             lastLpfHz_ = -1.0f;
@@ -88,41 +93,32 @@ namespace MarsDSP::Filters
 
         void setMode (Mode m)
         {
-            if (m == targetMode_ && !isFading_)
-                return;
-
+            const bool atDigital = (fadePos_ <= 0.0f);
+            const bool atAnalog = (fadePos_ >= 1.0f);
+            if (atDigital && m == Mode::Analog)
+                resetAnalogPath_();
+            else if (atAnalog && m == Mode::Digital)
+                resetDigitalPath_();
             targetMode_ = m;
-            if (currentMode_ != targetMode_)
-            {
-                isFading_ = true;
-                fadeStep_ = 0;
+        }
 
-                // Reset incoming path at start of crossfade
-                if (targetMode_ == Mode::Analog)
-                {
-                    skHpfL_.reset();
-                    skHpfR_.reset();
-                    skLpfL_.reset();
-                    skLpfR_.reset();
-                    adaaHpfL_.reset();
-                    adaaHpfR_.reset();
-                    adaaLpfL_.reset();
-                    adaaLpfR_.reset();
-                    lastHpfHz_ = -1.0f;
-                    lastLpfHz_ = -1.0f;
-                }
-                else
-                {
-                    svfHpf_.reset();
-                    svfLpf_.reset();
-                }
-            }
+        // Snap to a mode with no crossfade. The engine calls this on reset.
+        void setModeImmediate (Mode m)
+        {
+            fadePos_ = (m == Mode::Analog) ? 1.0f : 0.0f;
+            targetMode_ = m;
+            if (m == Mode::Digital)
+                resetAnalogPath_();
+            else
+                resetDigitalPath_();
         }
 
         void setCutoffs (float hpfHz, float lpfHz)
         {
             hpfHz_ = hpfHz;
             lpfHz_ = lpfHz;
+            hpfSm_.setTargetValue (hpfHz);
+            lpfSm_.setTargetValue (lpfHz);
         }
 
         void process (const float* inL, const float* inR, float* outL, float* outR, int n) noexcept
@@ -131,38 +127,50 @@ namespace MarsDSP::Filters
                 return;
 
             const bool hasR = (numChannels_ > 1 && inR != nullptr && outR != nullptr);
+            const float targetPos = (targetMode_ == Mode::Analog) ? 1.0f : 0.0f;
 
             for (int offset = 0; offset < n;)
             {
                 const int subBlock = std::min (32, n - offset);
 
-                // Update Digital mode SVF coefficients once per sub-block
-                if (currentMode_ == Mode::Digital || isFading_)
+                const bool digEngaged = (fadePos_ < 1.0f) || (targetMode_ == Mode::Digital);
+                const bool anaEngaged = (fadePos_ > 0.0f) || (targetMode_ == Mode::Analog);
+
+                // The Digital SVF ramps its coefficients across the sub-block.
+                if (digEngaged)
                 {
                     svfHpf_.setCoeffForBlock (SimdSVF::SVFType::HighPass, sampleRate_, hpfHz_, svfQ_, 0.0, subBlock);
                     svfLpf_.setCoeffForBlock (SimdSVF::SVFType::LowPass, sampleRate_, lpfHz_, svfQ_, 0.0, subBlock);
                 }
 
-                // Update Analog mode Sallen-Key coefficients if moved > 0.05%
-                if (currentMode_ == Mode::Analog || isFading_)
+                // The Analog coefficients follow a 10 ms one-pole. The
+                // 1e-4 relative guard skips the setParams call at rest.
+                if (anaEngaged)
                 {
-                    const bool hpfMoved = (lastHpfHz_ <= 0.0f) || (std::fabs (hpfHz_ - lastHpfHz_) / lastHpfHz_ > 0.0005f);
-                    const bool lpfMoved = (lastLpfHz_ <= 0.0f) || (std::fabs (lpfHz_ - lastLpfHz_) / lastLpfHz_ > 0.0005f);
+                    hpfSm_.processN (subBlock);
+                    lpfSm_.processN (subBlock);
+
+                    const float hpfSolved = hpfSm_.getCurrentValue();
+                    const float lpfSolved = lpfSm_.getCurrentValue();
+                    const bool hpfMoved = (lastHpfHz_ <= 0.0f)
+                                          || (std::fabs (hpfSolved - lastHpfHz_) / lastHpfHz_ > 1e-4f);
+                    const bool lpfMoved = (lastLpfHz_ <= 0.0f)
+                                          || (std::fabs (lpfSolved - lastLpfHz_) / lastLpfHz_ > 1e-4f);
 
                     if (hpfMoved)
                     {
-                        skHpfL_.setParams (hpfHz_, static_cast<float> (svfQ_));
+                        skHpfL_.setParams (hpfSolved, static_cast<float> (svfQ_));
                         if (hasR)
-                            skHpfR_.setParams (hpfHz_, static_cast<float> (svfQ_));
-                        lastHpfHz_ = hpfHz_;
+                            skHpfR_.setParams (hpfSolved, static_cast<float> (svfQ_));
+                        lastHpfHz_ = hpfSolved;
                     }
 
                     if (lpfMoved)
                     {
-                        skLpfL_.setParams (lpfHz_, static_cast<float> (svfQ_));
+                        skLpfL_.setParams (lpfSolved, static_cast<float> (svfQ_));
                         if (hasR)
-                            skLpfR_.setParams (lpfHz_, static_cast<float> (svfQ_));
-                        lastLpfHz_ = lpfHz_;
+                            skLpfR_.setParams (lpfSolved, static_cast<float> (svfQ_));
+                        lastLpfHz_ = lpfSolved;
                     }
                 }
 
@@ -190,12 +198,15 @@ namespace MarsDSP::Filters
                         adaaLpfR_.reset();
                     }
 
+                    const bool digRun = (fadePos_ < 1.0f);
+                    const bool anaRun = (fadePos_ > 0.0f);
+
                     float digL = 0.0f;
                     float digR = 0.0f;
                     float anaL = 0.0f;
                     float anaR = 0.0f;
 
-                    if (currentMode_ == Mode::Digital || isFading_)
+                    if (digRun)
                     {
                         const M128 wetV = MM(set_ps) (0.0f, 0.0f, hasR ? xR : 0.0f, xL);
                         const M128 hpV = svfHpf_.processBlockStep (wetV);
@@ -206,7 +217,7 @@ namespace MarsDSP::Filters
                         if (hasR) digR = outV[1];
                     }
 
-                    if (currentMode_ == Mode::Analog || isFading_)
+                    if (anaRun)
                     {
                         // High-pass filter
                         float hpOutL = skHpfL_.processSample (xL);
@@ -234,38 +245,27 @@ namespace MarsDSP::Filters
                         }
                     }
 
-                    if (isFading_)
+                    if (digRun && anaRun)
                     {
-                        const float alpha = static_cast<float> (fadeStep_) / static_cast<float> (fadeLengthSamples_);
-                        const float fromL = (currentMode_ == Mode::Digital) ? digL : anaL;
-                        const float fromR = (currentMode_ == Mode::Digital) ? digR : anaR;
-                        const float toL   = (targetMode_ == Mode::Digital) ? digL : anaL;
-                        const float toR   = (targetMode_ == Mode::Digital) ? digR : anaR;
-
-                        outL[idx] = (1.0f - alpha) * fromL + alpha * toL;
-                        if (hasR) outR[idx] = (1.0f - alpha) * fromR + alpha * toR;
-
-                        ++fadeStep_;
-                        if (fadeStep_ >= fadeLengthSamples_)
-                        {
-                            isFading_ = false;
-                            currentMode_ = targetMode_;
-                            fadeStep_ = 0;
-                        }
+                        const float inv = 1.0f - fadePos_;
+                        outL[idx] = inv * digL + fadePos_ * anaL;
+                        if (hasR) outR[idx] = inv * digR + fadePos_ * anaR;
+                    }
+                    else if (digRun)
+                    {
+                        outL[idx] = digL;
+                        if (hasR) outR[idx] = digR;
                     }
                     else
                     {
-                        if (currentMode_ == Mode::Digital)
-                        {
-                            outL[idx] = digL;
-                            if (hasR) outR[idx] = digR;
-                        }
-                        else
-                        {
-                            outL[idx] = anaL;
-                            if (hasR) outR[idx] = anaR;
-                        }
+                        outL[idx] = anaL;
+                        if (hasR) outR[idx] = anaR;
                     }
+
+                    if (fadePos_ < targetPos)
+                        fadePos_ = std::min (fadePos_ + fadeStep_, targetPos);
+                    else if (fadePos_ > targetPos)
+                        fadePos_ = std::max (fadePos_ - fadeStep_, targetPos);
                 }
 
                 offset += subBlock;
@@ -273,6 +273,26 @@ namespace MarsDSP::Filters
         }
 
     private:
+        void resetAnalogPath_() noexcept
+        {
+            skHpfL_.reset();
+            skHpfR_.reset();
+            skLpfL_.reset();
+            skLpfR_.reset();
+            adaaHpfL_.reset();
+            adaaHpfR_.reset();
+            adaaLpfL_.reset();
+            adaaLpfR_.reset();
+            lastHpfHz_ = -1.0f;
+            lastLpfHz_ = -1.0f;
+        }
+
+        void resetDigitalPath_() noexcept
+        {
+            svfHpf_.reset();
+            svfLpf_.reset();
+        }
+
         double sampleRate_ { 48000.0 };
         int numChannels_ { 2 };
         static constexpr double svfQ_ { 0.7071 };
@@ -293,11 +313,13 @@ namespace MarsDSP::Filters
         Nonlinear::ADAA1<Nonlinear::TanhNL> adaaLpfL_ {};
         Nonlinear::ADAA1<Nonlinear::TanhNL> adaaLpfR_ {};
 
-        Mode currentMode_ { Mode::Digital };
         Mode targetMode_ { Mode::Digital };
-        bool isFading_ { false };
-        int fadeStep_ { 0 };
+        float fadePos_ { 0.0f };
+        float fadeStep_ { 1.0f / 959.0f };
         int fadeLengthSamples_ { 960 };
+
+        Smoothers::OnePoleSmoother<float> hpfSm_ {};
+        Smoothers::OnePoleSmoother<float> lpfSm_ {};
 
         float hpfHz_ { 20.0f };
         float lpfHz_ { 20000.0f };

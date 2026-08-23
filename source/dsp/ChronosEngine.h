@@ -173,7 +173,7 @@ namespace MarsDSP
 
             feedback_ = p.feedback;
             enableDiffuser_ = p.enableDiffuser;
-            outFilters_.setMode(static_cast<Filters::OutputFilterStage::Mode>(p.filterMode));
+            outFilters_.setModeImmediate(static_cast<Filters::OutputFilterStage::Mode>(p.filterMode));
             outFilters_.setCutoffs(p.hpfHz, p.lpfHz);
             applyFeedbackParams_(p, /*snap=*/true);
         }
@@ -281,7 +281,8 @@ namespace MarsDSP
                 }
 
                 // Output filter stage.
-                outFilters_.setCutoffs(hpfRamp_[0], lpfRamp_[0]);
+                outFilters_.setCutoffs(hpfRamp_[static_cast<std::size_t>(chunk - 1)],
+                                       lpfRamp_[static_cast<std::size_t>(chunk - 1)]);
                 outFilters_.process(satL_.data(),
                                     hasR ? satR_.data() : nullptr,
                                     wetPostSvfL_.data(),

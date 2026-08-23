@@ -39,7 +39,7 @@ namespace MarsDSP::Filters
         void setParams (float freqHz, float q)
         {
             const float fClamped = std::clamp (freqHz, 10.0f, static_cast<float> (0.49 * fs_));
-            const float wa = static_cast<float> (2.0 * fs_ * std::tan (std::numbers::pi_v<double> * static_cast<double> (fClamped) / fs_));
+            const auto  wa = static_cast<float> (2.0 * fs_ * std::tan (std::numbers::pi_v<double> * static_cast<double> (fClamped) / fs_));
             const float Rv = 1.0f / (wa * capVal_);
             const float qClamped = std::clamp (q, 0.05f, 10.999f);
             const float disc = std::max (0.0f, capRatio_ * capRatio_ - 4.0f * qClamped * qClamped);
