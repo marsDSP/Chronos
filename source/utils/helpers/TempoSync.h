@@ -136,7 +136,7 @@ namespace MarsDSP::Utils::Helpers::inline TempoSync
             {  1.0,  1.5        }, // 16: 1/2.
             {  0.5,  1.0        }, // 17: 1/1
             {  0.25, 1.0        }, // 18: 2/1
-            { 0.125, 1.0       }, // 19: 4/1
+            { 0.125, 1.0        }, // 19: 4/1
         }};
 
         if (choiceIndex < 0 || choiceIndex >= static_cast<int>(kSpecs.size()))

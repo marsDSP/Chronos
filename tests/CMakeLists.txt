@@ -486,101 +486,87 @@ if(BUILD_TEST_HARNESSES)
     endif()
 
     # ── CTest registration ──────────────────────────────────────────────
-    # 25 correctness harnesses: exit 0 = pass. The 6 benchmarks (tan_bench,
-    # adaa_bench, delay_line_bench, chain_bench, fb_bench, diffuser_bench) are
-    # labeled "bench" so
-    # `ctest -LE bench` excludes them. They report numbers, not pass/fail.
-    # Timing regression gating lives in scripts/bench_gate.py.
-    add_test(NAME ring_buffer_check      COMMAND ring_buffer_check)
-    add_test(NAME halfsample_fir_check   COMMAND halfsample_fir_check)
-    add_test(NAME short_delay_check      COMMAND short_delay_check)
-    add_test(NAME align_check            COMMAND align_check)
-    add_test(NAME latency_null_check     COMMAND latency_null_check)
-    add_test(NAME chain_fuzz_check       COMMAND chain_fuzz_check)
-    add_test(NAME oversized_block_check  COMMAND oversized_block_check)
-    add_test(NAME engine_skeleton_check  COMMAND engine_skeleton_check)
-    add_test(NAME chain_parity           COMMAND chain_parity)
-    add_test(NAME fb_parity              COMMAND fb_parity)
-    add_test(NAME diffuser_toggle_check  COMMAND diffuser_toggle_check)
-    add_test(NAME diffusion_onset_check   COMMAND diffusion_onset_check)
-    add_test(NAME diffuser_loop_check      COMMAND diffuser_loop_check)
-    add_test(NAME diffuser_transport_check  COMMAND diffuser_transport_check)
-    add_test(NAME diffuser_ring_check        COMMAND diffuser_ring_check)
-    add_test(NAME diffuser_decorrelation_check COMMAND diffuser_decorrelation_check)
-    add_test(NAME loop_gain_check          COMMAND loop_gain_check)
-    add_test(NAME bypass_null_check      COMMAND bypass_null_check)
-    add_test(NAME crossfade_parity       COMMAND crossfade_parity)
-    add_test(NAME dither_check            COMMAND dither_check)
-    add_test(NAME bump_arena_check        COMMAND bump_arena_check)
-    add_test(NAME simd_delay_check       COMMAND simd_delay_check)
-    add_test(NAME frac_delay_tap_check   COMMAND frac_delay_tap_check)
-    add_test(NAME dilog_check            COMMAND dilog_check)
-    add_test(NAME nonlinearity_check     COMMAND nonlinearity_check)
-    add_test(NAME adaa2_check            COMMAND adaa2_check)
-    add_test(NAME f2_oracle_check        COMMAND f2_oracle_check)
-    add_test(NAME f2_minimax_check       COMMAND f2_minimax_check)
-    add_test(NAME makeup_table_check     COMMAND makeup_table_check)
-    add_test(NAME alias_check            COMMAND alias_check)
-    add_test(NAME simd_delay_parity      COMMAND simd_delay_parity)
-    add_test(NAME diffuser_parity        COMMAND diffuser_parity)
-    add_test(NAME nested_allpass_check   COMMAND nested_allpass_check)
-    add_test(NAME diffuser_lengths_check COMMAND diffuser_lengths_check)
-    add_test(NAME diffuser_prepare_race_check COMMAND diffuser_prepare_race_check)
-    add_test(NAME diffuser_density_check COMMAND diffuser_density_check)
-    add_test(NAME feedback_decay_check   COMMAND feedback_decay_check)
-    add_test(NAME golden_render_check    COMMAND golden_render_check)
-    add_test(NAME rt_alloc_check         COMMAND rt_alloc_check)
-    add_test(NAME rt_stack_check         COMMAND rt_stack_check)
-    add_test(NAME state_roundtrip_check  COMMAND state_roundtrip_check)
-    add_test(NAME long_run_stability_check   COMMAND long_run_stability_check)
-    add_test(NAME automation_sweep_check       COMMAND automation_sweep_check)
-    add_test(NAME unity_transparency_check     COMMAND unity_transparency_check)
-    add_test(NAME prepare_bench               COMMAND prepare_bench)
-    add_test(NAME tempo_sync_check             COMMAND tempo_sync_check)
-    add_test(NAME glide_rate_check              COMMAND glide_rate_check)
-    add_test(NAME delay_mod_check               COMMAND delay_mod_check)
-    add_test(NAME drive_loudness_check          COMMAND drive_loudness_check)
-    add_test(NAME loop_dc_check                  COMMAND loop_dc_check)
-    add_test(NAME crossfeed_power_check           COMMAND crossfeed_power_check)
-    add_test(NAME rtype_solver_check              COMMAND rtype_solver_check)
-    add_test(NAME sallen_key_response_check       COMMAND sallen_key_response_check)
-    add_test(NAME sallen_key_stability_check      COMMAND sallen_key_stability_check)
-    add_test(NAME filter_mode_check               COMMAND filter_mode_check)
-    add_test(NAME bbd_pole_bank_check             COMMAND bbd_pole_bank_check)
-    add_test(NAME bbd_line_check                  COMMAND bbd_line_check)
-    add_test(NAME bbd_clock_check                 COMMAND bbd_clock_check)
-    add_test(NAME bbd_loop_check                  COMMAND bbd_loop_check)
-    add_test(NAME bbd_response_check              COMMAND bbd_response_check)
-    add_test(NAME bbd_alias_check                 COMMAND bbd_alias_check)
-    add_test(NAME bbd_fuzz_check                  COMMAND bbd_fuzz_check)
-    add_test(NAME compander_cell_check            COMMAND compander_cell_check)
-    add_test(NAME compander_alias_check           COMMAND compander_alias_check)
-    add_test(NAME compander_loop_check            COMMAND compander_loop_check)
+    #
+    # Correctness harnesses: one process each, no shared mutable state, no
+    # sleeps, no temp files, no ports -> safe to run fully parallel. (The two
+    # that need a second look are fine: diffuser_prepare_race_check's two
+    # std::threads touch only local Diffuser instances; golden_render_check
+    # writes tests/golden/hashes.txt only under --regen, which the registered
+    # test does not pass, so it runs read-only compare.)
+    #
+    # Benchmarks measure ns/sample, so they must own the machine: RUN_SERIAL
+    # and excluded from the parallel pass by the "bench" label. bench_gate
+    # re-runs 6 perf harnesses (tan/adaa/delay_line/chain/fb/diffuser) against
+    # committed baselines, so it carries "bench;gate": -LE bench keeps it out
+    # of the correctness pass, -LE gate keeps it out of the individual-bench
+    # pass so those 6 do not execute twice.
+    #
+    #   ctest --test-dir build-tests -j10 -LE bench    # 64 correctness, parallel
+    #   ctest --test-dir build-tests -L bench -LE gate # 10 bench harnesses, serial
+    #   ctest --test-dir build-tests -L gate           # bench_gate regression gate
+    #
+    # No TIMEOUT on correctness: build-tests is Debug, so the harnesses without
+    # an explicit -O2 run at -O0 and the heavy ones (f2_minimax_check, fb_parity,
+    # chain_parity, bbd_loop_check, ...) can take minutes; a fixed 300s would
+    # kill them spuriously. Bench harnesses are -O2 and RUN_SERIAL, so 900s.
 
-    # The 6 benchmarks are registered as tests but labeled "bench" so
-    # `ctest -LE bench` excludes them. They report numbers, not pass/fail.
-    # The timing gate that lived inside delay_line_bench moved to
-    # scripts/bench_gate.py (see the bench_gate target below).
-    add_test(NAME tan_bench          COMMAND tan_bench)
-    add_test(NAME adaa_bench         COMMAND adaa_bench)
-    add_test(NAME delay_line_bench   COMMAND delay_line_bench)
-    add_test(NAME chain_bench        COMMAND chain_bench)
-    add_test(NAME fb_bench           COMMAND fb_bench)
-    add_test(NAME diffuser_bench     COMMAND diffuser_bench)
-    add_test(NAME sallen_key_bench   COMMAND sallen_key_bench)
-    add_test(NAME bbd_bench          COMMAND bbd_bench)
-    add_test(NAME compander_bench    COMMAND compander_bench)
+    set(CHRONOS_CD_TESTS
+        ring_buffer_check halfsample_fir_check short_delay_check align_check
+        latency_null_check chain_fuzz_check oversized_block_check
+        engine_skeleton_check chain_parity fb_parity diffuser_toggle_check
+        diffusion_onset_check diffuser_loop_check diffuser_transport_check
+        diffuser_ring_check diffuser_decorrelation_check loop_gain_check
+        bypass_null_check crossfade_parity dither_check bump_arena_check
+        simd_delay_check frac_delay_tap_check dilog_check nonlinearity_check
+        adaa2_check f2_oracle_check f2_minimax_check makeup_table_check
+        alias_check simd_delay_parity diffuser_parity nested_allpass_check
+        diffuser_lengths_check diffuser_prepare_race_check diffuser_density_check
+        feedback_decay_check golden_render_check rt_alloc_check rt_stack_check
+        state_roundtrip_check long_run_stability_check automation_sweep_check
+        unity_transparency_check tempo_sync_check glide_rate_check
+        delay_mod_check drive_loudness_check loop_dc_check crossfeed_power_check
+        rtype_solver_check sallen_key_response_check sallen_key_stability_check
+        filter_mode_check bbd_pole_bank_check bbd_line_check bbd_clock_check
+        bbd_loop_check bbd_response_check bbd_alias_check bbd_fuzz_check
+        compander_cell_check compander_alias_check compander_loop_check)
 
-    # bench_gate: runs every perf harnesses with --json and compares against the
-    # committed baselines in tests/baselines/ via scripts/bench_gate.py. CI runs
-    # at 25% tolerance. The owner runs 15% locally on a pinned core:
-    #   <bench> --json current.json
-    #   python scripts/python/bench_gate.py tests/baselines/<bench>.json current.json --tolerance 15
+    set(CHRONOS_BENCH_TESTS
+        tan_bench adaa_bench delay_line_bench chain_bench fb_bench
+        diffuser_bench sallen_key_bench bbd_bench compander_bench prepare_bench)
+
+    foreach(t IN LISTS CHRONOS_CD_TESTS CHRONOS_BENCH_TESTS)
+        add_test(NAME ${t} COMMAND ${t})
+    endforeach()
+
+    set_tests_properties(${CHRONOS_CD_TESTS} PROPERTIES LABELS "cd")
+
+    # RUN_SERIAL: ctest schedules nothing else while these run, so ns/sample
+    # stays meaningful even under `ctest -j`.
+    set_tests_properties(${CHRONOS_BENCH_TESTS} PROPERTIES
+        LABELS "bench"
+        RUN_SERIAL TRUE
+        TIMEOUT 900)
+
+    # Longest-first scheduling: ctest only reorders by measured time once it
+    # has a prior run's Testing/Temporary/CTestCostData.txt. COST seeds that
+    # on a cold checkout so the long poles start first under -j.
+    set_tests_properties(
+        chain_fuzz_check chain_parity fb_parity long_run_stability_check
+        f2_minimax_check adaa2_check bbd_loop_check alias_check
+        PROPERTIES COST 100)
+
+    # bench_gate: 6 perf harnesses with --json, compared against
+    # tests/baselines/*.json by scripts/bench_gate.py. "bench;gate" (see above).
+    # CI runs 25% tolerance; locally on a pinned core:
+    #   <bench> --json cur.json
+    #   python scripts/python/bench_gate.py tests/baselines/<bench>.json cur.json --tolerance 15
     file(MAKE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/baselines")
     add_test(NAME bench_gate
         COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/scripts/python/bench_gate.py"
                 --ci --baselines "${CMAKE_CURRENT_SOURCE_DIR}/baselines"
                 --bindir "${CMAKE_CURRENT_BINARY_DIR}" --tolerance 25)
-
-    set_tests_properties(tan_bench adaa_bench delay_line_bench chain_bench fb_bench diffuser_bench sallen_key_bench bbd_bench compander_bench prepare_bench bench_gate PROPERTIES LABELS "bench")
+    set_tests_properties(bench_gate PROPERTIES
+        LABELS "bench;gate"
+        RUN_SERIAL TRUE
+        TIMEOUT 1800)
 endif()
