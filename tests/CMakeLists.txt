@@ -38,6 +38,20 @@ if(BUILD_TEST_HARNESSES)
     target_link_libraries(chain_parity PRIVATE SharedCode)
     add_executable(fb_parity harnesses/dsp/fb_parity.cpp)
     target_link_libraries(fb_parity PRIVATE SharedCode)
+    # fb_parity is the heaviest correctness harness (2442 configs x 65536
+    # samples x 2 engines). -O2 inlines the per-sample processRef path and the
+    # ADAA kernels; without it the loop-bound scalar math stays at -O0 and the
+    # test dominates the parallel ctest wall time. -mfma already arrives via
+    # SharedCode, so the SIMD numerics match the shipped binary either way.
+    # Tolerances (abs 1e-6 OR rel 1e-3, +/−0.1 dB envelope) absorb the ULP-level
+    # FMA/reassociation differences between chunked and scalar paths, so -O2
+    # cannot manufacture spurious failures. NDEBUG is NOT defined (-O2 on a
+    # Debug target leaves asserts armed; this harness uses CHECK/FAIL anyway).
+    if(NOT MSVC)
+        target_compile_options(fb_parity PRIVATE -O2)
+    else()
+        target_compile_options(fb_parity PRIVATE /O2)
+    endif()
     add_executable(diffuser_toggle_check harnesses/dsp/diffuser_toggle_check.cpp)
     target_link_libraries(diffuser_toggle_check PRIVATE SharedCode)
     add_executable(diffusion_onset_check harnesses/dsp/diffusion_onset_check.cpp)
