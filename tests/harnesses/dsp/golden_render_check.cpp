@@ -187,11 +187,14 @@ struct Config
     float diffModRateHz;
     float delayModDepthCents = 0.0f;
     float delayModRateHz = 0.35f;
+    int filterMode = 0; // 0: Digital, 1: Analog (Sallen-Key output stage)
+    float hpfHz = 20.0f;
+    float lpfHz = 20000.0f;
 };
 
-const std::array<Config, 13>& configs()
+const std::array<Config, 14>& configs()
 {
-    static constexpr std::array<Config, 13> kConfigs{ {
+    static constexpr std::array<Config, 14> kConfigs{ {
         { 1,  500.0f, 0.00f, 6000.0f, 0.0f,  0.0f, 2,  0.0f, 2, 100.0f, false, 0.7f, 0.5f, 16.0f/48.0f, 0.5f },
         { 2,  500.0f, 0.50f, 6000.0f, 0.0f,  0.0f, 2,  0.0f, 2, 100.0f, false, 0.7f, 0.5f, 16.0f/48.0f, 0.5f },
         { 3,  500.0f, 0.90f, 6000.0f, 0.0f,  0.0f, 2,  0.0f, 2, 100.0f, false, 0.7f, 0.5f, 16.0f/48.0f, 0.5f },
@@ -205,6 +208,7 @@ const std::array<Config, 13>& configs()
         { 11, 500.0f, 0.60f, 6000.0f, 0.0f,  0.0f, 2,  0.0f, 2, 100.0f, true,  0.7f, 0.5f, 16.0f/48.0f, 0.5f },
         { 12, 500.0f, 0.60f, 6000.0f, 0.3f,  6.02f, 2,  6.0f, 2,  45.0f, true,  0.9f, 0.8f, 32.0f/48.0f, 1.7f },
         { 13, 500.0f, 0.60f, 6000.0f, 0.3f,  6.02f, 2,  6.0f, 2,  45.0f, true,  0.9f, 0.8f, 32.0f/48.0f, 1.7f, 18.0f, 0.8f },
+        { .id = 14, .delayMs = 500.0f, .feedback = 0.50f, .dampHz = 6000.0f, .crossFeed = 0.0f, .loopDriveDb = 0.0f, .loopSatOrder = 2, .driveDb = 0.0f, .adaaOrder = 2, .mixPercent = 100.0f, .enableDiffuser = false, .diffusion = 0.7f, .diffuserSize = 0.5f, .diffModDepthMs = 16.0f/48.0f, .diffModRateHz = 0.5f, .filterMode = 1, .hpfHz = 200.0f, .lpfHz = 8000.0f },
     } };
     return kConfigs;
 }
@@ -216,8 +220,9 @@ MarsDSP::ChronosEngine::Params buildParams(const Config& c)
     p.driveLin       = std::pow(10.0f, c.driveDb / 20.0f);
     p.mix            = c.mixPercent;
     p.gainLin        = 1.0f;
-    p.hpfHz          = 20.0f;
-    p.lpfHz          = 20000.0f;
+    p.hpfHz          = c.hpfHz;
+    p.lpfHz          = c.lpfHz;
+    p.filterMode     = c.filterMode;
     p.bits           = 32;
     p.adaaOrder      = c.adaaOrder;
     p.feedback       = c.feedback;

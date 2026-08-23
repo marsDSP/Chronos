@@ -1,0 +1,25 @@
+{
+  "provisional": true,
+  "benchmarks": [
+    {
+      "name": "CompressorCell (mono)",
+      "config": "fs=48k",
+      "ns_per_op": 1.5
+    },
+    {
+      "name": "ExpanderCell (mono)",
+      "config": "fs=48k",
+      "ns_per_op": 1.2
+    },
+    {
+      "name": "Compander pair (mono)",
+      "config": "fs=48k",
+      "ns_per_op": 2.7
+    },
+    {
+      "name": "Compander pair (stereo)",
+      "config": "fs=48k",
+      "ns_per_op": 5.4
+    }
+  ]
+}

@@ -82,3 +82,37 @@ the Pade tan and exp approximants, and `boundToPi` / `boundToPiSIMD`. None
 had a caller in the source or a test, so they were removed for hygiene. The
 surviving `mmSin`, `mmCos`, `mmTan` minimax kernels keep their coefficients
 and evaluation order unchanged.
+
+## OutputFilterStage — crossfade
+
+The mode crossfade uses one signed position `fadePos_` in `[0, 1]`. The
+value 0 is the Digital terminal and 1 is the Analog terminal. Each sample
+steps the position by `1 / (fadeLengthSamples_ - 1)` toward the target
+mode, and the step saturates at the terminals.
+
+A signed position makes a mid-fade reversal continuous. A reversal only
+changes the step direction. The position returns to the source mode with
+no jump, because the source path stayed warm and kept processing samples.
+
+The stage resets the incoming path only on a saturated-edge departure.
+Leaving `fadePos_ == 0` toward Analog resets the Sallen-Key filters and
+their ADAA states. Leaving `fadePos_ == 1` toward Digital resets the SVFs.
+A mid-fade reversal does not reset the path it returns to, because that
+path kept its state.
+
+`setModeImmediate` snaps the position to a terminal and resets the
+now-inactive path. The engine calls it from `resetParams`, so a saved
+Analog preset opens in Analog with no fade and no Digital-topology audio.
+
+## OutputFilterStage — analog coefficient ramp
+
+The Analog Sallen-Key coefficients are an instantaneous `setParams` that
+replaces the scattering matrix in one step. A knob sweep made the
+coefficient trajectory a staircase, and the staircase clicked.
+
+The stage now smooths each cutoff with a 10 ms one-pole. The smoother
+advances once per 32-sample sub-block in closed form. The stage calls
+`setParams` only when the smoothed cutoff moved more than `1e-4` relative
+since the last solve. The `1e-4` guard is a numeric no-op, not an audible
+deadband: the 10 ms trajectory crosses it while moving and settles below
+it at rest, so the solve cost at rest is zero.

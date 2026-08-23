@@ -449,6 +449,42 @@ if(BUILD_TEST_HARNESSES)
         target_compile_options(bbd_bench PRIVATE "-mfma")
     endif()
 
+    add_executable(compander_cell_check harnesses/cd/compander_cell_check.cpp)
+    target_link_libraries(compander_cell_check PRIVATE SharedCode)
+
+    add_executable(compander_alias_check harnesses/dsp/compander_alias_check.cpp)
+    target_link_libraries(compander_alias_check PRIVATE SharedCode)
+    if(MSVC)
+        target_compile_options(compander_alias_check PRIVATE /O2)
+    else()
+        target_compile_options(compander_alias_check PRIVATE -O2)
+    endif()
+    if(APPLE)
+        target_compile_options(compander_alias_check PRIVATE "-Xarch_x86_64" "-mfma")
+    elseif(MSVC)
+        target_compile_options(compander_alias_check PRIVATE "/arch:AVX2")
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64|AMD64)")
+        target_compile_options(compander_alias_check PRIVATE "-mfma")
+    endif()
+
+    add_executable(compander_loop_check harnesses/dsp/compander_loop_check.cpp)
+    target_link_libraries(compander_loop_check PRIVATE SharedCode)
+
+    add_executable(compander_bench harnesses/perf/compander_bench.cpp)
+    target_link_libraries(compander_bench PRIVATE SharedCode)
+    if(MSVC)
+        target_compile_options(compander_bench PRIVATE /O2)
+    else()
+        target_compile_options(compander_bench PRIVATE -O2)
+    endif()
+    if(APPLE)
+        target_compile_options(compander_bench PRIVATE "-Xarch_x86_64" "-mfma")
+    elseif(MSVC)
+        target_compile_options(compander_bench PRIVATE "/arch:AVX2")
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64|AMD64)")
+        target_compile_options(compander_bench PRIVATE "-mfma")
+    endif()
+
     # ── CTest registration ──────────────────────────────────────────────
     # 25 correctness harnesses: exit 0 = pass. The 6 benchmarks (tan_bench,
     # adaa_bench, delay_line_bench, chain_bench, fb_bench, diffuser_bench) are
@@ -517,6 +553,9 @@ if(BUILD_TEST_HARNESSES)
     add_test(NAME bbd_response_check              COMMAND bbd_response_check)
     add_test(NAME bbd_alias_check                 COMMAND bbd_alias_check)
     add_test(NAME bbd_fuzz_check                  COMMAND bbd_fuzz_check)
+    add_test(NAME compander_cell_check            COMMAND compander_cell_check)
+    add_test(NAME compander_alias_check           COMMAND compander_alias_check)
+    add_test(NAME compander_loop_check            COMMAND compander_loop_check)
 
     # The 6 benchmarks are registered as tests but labeled "bench" so
     # `ctest -LE bench` excludes them. They report numbers, not pass/fail.
@@ -530,6 +569,7 @@ if(BUILD_TEST_HARNESSES)
     add_test(NAME diffuser_bench     COMMAND diffuser_bench)
     add_test(NAME sallen_key_bench   COMMAND sallen_key_bench)
     add_test(NAME bbd_bench          COMMAND bbd_bench)
+    add_test(NAME compander_bench    COMMAND compander_bench)
 
     # bench_gate: runs every perf harnesses with --json and compares against the
     # committed baselines in tests/baselines/ via scripts/bench_gate.py. CI runs
@@ -542,5 +582,5 @@ if(BUILD_TEST_HARNESSES)
                 --ci --baselines "${CMAKE_CURRENT_SOURCE_DIR}/baselines"
                 --bindir "${CMAKE_CURRENT_BINARY_DIR}" --tolerance 25)
 
-    set_tests_properties(tan_bench adaa_bench delay_line_bench chain_bench fb_bench diffuser_bench sallen_key_bench bbd_bench prepare_bench bench_gate PROPERTIES LABELS "bench")
+    set_tests_properties(tan_bench adaa_bench delay_line_bench chain_bench fb_bench diffuser_bench sallen_key_bench bbd_bench compander_bench prepare_bench bench_gate PROPERTIES LABELS "bench")
 endif()
