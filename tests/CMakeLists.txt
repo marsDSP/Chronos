@@ -76,6 +76,9 @@ if(BUILD_TEST_HARNESSES)
     target_link_libraries(bump_arena_check PRIVATE SharedCode)
     add_executable(spsc_fifo_check harnesses/cd/spsc_fifo_check.cpp)
     target_link_libraries(spsc_fifo_check PRIVATE SharedCode)
+    add_executable(tap_sim_check harnesses/cd/tap_sim_check.cpp
+        ${CMAKE_SOURCE_DIR}/source/gui/tap/TapSimulation.cpp)
+    target_link_libraries(tap_sim_check PRIVATE SharedCode)
 
     # State schema harness. Links the JUCE processor modules with SharedCode.
     # The harness builds a real APVTS from the Chronos parameter layout.
@@ -534,6 +537,7 @@ if(BUILD_TEST_HARNESSES)
         diffuser_ring_check diffuser_decorrelation_check loop_gain_check
         bypass_null_check crossfade_parity dither_check bump_arena_check
         spsc_fifo_check
+        tap_sim_check
         simd_delay_check frac_delay_tap_check dilog_check nonlinearity_check
         adaa2_check f2_oracle_check f2_minimax_check makeup_table_check
         alias_check simd_delay_parity diffuser_parity nested_allpass_check
