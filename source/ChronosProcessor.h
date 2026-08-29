@@ -38,6 +38,11 @@ public:
     double getTailLengthSeconds() const override;
     AudioProcessorParameter* getBypassParameter() const override { return parameters.getBypassParameter(); }
 
+    AudioProcessorValueTreeState& getAPVTS() noexcept { return apvts; }
+    const AudioProcessorValueTreeState& getAPVTS() const noexcept { return apvts; }
+    ChronosParameters& getParameters() noexcept { return parameters; }
+    const ChronosParameters& getParameters() const noexcept { return parameters; }
+
     //==============================================================================
     int getNumPrograms() override;
     int getCurrentProgram() override;
