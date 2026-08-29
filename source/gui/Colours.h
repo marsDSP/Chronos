@@ -17,6 +17,7 @@ struct Colours {
     static inline const Colour footerBackground { 0xFF161618 };
     static inline const Colour cardBackground   { 0xFF1C1C1F };
     static inline const Colour cardBorder       { 0xFF333337 };
+    static inline const Colour rulerText        { 0xFF9A9A9A };
     static inline const Colour burntOrange      { 0xFF1A1410 };
 
     // Text colours

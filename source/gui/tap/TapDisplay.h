@@ -29,6 +29,8 @@ public:
     void mouseMove(const MouseEvent& e) override;
     void mouseEnter(const MouseEvent& e) override;
     void mouseExit(const MouseEvent& e) override;
+    void mouseDoubleClick(const MouseEvent& e) override;
+    void mouseWheelMove(const MouseEvent& e, const MouseWheelDetails& wheel) override;
 
     void parameterChanged(const String& parameterID, float newValue) override;
 
