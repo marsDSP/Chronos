@@ -7,8 +7,7 @@
 #include "ChronosProcessor.h"
 #include "gui/Colours.h"
 #include "gui/LookAndFeel.h"
-#include "gui/PanelPage.h"
-#include "gui/TabBar.h"
+#include "gui/Card.h"
 #include "gui/PedalKnob.h"
 #include "gui/controls/PowerButton.h"
 #include "gui/controls/ConsoleButton.h"
@@ -18,7 +17,7 @@
 #include "gui/tap/TapDisplay.h"
 
 // The main plugin editor component.
-// The editor hosts the tab bar and the page views.
+// The editor shows one window with a tap display and a row of cards.
 class ChronosEditor final : public AudioProcessorEditor,
                             public AudioProcessorValueTreeState::Listener {
 public:
@@ -30,21 +29,20 @@ public:
 
     void parameterChanged(const String& parameterID, float newValue) override;
 
-    // Set the visible tab index.
-    void setSelectedTab(int index);
-
 private:
     void updateCoreAccentColour_(float delayModeVal);
 
     ChronosProcessor& processorRef;
     MarsDSP::GUI::LookAndFeel lnf_;
 
-    MarsDSP::GUI::TabBar tabBar_;
-    MarsDSP::GUI::PanelPage delayPage_;
-    MarsDSP::GUI::PanelPage characterPage_;
-    MarsDSP::GUI::PanelPage outputPage_;
+    MarsDSP::GUI::TapDisplay tapDisplay_;
+    MarsDSP::GUI::Card timeCard_;
+    MarsDSP::GUI::Card repeatsCard_;
+    MarsDSP::GUI::Card characterCard_;
+    MarsDSP::GUI::Card outputCard_;
 
-    std::array<MarsDSP::GUI::PanelPage*, 3> pages_{};
+    MarsDSP::GUI::PowerButton bypassButton_;
+    std::unique_ptr<AudioProcessorValueTreeState::ButtonAttachment> bypassAttach_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChronosEditor)
 };

@@ -9,6 +9,12 @@ SubTabStrip::SubTabButton::SubTabButton(const String& name)
     setClickingTogglesState(false);
 }
 
+void SubTabStrip::SubTabButton::setAccentColour(const Colour c)
+{
+    accent_ = c;
+    repaint();
+}
+
 void SubTabStrip::SubTabButton::paintButton(Graphics& g,
                                             const bool shouldDrawButtonAsHighlighted,
                                             const bool shouldDrawButtonAsDown)
@@ -19,36 +25,30 @@ void SubTabStrip::SubTabButton::paintButton(Graphics& g,
     const bool isSelected = getToggleState();
 
     if (isSelected)
-    {
-        g.setColour(Colours::panelBackground);
-        g.fillRoundedRectangle(bounds, 4.0f);
-        g.setColour(Colours::panelBorder);
-        g.drawRoundedRectangle(bounds.reduced(0.5f), 4.0f, 1.0f);
-    }
-    else if (shouldDrawButtonAsHighlighted)
-    {
-        g.setColour(Colours::headerBackground.withAlpha(0.6f));
-        g.fillRoundedRectangle(bounds, 4.0f);
-    }
-
-    if (isSelected)
-        g.setColour(Colours::textBright);
+        g.setColour(accent_);
     else if (shouldDrawButtonAsHighlighted)
         g.setColour(Colours::textPrimary);
     else
         g.setColour(Colours::textDim);
 
-    const auto font = Font(FontOptions(11.0f)).boldened();
-    g.setFont(font);
+    g.setFont(Font(FontOptions(11.0f)).boldened());
     g.drawText(getButtonText().toUpperCase(), bounds, Justification::centred, true);
 }
 
 SubTabStrip::SubTabStrip() = default;
 
+void SubTabStrip::setAccentColour(const Colour c)
+{
+    accentColour_ = c;
+    for (auto& btn : buttons_)
+        btn->setAccentColour(c);
+}
+
 void SubTabStrip::addSubTab(const String& name)
 {
     const int index = static_cast<int>(buttons_.size());
     auto btn = std::make_unique<SubTabButton>(name);
+    btn->setAccentColour(accentColour_);
     btn->onClick = [this, index]
     {
         setSelectedSubTab(index);

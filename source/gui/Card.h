@@ -1,0 +1,42 @@
+#pragma once
+
+#ifndef CHRONOS_CARD_H
+#define CHRONOS_CARD_H
+
+#include <JuceHeader.h>
+#include "SubTabStrip.h"
+#include "Colours.h"
+#include <memory>
+#include <vector>
+
+namespace MarsDSP::GUI {
+
+// A rounded card that holds a subtab strip and swappable content panels.
+class Card : public Component {
+public:
+    Card();
+    ~Card() override = default;
+
+    // Set the accent colour for the card border and the subtab strip.
+    void setAccentColour(Colour c);
+
+    // Add one content panel under a subtab title.
+    void addContent(const String& tabName, std::unique_ptr<Component> panel);
+
+    // Set the visible content panel index.
+    void setSelectedContent(int index);
+
+    void paint(Graphics& g) override;
+    void resized() override;
+
+private:
+    SubTabStrip subTabs_;
+    std::vector<std::unique_ptr<Component>> contents_;
+    Colour accent_ { Colours::accentDelayDigital };
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(Card)
+};
+
+} // namespace MarsDSP::GUI
+
+#endif
