@@ -8,6 +8,8 @@
 #include "gui/Colours.h"
 #include "gui/LookAndFeel.h"
 #include "gui/Card.h"
+#include "gui/Header.h"
+#include "gui/Footer.h"
 #include "gui/PedalKnob.h"
 #include "gui/controls/PowerButton.h"
 #include "gui/controls/ConsoleButton.h"
@@ -36,13 +38,12 @@ private:
     MarsDSP::GUI::LookAndFeel lnf_;
 
     MarsDSP::GUI::TapDisplay tapDisplay_;
+    MarsDSP::GUI::Header header_;
+    MarsDSP::GUI::Footer footer_;
     MarsDSP::GUI::Card timeCard_;
     MarsDSP::GUI::Card repeatsCard_;
     MarsDSP::GUI::Card characterCard_;
     MarsDSP::GUI::Card outputCard_;
-
-    MarsDSP::GUI::PowerButton bypassButton_;
-    std::unique_ptr<AudioProcessorValueTreeState::ButtonAttachment> bypassAttach_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChronosEditor)
 };

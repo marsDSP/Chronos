@@ -14,6 +14,9 @@ struct Colours {
     static inline const Colour panelBackground  { 0xFF171818 };
     static inline const Colour panelBorder      { 0xFF2A2A2D };
     static inline const Colour headerBackground { 0xFF222225 };
+    static inline const Colour footerBackground { 0xFF161618 };
+    static inline const Colour cardBackground   { 0xFF1C1C1F };
+    static inline const Colour cardBorder       { 0xFF333337 };
     static inline const Colour burntOrange      { 0xFF1A1410 };
 
     // Text colours

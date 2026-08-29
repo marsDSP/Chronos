@@ -325,10 +325,12 @@ private:
 } // namespace
 
 ChronosEditor::ChronosEditor(ChronosProcessor& p)
-    : AudioProcessorEditor(&p), processorRef(p), tapDisplay_(p)
+    : AudioProcessorEditor(&p), processorRef(p), tapDisplay_(p), header_(p), footer_(p)
 {
     setLookAndFeel(&lnf_);
 
+    addAndMakeVisible(header_);
+    addAndMakeVisible(footer_);
     addAndMakeVisible(tapDisplay_);
 
     timeCard_.addContent("TIME", std::make_unique<TimePanel>(processorRef));
@@ -346,11 +348,6 @@ ChronosEditor::ChronosEditor(ChronosProcessor& p)
     outputCard_.addContent("FILTER", std::make_unique<FilterPanel>(processorRef));
     outputCard_.addContent("LEVEL", std::make_unique<LevelPanel>(processorRef));
     addAndMakeVisible(outputCard_);
-
-    bypassButton_.setColours(MarsDSP::GUI::Colours::accentRed, MarsDSP::GUI::Colours::textDim);
-    bypassAttach_ = std::make_unique<AudioProcessorValueTreeState::ButtonAttachment>(
-        processorRef.getAPVTS(), bypassParamID.getParamID(), bypassButton_);
-    addAndMakeVisible(bypassButton_);
 
     characterCard_.setAccentColour(MarsDSP::GUI::Colours::accentPurple);
     outputCard_.setAccentColour(MarsDSP::GUI::Colours::accentBlue);
@@ -385,24 +382,17 @@ void ChronosEditor::parameterChanged(const String& parameterID, const float newV
 
 void ChronosEditor::updateCoreAccentColour_(const float delayModeVal)
 {
-    const auto col = (delayModeVal > 0.5f) ? MarsDSP::GUI::Colours::accentDelayBBD
-                                           : MarsDSP::GUI::Colours::accentDelayDigital;
+    const int mode = (delayModeVal > 0.5f) ? 1 : 0;
+    const auto col = (mode == 1) ? MarsDSP::GUI::Colours::accentDelayBBD
+                                 : MarsDSP::GUI::Colours::accentDelayDigital;
     timeCard_.setAccentColour(col);
     repeatsCard_.setAccentColour(col);
+    header_.setCoreMode(mode, col);
 }
 
 void ChronosEditor::paint(Graphics& g)
 {
     g.fillAll(MarsDSP::GUI::Colours::background);
-
-    const float scale = static_cast<float>(getHeight()) / 640.0f;
-    const int headerH = juce::roundToInt(52.0f * scale);
-
-    g.setColour(MarsDSP::GUI::Colours::headerBackground);
-    g.fillRect(0, 0, getWidth(), headerH);
-
-    g.setColour(MarsDSP::GUI::Colours::panelBorder);
-    g.drawHorizontalLine(headerH - 1, 0.0f, static_cast<float>(getWidth()));
 }
 
 void ChronosEditor::resized()
@@ -415,7 +405,8 @@ void ChronosEditor::resized()
     const int footerH = juce::roundToInt(36.0f * scale);
     const int tapH = juce::roundToInt(200.0f * scale);
 
-    bypassButton_.setBounds(w - 40, (headerH - 24) / 2, 24, 24);
+    header_.setBounds(0, 0, w, headerH);
+    footer_.setBounds(0, h - footerH, w, footerH);
 
     const int tapY = headerH + 4;
     tapDisplay_.setBounds(12, tapY, w - 24, tapH);
