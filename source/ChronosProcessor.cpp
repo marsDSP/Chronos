@@ -96,12 +96,13 @@ void ChronosProcessor::setCurrentProgram(int index)
 const String ChronosProcessor::getProgramName(int index)
 {
     ignoreUnused(index);
-    return {};
+    return programName_;
 }
 
 void ChronosProcessor::changeProgramName(int index, const String &newName)
 {
-    ignoreUnused(index, newName);
+    ignoreUnused(index);
+    programName_ = newName;
 }
 
 //==============================================================================

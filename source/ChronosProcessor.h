@@ -61,6 +61,9 @@ private:
     // The last known host BPM. Held when the host gives no tempo.
     double cachedBpm_ = 120.0;
 
+    // Name of the single factory program (returned via getProgramName).
+    String programName_ { "Init" };
+
     // Compute the delay in samples, using tempo sync when enabled.
     float computeDelaySamples_() const;
 
