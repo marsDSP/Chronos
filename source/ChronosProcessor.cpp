@@ -1,4 +1,5 @@
 #include "ChronosProcessor.h"
+#include "ChronosEditor.h"
 #include "utils/helpers/TempoSync.h"
 
 #include <algorithm>
@@ -251,7 +252,7 @@ bool ChronosProcessor::hasEditor() const
 
 AudioProcessorEditor *ChronosProcessor::createEditor()
 {
-    return new GenericAudioProcessorEditor(*this);
+    return new ChronosEditor(*this);
 }
 
 //==============================================================================
