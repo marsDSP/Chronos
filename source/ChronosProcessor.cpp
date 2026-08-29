@@ -155,7 +155,7 @@ std::pair<float, float> ChronosProcessor::computeDelaySamples_() const
     if (! parameters.getRawDelaySync())
         return { parameters.getDelaySamplesL(), parameters.getDelaySamplesR() };
     const double ms = MarsDSP::Utils::Helpers::TempoSync::convertChoiceIndexToMilliseconds(
-                        parameters.getRawDelayDivision(), cachedBpm_);
+                        parameters.getRawDelayDivision(), cachedBpm_.load(std::memory_order_relaxed));
     const double clamped = std::clamp(ms, 1.0, 5000.0);
     const float s = static_cast<float>(clamped * 0.001 * getSampleRate());
     return { s, s };
@@ -209,7 +209,7 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
     // Read the host tempo. Hold the last known BPM when the host gives none.
     if (const auto pos = getPlayHead()->getPosition())
         if (const auto bpm = pos->getBpm())
-            cachedBpm_ = *bpm;
+            cachedBpm_.store(*bpm, std::memory_order_relaxed);
 
     const int numSamples = buffer.getNumSamples();
     if (numSamples <= 0) return;

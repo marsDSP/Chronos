@@ -9,7 +9,24 @@ ChronosEditor::ChronosEditor(ChronosProcessor& p)
     pages_[1] = &characterPage_;
     pages_[2] = &outputPage_;
 
-    delayPage_.addSubPanel("TAPS", nullptr);
+    class TapsSubPanel : public Component {
+    public:
+        explicit TapsSubPanel(ChronosProcessor& processor)
+            : tapDisplay(processor)
+        {
+            addAndMakeVisible(tapDisplay);
+        }
+
+        void resized() override
+        {
+            constexpr int tapHeight = 160;
+            tapDisplay.setBounds(0, 0, getWidth(), std::min(tapHeight, getHeight()));
+        }
+
+        MarsDSP::GUI::TapDisplay tapDisplay;
+    };
+
+    delayPage_.addSubPanel("TAPS", std::make_unique<TapsSubPanel>(processorRef));
     delayPage_.addSubPanel("REPEATS", nullptr);
     delayPage_.addSubPanel("MOD", nullptr);
 

@@ -257,8 +257,9 @@ public:
     [[nodiscard]] float getDelaySamples() const noexcept { return delaySamplesL; }
     [[nodiscard]] float getDelaySamplesL() const noexcept { return delaySamplesL; }
     [[nodiscard]] float getDelaySamplesR() const noexcept { return delaySamplesR; }
-    [[nodiscard]] bool getRawTimeLink() const noexcept { return timeLinkParam == nullptr || timeLinkParam->get(); }
+    [[nodiscard]] float getRawDelayTimeL() const noexcept { return delayParam ? delayParam->get() : 375.0f; }
     [[nodiscard]] float getRawDelayTimeR() const noexcept { return delayRParam ? delayRParam->get() : 375.0f; }
+    [[nodiscard]] bool getRawTimeLink() const noexcept { return timeLinkParam == nullptr || timeLinkParam->get(); }
     [[nodiscard]] bool getBypass() const noexcept { return bypassParam != nullptr && bypassParam->get(); }
     [[nodiscard]] AudioProcessorParameter *getBypassParameter() const noexcept { return bypassParam; }
 

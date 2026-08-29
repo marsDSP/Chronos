@@ -43,6 +43,8 @@ public:
     ChronosParameters& getParameters() noexcept { return parameters; }
     const ChronosParameters& getParameters() const noexcept { return parameters; }
 
+    [[nodiscard]] double getCachedBpm() const noexcept { return cachedBpm_.load(std::memory_order_relaxed); }
+
     //==============================================================================
     int getNumPrograms() override;
     int getCurrentProgram() override;
@@ -64,7 +66,7 @@ private:
     void migrateState_ (ValueTree& state, int fromVersion);
 
     // The last known host BPM. Held when the host gives no tempo.
-    double cachedBpm_ = 120.0;
+    std::atomic<double> cachedBpm_{120.0};
 
     // Name of the single factory program (returned via getProgramName).
     String programName_ { "Init" };

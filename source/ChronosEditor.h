@@ -9,6 +9,7 @@
 #include "gui/LookAndFeel.h"
 #include "gui/PanelPage.h"
 #include "gui/TabBar.h"
+#include "gui/tap/TapDisplay.h"
 
 // The main plugin editor component.
 // The editor hosts the tab bar and the page views.
