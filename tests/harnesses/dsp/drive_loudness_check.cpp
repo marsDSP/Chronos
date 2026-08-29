@@ -96,7 +96,9 @@ int main()
         engine.setBypass(false);
 
         MarsDSP::ChronosEngine::Params p{};
-        p.delaySamples  = 10.0f * 0.001f * static_cast<float>(kFsInt); // 10 ms
+        const float dly = 10.0f * 0.001f * static_cast<float>(kFsInt); // 10 ms
+        p.delaySamplesL = dly;
+        p.delaySamplesR = dly;
         p.driveLin      = std::pow(10.0f, static_cast<float>(driveDb) / 20.0f);
         p.mix           = 100.0f;
         p.gainLin       = 1.0f;

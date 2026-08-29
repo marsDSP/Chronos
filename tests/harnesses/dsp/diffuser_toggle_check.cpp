@@ -38,7 +38,8 @@ const char* g_section = "(startup)";
 Engine::Params makeParams(bool enableDiff) noexcept
 {
     Engine::Params p{};
-    p.delaySamples    = 1000.0f;
+    p.delaySamplesL   = 1000.0f;
+    p.delaySamplesR   = 1000.0f;
     p.driveLin        = 1.0f;     // 0 dB
     p.mix             = 100.0f;   // full wet (isolates the diffuser path)
     p.gainLin         = 1.0f;     // 0 dB

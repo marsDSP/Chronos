@@ -47,7 +47,9 @@ int main()
     engine.setBypass(false);
 
     MarsDSP::ChronosEngine::Params p{};
-    p.delaySamples = 500.0f * 0.001f * static_cast<float>(kFsInt);
+    const float dly = 500.0f * 0.001f * static_cast<float>(kFsInt);
+    p.delaySamplesL = dly;
+    p.delaySamplesR = dly;
     p.driveLin = 1.0f;       // drive 0 dB
     p.mix = 0.0f;            // dry only
     p.gainLin = 1.0f;        // gain 0 dB

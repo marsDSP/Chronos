@@ -106,7 +106,8 @@ namespace
     MarsDSP::ChronosEngine::Params toParams(const RtConfig &c) noexcept
     {
         MarsDSP::ChronosEngine::Params p{};
-        p.delaySamples = c.delaySamples;
+        p.delaySamplesL = c.delaySamples;
+        p.delaySamplesR = c.delaySamples;
         p.driveLin = c.driveLin;
         p.mix = c.mix;
         p.gainLin = 1.0f;

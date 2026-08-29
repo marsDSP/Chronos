@@ -42,7 +42,8 @@ const char* g_section = "(startup)";
 Engine::Params makeParams(bool enableDiff, float diffusion, float size) noexcept
 {
     Engine::Params p{};
-    p.delaySamples    = static_cast<float>(kDelay);
+    p.delaySamplesL   = static_cast<float>(kDelay);
+    p.delaySamplesR   = static_cast<float>(kDelay);
     p.driveLin        = 1.0f;
     p.mix             = 100.0f;   // full wet
     p.gainLin         = 1.0f;

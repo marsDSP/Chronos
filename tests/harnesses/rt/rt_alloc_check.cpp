@@ -147,7 +147,8 @@ namespace
 
         MarsDSP::ChronosEngine::Params p{};
         const float delayMs = lerpF(5.0f, 5000.0f, osc(3333.0, 0.0));
-        p.delaySamples = delayMs * 0.001f * static_cast<float>(kFs);
+        p.delaySamplesL = delayMs * 0.001f * static_cast<float>(kFs);
+        p.delaySamplesR = delayMs * 0.001f * static_cast<float>(kFs);
         p.driveLin = std::pow(10.0f, lerpF(0.0f, 40.0f, osc(1800.0, 1.0)) / 20.0f);
         p.mix = lerpF(0.0f, 100.0f, osc(3000.0, 0.0));
         p.gainLin = std::pow(10.0f, lerpF(-12.0f, 12.0f, osc(4000.0, 1.0)) / 20.0f);

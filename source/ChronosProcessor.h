@@ -69,8 +69,8 @@ private:
     // Name of the single factory program (returned via getProgramName).
     String programName_ { "Init" };
 
-    // Compute the delay in samples, using tempo sync when enabled.
-    float computeDelaySamples_() const;
+    // Compute the delay pair in samples, using tempo sync when enabled.
+    std::pair<float, float> computeDelaySamples_() const;
 
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChronosProcessor)

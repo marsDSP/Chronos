@@ -44,7 +44,9 @@ MarsDSP::ChronosEngine::Params paramsAt(float pos) noexcept
 {
     MarsDSP::ChronosEngine::Params p{};
 
-    p.delaySamples = lerp(240.0f, 24000.0f, pos);
+    const float dly = lerp(240.0f, 24000.0f, pos);
+    p.delaySamplesL = dly;
+    p.delaySamplesR = dly;
     p.driveLin     = std::pow(10.0f, lerp(0.0f, 24.0f, pos) * 0.05f);
     p.mix          = lerp(0.0f, 100.0f, pos);
     p.gainLin      = std::pow(10.0f, lerp(-6.0f, 6.0f, pos) * 0.05f);

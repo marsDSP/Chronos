@@ -617,7 +617,8 @@ namespace
         eng.setDitherSeeds(0x12345678u, 0x9abcdef0u);
 
         MarsDSP::ChronosEngine::Params ep{};
-        ep.delaySamples = kDelaySamples;
+        ep.delaySamplesL = kDelaySamples;
+        ep.delaySamplesR = kDelaySamples;
         ep.driveLin = driveLin;
         ep.mix = c.mix;
         ep.gainLin = gainLin;

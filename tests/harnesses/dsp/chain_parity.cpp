@@ -140,7 +140,8 @@ struct ChainRef
         // snap the feedback delay to the initial delay (matches the
         // engine's resetParams snap).
         MarsDSP::Delays::FeedbackDelay::Params fp;
-        fp.delaySamples  = dlySmp;
+        fp.delaySamplesL = dlySmp;
+        fp.delaySamplesR = dlySmp;
         fp.feedback      = fbFeedback;
         fp.dampHz        = fbDampHz;
         fp.crossFeed     = fbCrossFeed;
@@ -168,7 +169,8 @@ struct ChainRef
         // same feedback params (feedback=0, no diffuser) so the wet path
         // matches the engine bit-for-bit.
         MarsDSP::Delays::FeedbackDelay::Params fp;
-        fp.delaySamples  = dlySmp;
+        fp.delaySamplesL = dlySmp;
+        fp.delaySamplesR = dlySmp;
         fp.feedback      = fbFeedback;
         fp.dampHz        = fbDampHz;
         fp.crossFeed     = fbCrossFeed;
@@ -351,7 +353,8 @@ MarsDSP::ChronosEngine::Params makeParams(float dlySmp, int order, float drvLin,
                                           float hpfHz, float lpfHz, int bits)
 {
     MarsDSP::ChronosEngine::Params p{};
-    p.delaySamples = dlySmp;
+    p.delaySamplesL = dlySmp;
+    p.delaySamplesR = dlySmp;
     p.driveLin     = drvLin;
     p.mix          = mix;
     p.gainLin      = gainLin;

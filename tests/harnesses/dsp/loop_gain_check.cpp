@@ -63,7 +63,8 @@ std::vector<float> runDrive(float loopDrive, int& steadyStart, int& burstStart)
     fb.prepare(kFs, kBlock, fbMaxDelay);
 
     FeedbackDelay::Params p;
-    p.delaySamples  = static_cast<float>(kDelay);
+    p.delaySamplesL = static_cast<float>(kDelay);
+    p.delaySamplesR = static_cast<float>(kDelay);
     p.feedback      = kFb;
     p.dampHz        = 20000.0f;   // transparent
     p.crossFeed     = 0.0f;

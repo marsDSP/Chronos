@@ -23,7 +23,8 @@ namespace
     Engine::Params makeParams(bool enableDiff, float fb) noexcept
     {
         Engine::Params p{};
-        p.delaySamples    = 24000.0f; // 500 ms @ 48 kHz
+        p.delaySamplesL   = 24000.0f; // 500 ms @ 48 kHz
+        p.delaySamplesR   = 24000.0f;
         p.driveLin        = 1.0f;
         p.mix             = 100.0f;
         p.gainLin         = 1.0f;

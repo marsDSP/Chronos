@@ -136,7 +136,8 @@ int main()
 
             auto makeParams = [&] (int mode) {
                 FeedbackDelay::Params p;
-                p.delaySamples = delaySamples;
+                p.delaySamplesL = delaySamples;
+                p.delaySamplesR = delaySamples;
                 p.feedback = 0.5f;
                 p.dampHz = 20000.0f;
                 p.loopCutHz = 20.0f;
@@ -204,7 +205,8 @@ int main()
 
             auto makeParams = [&] (int mode) {
                 FeedbackDelay::Params p;
-                p.delaySamples = delaySamples;
+                p.delaySamplesL = delaySamples;
+                p.delaySamplesR = delaySamples;
                 p.feedback = 0.5f;
                 p.dampHz = 20000.0f;
                 p.loopCutHz = 20.0f;
@@ -248,7 +250,8 @@ int main()
         FeedbackDelay fb;
         fb.prepare (kFs, kBlock, kMaxDelay);
         FeedbackDelay::Params p;
-        p.delaySamples = delaySamples;
+        p.delaySamplesL = delaySamples;
+        p.delaySamplesR = delaySamples;
         p.feedback = 0.0f;
         p.satOrder = 0;
         p.enableDiffuser = false;
@@ -275,7 +278,8 @@ int main()
         FeedbackDelay fb;
         fb.prepare (kFs, kBlock, kMaxDelay);
         FeedbackDelay::Params p;
-        p.delaySamples = 4800.0f;
+        p.delaySamplesL = 4800.0f;
+        p.delaySamplesR = 4800.0f;
         p.feedback = 0.4f;
         p.satOrder = 2;
         p.delayMode = 0; // Digital
@@ -333,7 +337,8 @@ int main()
         inR[0] = 1.0f;
 
         FeedbackDelay::Params p;
-        p.delaySamples = delaySamples;
+        p.delaySamplesL = delaySamples;
+        p.delaySamplesR = delaySamples;
         p.feedback = 0.5f;
         p.dampHz = 20000.0f;
         p.loopCutHz = 20.0f;
@@ -400,7 +405,8 @@ int main()
 
         auto renderSum = [&] (float cf, float depth) -> std::vector<float> {
             FeedbackDelay::Params p;
-            p.delaySamples = delaySamples;
+            p.delaySamplesL = delaySamples;
+            p.delaySamplesR = delaySamples;
             p.feedback = 0.5f;
             p.dampHz = 20000.0f;
             p.loopCutHz = 20.0f;
@@ -448,7 +454,8 @@ int main()
 
         auto makeParams = [&] (int mode) {
             FeedbackDelay::Params p;
-            p.delaySamples = delaySamples;
+            p.delaySamplesL = delaySamples;
+            p.delaySamplesR = delaySamples;
             p.feedback = 0.5f;
             p.dampHz = 20000.0f;
             p.loopCutHz = 20.0f;

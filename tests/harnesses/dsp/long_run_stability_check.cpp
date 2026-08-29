@@ -60,7 +60,9 @@ int main()
     fb.prepare(kFs, kBlock, kMaxDelaySamp, arena);
 
     MarsDSP::Delays::FeedbackDelay::Params p;
-    p.delaySamples = 500.0f * 0.001f * static_cast<float>(kFsInt);
+    const float dly = 500.0f * 0.001f * static_cast<float>(kFsInt);
+    p.delaySamplesL = dly;
+    p.delaySamplesR = dly;
     p.feedback = 0.9f;
     p.dampHz = 6000.0f;
     p.crossFeed = 0.0f;

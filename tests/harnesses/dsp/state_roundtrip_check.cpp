@@ -76,7 +76,7 @@ float getDenorm (const AudioProcessorValueTreeState& a, const char* id)
 MemoryBlock saveState (AudioProcessorValueTreeState& a)
 {
     ValueTree s = a.copyState();
-    s.setProperty ("version", 4, nullptr);
+    s.setProperty ("version", 5, nullptr);
     MemoryBlock block;
     AudioProcessor::copyXmlToBinary (*s.createXml(), block);
     return block;
@@ -90,7 +90,7 @@ void loadState (AudioProcessorValueTreeState& a, const MemoryBlock& block)
     if (xml == nullptr || ! xml->hasTagName (a.state.getType()))
         return;
     ValueTree s (ValueTree::fromXml (*xml));
-    s.setProperty ("version", 4, nullptr);
+    s.setProperty ("version", 5, nullptr);
     a.replaceState (s);
 }
 
@@ -108,6 +108,8 @@ int main()
 
         // Move several parameters off their defaults.
         setDenorm (a, "delayTime", 1234.0f);
+        setDenorm (a, "delayTimeR", 2345.0f);
+        setDenorm (a, "timeLink", 0.0f);
         setDenorm (a, "feedback", 0.55f);
         setDenorm (a, "mix", 42.0f);
         setDenorm (a, "drive", 9.0f);
@@ -155,7 +157,7 @@ int main()
         ValueTree s (ValueTree::fromXml (*xml));
         // Absent version reads as zero, which means a version-1 state.
         CHECK (! s.hasProperty ("version"));
-        s.setProperty ("version", 4, nullptr);
+        s.setProperty ("version", 5, nullptr);
         a.replaceState (s);
 
         // The out-of-range feedback must clamp to the legal maximum.
@@ -170,7 +172,7 @@ int main()
         const float dMode = getDenorm(a, "delayMode");
         CHECK(dMode == 0.0f);
         // The live state now carries the current schema version.
-        CHECK (static_cast<int> (a.state.getProperty ("version")) == 4);
+        CHECK (static_cast<int> (a.state.getProperty ("version")) == 5);
     }
 
     std::println("=== state_roundtrip_check OK ===");

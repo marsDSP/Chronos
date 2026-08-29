@@ -367,7 +367,8 @@ int main()
 
         auto makeParams = [&] {
             MarsDSP::ChronosEngine::Params p {};
-            p.delaySamples = 100.0f;
+            p.delaySamplesL = 100.0f;
+            p.delaySamplesR = 100.0f;
             p.feedback = 0.0f;
             p.mix = 100.0f;
             p.gainLin = 1.0f;

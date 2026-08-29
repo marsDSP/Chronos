@@ -36,7 +36,8 @@ namespace MarsDSP
     public:
         struct Params
         {
-            float delaySamples = 0.0f;
+            float delaySamplesL = 0.0f;
+            float delaySamplesR = 0.0f;
             float driveLin = 1.0f;
             float mix = 100.0f;
             float gainLin = 1.0f;
@@ -511,7 +512,8 @@ namespace MarsDSP
         void applyFeedbackParams_(const Params &p, bool snap) noexcept
         {
             Delays::FeedbackDelay::Params fp;
-            fp.delaySamples = p.delaySamples;
+            fp.delaySamplesL = p.delaySamplesL;
+            fp.delaySamplesR = p.delaySamplesR;
             fp.feedback = p.feedback;
             fp.dampHz = p.dampHz;
             fp.loopCutHz = p.loopCutHz;

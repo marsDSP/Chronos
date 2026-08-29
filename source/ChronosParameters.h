@@ -8,6 +8,8 @@
 const ParameterID gainParamID{"gain", 1};
 const ParameterID bitsParamID{"bits", 1};
 const ParameterID delayTimeParamID{"delayTime", 1};
+const ParameterID delayTimeRParamID{"delayTimeR", 1};
+const ParameterID timeLinkParamID{"timeLink", 1};
 const ParameterID delaySyncParamID{"delaySync", 1};
 const ParameterID delayDivisionParamID{"delayDivision", 1};
 const ParameterID delayModeParamID{"delayMode", 1};
@@ -45,6 +47,8 @@ public:
         castParameter(apvts, gainParamID, gainParam);
         castParameter(apvts, bitsParamID, bitsParam);
         castParameter(apvts, delayTimeParamID, delayParam);
+        castParameter(apvts, delayTimeRParamID, delayRParam);
+        castParameter(apvts, timeLinkParamID, timeLinkParam);
         castParameter(apvts, delaySyncParamID, delaySyncParam);
         castParameter(apvts, delayDivisionParamID, delayDivisionParam);
         castParameter(apvts, delayModeParamID, delayModeParam);
@@ -79,6 +83,12 @@ public:
         layout.add(std::make_unique<AudioParameterFloat>(delayTimeParamID, "Delay Time",
             NormalisableRange{1.0f, 5000.0f, 0.0f, 0.23108f}, 375.0f,
             Attrs().withStringFromValueFunction([](float v, int) { return String(v, 1) + " ms"; })));
+
+        layout.add(std::make_unique<AudioParameterFloat>(delayTimeRParamID, "Delay Time R",
+            NormalisableRange{1.0f, 5000.0f, 0.0f, 0.23108f}, 375.0f,
+            Attrs().withStringFromValueFunction([](float v, int) { return String(v, 1) + " ms"; })));
+
+        layout.add(std::make_unique<AudioParameterBool>(timeLinkParamID, "Time Link", true));
 
         layout.add(std::make_unique<AudioParameterBool>(delaySyncParamID, "Delay Sync", false));
 
@@ -219,19 +229,36 @@ public:
     /// Snap the block-rate delay value to the current knob position.
     void reset() noexcept
     {
-        delaySamples = 0.0f;
+        delaySamplesL = 0.0f;
+        delaySamplesR = 0.0f;
         if (delayParam != nullptr)
-            delaySamples = msToSamples(delayParam->get());
+        {
+            const float dL = delayParam->get();
+            const bool linked = timeLinkParam == nullptr || timeLinkParam->get();
+            const float dR = linked ? dL : (delayRParam != nullptr ? delayRParam->get() : dL);
+            delaySamplesL = msToSamples(dL);
+            delaySamplesR = msToSamples(dR);
+        }
     }
 
     /// Refresh the block-rate delay value from the knob. Call once per block.
     void update() noexcept
     {
         if (delayParam != nullptr)
-            delaySamples = msToSamples(delayParam->get());
+        {
+            const float dL = delayParam->get();
+            const bool linked = timeLinkParam == nullptr || timeLinkParam->get();
+            const float dR = linked ? dL : (delayRParam != nullptr ? delayRParam->get() : dL);
+            delaySamplesL = msToSamples(dL);
+            delaySamplesR = msToSamples(dR);
+        }
     }
 
-    [[nodiscard]] float getDelaySamples() const noexcept { return delaySamples; }
+    [[nodiscard]] float getDelaySamples() const noexcept { return delaySamplesL; }
+    [[nodiscard]] float getDelaySamplesL() const noexcept { return delaySamplesL; }
+    [[nodiscard]] float getDelaySamplesR() const noexcept { return delaySamplesR; }
+    [[nodiscard]] bool getRawTimeLink() const noexcept { return timeLinkParam == nullptr || timeLinkParam->get(); }
+    [[nodiscard]] float getRawDelayTimeR() const noexcept { return delayRParam ? delayRParam->get() : 375.0f; }
     [[nodiscard]] bool getBypass() const noexcept { return bypassParam != nullptr && bypassParam->get(); }
     [[nodiscard]] AudioProcessorParameter *getBypassParameter() const noexcept { return bypassParam; }
 
@@ -286,11 +313,14 @@ private:
         return static_cast<float>(ms * 0.001 * sampleRate);
     }
 
-    float delaySamples{};
+    float delaySamplesL{};
+    float delaySamplesR{};
 
     AudioParameterFloat *gainParam{};
     AudioParameterInt *bitsParam{};
     AudioParameterFloat *delayParam{};
+    AudioParameterFloat *delayRParam{};
+    AudioParameterBool *timeLinkParam{};
     AudioParameterBool *delaySyncParam{};
     AudioParameterChoice *delayDivisionParam{};
     AudioParameterChoice *delayModeParam{};

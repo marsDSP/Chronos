@@ -42,7 +42,8 @@ namespace MarsDSP::Delays
 
         struct Params
         {
-            float delaySamples = 4800.0f;
+            float delaySamplesL = 4800.0f;
+            float delaySamplesR = 4800.0f;
             float feedback = 0.0f; // 0..kMaxFeedback; > 1 self-oscillates, bounded
             float dampHz = 6000.0f; // one-pole lowpass in the loop
             float loopCutHz = 40.0f; // one-pole highpass in the loop
@@ -117,9 +118,12 @@ namespace MarsDSP::Delays
         void resetParams(const Params &p) noexcept
         {
             applyBlockRate_(p);
-            delaySm_.reset(sampleRate_, 0.020);
-            delaySm_.setCurrentAndTargetValue(clampDelay_(p.delaySamples));
-            lastGlideRampTime_ = 0.020;
+            delaySmL_.reset(sampleRate_, 0.020);
+            delaySmR_.reset(sampleRate_, 0.020);
+            delaySmL_.setCurrentAndTargetValue(clampDelay_(p.delaySamplesL));
+            delaySmR_.setCurrentAndTargetValue(clampDelay_(p.delaySamplesR));
+            lastGlideRampTimeL_ = 0.020;
+            lastGlideRampTimeR_ = 0.020;
             fbSm_.setCurrentAndTargetValue(std::clamp(p.feedback, 0.0f, kMaxFeedback));
             crossSm_.setCurrentAndTargetValue(std::clamp(p.crossFeed, 0.0f, 1.0f));
             driveSm_.setCurrentAndTargetValue(std::clamp(p.loopDrive, 0.501f, 15.849f));
@@ -156,7 +160,7 @@ namespace MarsDSP::Delays
                 return;
             }
             applyBlockRate_(p);
-            retargetDelayGlide_(p.delaySamples);
+            retargetDelayGlide_(p.delaySamplesL, p.delaySamplesR);
             fbSm_.setTargetValue(std::clamp(p.feedback, 0.0f, kMaxFeedback));
             crossSm_.setTargetValue(std::clamp(p.crossFeed, 0.0f, 1.0f));
             driveSm_.setTargetValue(std::clamp(p.loopDrive, 0.501f, 15.849f));
@@ -198,7 +202,8 @@ namespace MarsDSP::Delays
 
                     for (int i = 0; i < Lc; ++i)
                     {
-                        const float d = delaySm_.getNextValue();
+                        const float dL = delaySmL_.getNextValue();
+                        const float dR = delaySmR_.getNextValue();
                         const float g = fbSm_.getNextValue();
                         crossSm_.skip();
                         const float drive = driveSm_.getNextValue();
@@ -210,14 +215,15 @@ namespace MarsDSP::Delays
                         const float modL = modK * ouL_.next(rngL_);
                         const float modR = hasR ? modK * ouR_.next(rngR_) : 0.0f;
 
-                        const float dBase = d - satLatency_ - fade * baseT - gdBank;
+                        const float dBaseL = dL - satLatency_ - fade * baseT - gdBank;
+                        const float dBaseR = dR - satLatency_ - fade * baseT - gdBank;
                         float tapL;
                         float tapR;
                         if (hasR)
                         {
                             const float modMean = 0.5f * (modL + modR);
-                            const float dEffL = dBase + modMix * (modL - modMean) + modMean;
-                            const float dEffR = dBase + modMix * (modR - modMean) + modMean;
+                            const float dEffL = dBaseL + modMix * (modL - modMean) + modMean;
+                            const float dEffR = dBaseR + modMix * (modR - modMean) + modMean;
                             bbdL_.setClockHz(BBD::ClockModel::clockFor(dEffL, sampleRate_));
                             bbdR_.setClockHz(BBD::ClockModel::clockFor(dEffR, sampleRate_));
                             tapL = expL_.processSample(bbdL_.readTap());
@@ -225,7 +231,7 @@ namespace MarsDSP::Delays
                         }
                         else
                         {
-                            const float dEffL = d + modL - satLatency_ - fade * baseT - gdBank;
+                            const float dEffL = dL + modL - satLatency_ - fade * baseT - gdBank;
                             bbdL_.setClockHz(BBD::ClockModel::clockFor(dEffL, sampleRate_));
                             tapL = expL_.processSample(bbdL_.readTap());
                             tapR = tapL;
@@ -292,15 +298,19 @@ namespace MarsDSP::Delays
                     continue;
                 }
 
-                const float dCur = delaySm_.getCurrentValue();
-                const float dTgt = delaySm_.getTargetValue();
+                const float dCurL = delaySmL_.getCurrentValue();
+                const float dTgtL = delaySmL_.getTargetValue();
+                const float dCurR = hasR ? delaySmR_.getCurrentValue() : dCurL;
+                const float dTgtR = hasR ? delaySmR_.getTargetValue() : dTgtL;
                 const float satLatMax = std::max(satLatencySm_.getCurrentValue(), satLatencySm_.getTargetValue());
                 // The OU state stays inside kClamp sigmas. The guard covers
                 // the largest deviation the modulation can apply.
                 const float modGuard = static_cast<float>(Mod::OrnsteinUhlenbeck::kClamp)
                                        * std::max(modKSm_.getCurrentValue(), modKSm_.getTargetValue());
 
-                const float dMin = std::max(kMinLoopDelay, std::min(dCur, dTgt) - satLatMax - baseT - modGuard);
+                const float dMinL = std::max(kMinLoopDelay, std::min(dCurL, dTgtL) - satLatMax - baseT - modGuard);
+                const float dMinR = std::max(kMinLoopDelay, std::min(dCurR, dTgtR) - satLatMax - baseT - modGuard);
+                const float dMin = std::min(dMinL, dMinR);
 
                 int Lc = static_cast<int>(std::floor(dMin)) - kChunkGuard;
                 Lc = std::clamp(Lc, 1, std::min(kMaxChunk, remaining));
@@ -311,7 +321,8 @@ namespace MarsDSP::Delays
                     const bool runDiff = (diffState_ != DiffuserState::Off);
                     for (int i = 0; i < Lc; ++i)
                     {
-                        const float d = delaySm_.getNextValue();
+                        const float dL = delaySmL_.getNextValue();
+                        const float dR = delaySmR_.getNextValue();
                         const float g = fbSm_.getNextValue();
                         crossSm_.skip();
                         const float drive = driveSm_.getNextValue();
@@ -324,14 +335,15 @@ namespace MarsDSP::Delays
                         const float modR = hasR ? modK * ouR_.next(rngR_) : 0.0f;
                         processSampleScalar_(inL + s + i, hasR ? inR + s + i : nullptr,
                                              wetL + s + i, hasR ? wetR + s + i : nullptr,
-                                             d, g, drive, hasR, mask,
+                                             dL, dR, g, drive, hasR, mask,
                                              fade, runDiff ? baseT : 0.0f, modL, modR, modMix);
                     }
                     s += Lc;
                     continue;
                 }
 
-                alignas(16) std::array<float, kMaxChunk> dR{};
+                alignas(16) std::array<float, kMaxChunk> dRL{};
+                alignas(16) std::array<float, kMaxChunk> dRR{};
                 alignas(16) std::array<float, kMaxChunk> gR{};
                 alignas(16) std::array<float, kMaxChunk> crossR{};
                 alignas(16) std::array<float, kMaxChunk> driveR{};
@@ -344,7 +356,8 @@ namespace MarsDSP::Delays
                 const bool wasRunning = (diffState_ != DiffuserState::Off);
                 for (int i = 0; i < Lc; ++i)
                 {
-                    dR[i] = delaySm_.getNextValue();
+                    dRL[i] = delaySmL_.getNextValue();
+                    dRR[i] = delaySmR_.getNextValue();
                     gR[i] = fbSm_.getNextValue();
                     crossR[i] = crossSm_.getNextValue();
                     driveR[i] = driveSm_.getNextValue();
@@ -364,27 +377,28 @@ namespace MarsDSP::Delays
                 // until the modulation depth reaches zero and stays there.
                 const bool modOff = (modKSm_.getCurrentValue() == 0.0f
                                      && modKSm_.getTargetValue() == 0.0f);
-                const bool settled = (dR[0] == dR[Lc - 1])
+                const bool settled = (dRL[0] == dRL[Lc - 1])
+                                     && (!hasR || dRR[0] == dRR[Lc - 1])
                                      && (fadeR[0] == fadeR[Lc - 1])
                                      && (satLatR[0] == satLatR[Lc - 1])
                                      && modOff;
 
                 if (settled)
                 {
-                    const float readDelay = std::max(kMinLoopDelay, dR[0] - satLatR[0] - fadeR[0] * baseT);
-                    const auto iInt = static_cast<int>(readDelay);
-                    const float f = readDelay - static_cast<float>(iInt);
-                    const FracDelayTap::Coeffs4 k = FracDelayTap::lagrange3(f);
-                    const int base = (writeIdx_ - iInt - 3) & mask;
+                    const float readDelayL = std::max(kMinLoopDelay, dRL[0] - satLatR[0] - fadeR[0] * baseT);
+                    const auto iIntL = static_cast<int>(readDelayL);
+                    const float fL = readDelayL - static_cast<float>(iIntL);
+                    const FracDelayTap::Coeffs4 kL = FracDelayTap::lagrange3(fL);
+                    const int baseL = (writeIdx_ - iIntL - 3) & mask;
                     const int winLen = Lc + 6;
-                    const M128 cf = MM(set_ps)(k.c4, k.c3, k.c2, k.c1);
+                    const M128 cfL = MM(set_ps)(kL.c4, kL.c3, kL.c2, kL.c1);
 
-                    const auto wL = BlockTapReader::acquireWindow(ringL_, base, winLen, tapWinL_.data());
+                    const auto wL = BlockTapReader::acquireWindow(ringL_, baseL, winLen, tapWinL_.data());
                     const float *winL = wL.ptr;
                     for (int i = 0; i < Lc; ++i)
                     {
                         const M128 taps = MM(loadu_ps)(winL + i + 1);
-                        const M128 prod = MM(mul_ps)(taps, cf);
+                        const M128 prod = MM(mul_ps)(taps, cfL);
                         const M128 sh1 = MM(add_ps)(prod, MM(movehl_ps)(prod, prod));
                         const M128 sh2 = MM(add_ss)(sh1, MM(shuffle_ps)(sh1, sh1, MM_SHUFFLE(0, 0, 0, 1)));
                         tapL[i] = MM(cvtss_f32)(sh2);
@@ -392,12 +406,19 @@ namespace MarsDSP::Delays
 
                     if (hasR)
                     {
-                        const auto wR = BlockTapReader::acquireWindow(ringR_, base, winLen, tapWinR_.data());
+                        const float readDelayR = std::max(kMinLoopDelay, dRR[0] - satLatR[0] - fadeR[0] * baseT);
+                        const auto iIntR = static_cast<int>(readDelayR);
+                        const float fR = readDelayR - static_cast<float>(iIntR);
+                        const FracDelayTap::Coeffs4 kR = FracDelayTap::lagrange3(fR);
+                        const int baseR = (writeIdx_ - iIntR - 3) & mask;
+                        const M128 cfR = MM(set_ps)(kR.c4, kR.c3, kR.c2, kR.c1);
+
+                        const auto wR = BlockTapReader::acquireWindow(ringR_, baseR, winLen, tapWinR_.data());
                         const float *winR = wR.ptr;
                         for (int i = 0; i < Lc; ++i)
                         {
                             const M128 taps = MM(loadu_ps)(winR + i + 1);
-                            const M128 prod = MM(mul_ps)(taps, cf);
+                            const M128 prod = MM(mul_ps)(taps, cfR);
                             const M128 sh1 = MM(add_ps)(prod, MM(movehl_ps)(prod, prod));
                             const M128 sh2 = MM(add_ss)(sh1, MM(shuffle_ps)(sh1, sh1, MM_SHUFFLE(0, 0, 0, 1)));
                             tapR[i] = MM(cvtss_f32)(sh2);
@@ -408,12 +429,12 @@ namespace MarsDSP::Delays
                     for (int i = 0; i < Lc; ++i)
                     {
                         const float readDelayL = std::max(kMinLoopDelay,
-                                                          dR[i] + modLR[i] - satLatR[i] - fadeR[i] * baseT);
+                                                          dRL[i] + modLR[i] - satLatR[i] - fadeR[i] * baseT);
                         tapL[i] = FracDelayTap::read(ringL_, writeIdx_ + i, readDelayL);
                         if (hasR)
                         {
                             const float readDelayR = std::max(kMinLoopDelay,
-                                                              dR[i] + modRR[i] - satLatR[i] - fadeR[i] * baseT);
+                                                              dRR[i] + modRR[i] - satLatR[i] - fadeR[i] * baseT);
                             tapR[i] = FracDelayTap::read(ringR_, writeIdx_ + i, readDelayR);
                         }
                     }
@@ -547,7 +568,8 @@ namespace MarsDSP::Delays
             for (int s = 0; s < n; ++s)
             {
                 const float baseT = (diffState_ != DiffuserState::Off) ? diffuser_.transportSamples() : 0.0f;
-                const float d = delaySm_.getNextValue();
+                const float dL = delaySmL_.getNextValue();
+                const float dR = delaySmR_.getNextValue();
                 const float g = fbSm_.getNextValue();
                 crossSm_.skip();
                 const float drive = driveSm_.getNextValue();
@@ -560,7 +582,7 @@ namespace MarsDSP::Delays
                 const float modR = hasR ? modK * ouR_.next(rngR_) : 0.0f;
                 processSampleScalar_(inL + s, hasR ? inR + s : nullptr,
                                      wetL + s, hasR ? wetR + s : nullptr,
-                                     d, g, drive, hasR, mask, fade, baseT,
+                                     dL, dR, g, drive, hasR, mask, fade, baseT,
                                      modL, modR, modMix);
             }
         }
@@ -568,7 +590,9 @@ namespace MarsDSP::Delays
         [[nodiscard]] static constexpr int latencySamples() noexcept { return 0; }
         [[nodiscard]] float getMaxDelay() const noexcept { return maxDelay_; }
         [[nodiscard]] float ouStateMaxSigma() const noexcept { return diffuser_.ouStateMaxSigma(); }
-        [[nodiscard]] float currentDelaySamples() const noexcept { return delaySm_.getCurrentValue(); }
+        [[nodiscard]] float currentDelaySamples() const noexcept { return delaySmL_.getCurrentValue(); }
+        [[nodiscard]] float currentDelaySamplesL() const noexcept { return delaySmL_.getCurrentValue(); }
+        [[nodiscard]] float currentDelaySamplesR() const noexcept { return delaySmR_.getCurrentValue(); }
 
         // RMS ratio of tanh(k * x) to x for a 0.5-amplitude sine reference.
         // The loop output trim is pow(rmsRatio, -0.5). Computed by fixed
@@ -703,8 +727,10 @@ namespace MarsDSP::Delays
             maxDelay_ = static_cast<float>(
                 ringL_.getCapacity() - Pow2RingBuffer::kTail - 2);
 
-            delaySm_.reset(sampleRate, 0.020); // 20 ms glide ramp floor
-            lastGlideRampTime_ = 0.020;
+            delaySmL_.reset(sampleRate, 0.020); // 20 ms glide ramp floor
+            delaySmR_.reset(sampleRate, 0.020);
+            lastGlideRampTimeL_ = 0.020;
+            lastGlideRampTimeR_ = 0.020;
             fbSm_.reset(sampleRate, 0.020);
             crossSm_.reset(sampleRate, 0.020);
             driveSm_.reset(sampleRate, 0.020);
@@ -723,18 +749,29 @@ namespace MarsDSP::Delays
         // Limit the delay glide to kMaxGlideStep samples per sample.
         // Reset the smoother only when the ramp time changes by more than one percent.
         // This avoids a restart each block.
-        void retargetDelayGlide_(float targetSamples) noexcept
+        void retargetDelayGlide_(float targetSamplesL, float targetSamplesR) noexcept
         {
-            const float target = clampDelay_(targetSamples);
-            const float current = delaySm_.getCurrentValue();
-            const double dist = std::fabs(static_cast<double>(target) - static_cast<double>(current));
-            const double rampTime = std::max(0.020, dist / (static_cast<double>(kMaxGlideStep) * sampleRate_));
-            if (std::fabs(rampTime - lastGlideRampTime_) > 0.01 * std::max(rampTime, lastGlideRampTime_))
+            const float targetL = clampDelay_(targetSamplesL);
+            const float currentL = delaySmL_.getCurrentValue();
+            const double distL = std::fabs(static_cast<double>(targetL) - static_cast<double>(currentL));
+            const double rampTimeL = std::max(0.020, distL / (static_cast<double>(kMaxGlideStep) * sampleRate_));
+            if (std::fabs(rampTimeL - lastGlideRampTimeL_) > 0.01 * std::max(rampTimeL, lastGlideRampTimeL_))
             {
-                delaySm_.reset(sampleRate_, rampTime);
-                lastGlideRampTime_ = rampTime;
+                delaySmL_.reset(sampleRate_, rampTimeL);
+                lastGlideRampTimeL_ = rampTimeL;
             }
-            delaySm_.setTargetValue(target);
+            delaySmL_.setTargetValue(targetL);
+
+            const float targetR = clampDelay_(targetSamplesR);
+            const float currentR = delaySmR_.getCurrentValue();
+            const double distR = std::fabs(static_cast<double>(targetR) - static_cast<double>(currentR));
+            const double rampTimeR = std::max(0.020, distR / (static_cast<double>(kMaxGlideStep) * sampleRate_));
+            if (std::fabs(rampTimeR - lastGlideRampTimeR_) > 0.01 * std::max(rampTimeR, lastGlideRampTimeR_))
+            {
+                delaySmR_.reset(sampleRate_, rampTimeR);
+                lastGlideRampTimeR_ = rampTimeR;
+            }
+            delaySmR_.setTargetValue(targetR);
         }
 
         void applyBlockRate_(const Params &p) noexcept
@@ -803,7 +840,7 @@ namespace MarsDSP::Delays
 
         void processSampleScalar_(const float *in, const float *inR,
                                   float *wet, float *wetR,
-                                  float d, float g, float drive,
+                                  float dL, float dR, float g, float drive,
                                   bool hasR, int mask,
                                   float fade, float baseT,
                                   float modL, float modR, float modMix) noexcept
@@ -817,12 +854,13 @@ namespace MarsDSP::Delays
             {
                 const float gdBank = static_cast<float>(BBD::BrigadeLine::getBankGroupDelayAtDC(sampleRate_))
                                      + BBD::BrigadeLine::kSplitStepOffset;
-                const float dBase = d - satLatency_ - fade * baseT - gdBank;
+                const float dBaseL = dL - satLatency_ - fade * baseT - gdBank;
+                const float dBaseR = dR - satLatency_ - fade * baseT - gdBank;
                 if (hasR)
                 {
                     const float modMean = 0.5f * (modL + modR);
-                    const float dEffL = dBase + modMix * (modL - modMean) + modMean;
-                    const float dEffR = dBase + modMix * (modR - modMean) + modMean;
+                    const float dEffL = dBaseL + modMix * (modL - modMean) + modMean;
+                    const float dEffR = dBaseR + modMix * (modR - modMean) + modMean;
                     bbdL_.setClockHz(BBD::ClockModel::clockFor(dEffL, sampleRate_));
                     bbdR_.setClockHz(BBD::ClockModel::clockFor(dEffR, sampleRate_));
                     tapL = expL_.processSample(bbdL_.readTap());
@@ -830,7 +868,7 @@ namespace MarsDSP::Delays
                 }
                 else
                 {
-                    const float dEffL = d + modL - satLatency_ - fade * baseT - gdBank;
+                    const float dEffL = dL + modL - satLatency_ - fade * baseT - gdBank;
                     bbdL_.setClockHz(BBD::ClockModel::clockFor(dEffL, sampleRate_));
                     tapL = expL_.processSample(bbdL_.readTap());
                     tapR = tapL;
@@ -838,8 +876,8 @@ namespace MarsDSP::Delays
             }
             else
             {
-                const float readDelayL = std::max(kMinLoopDelay, d + modL - satLatency_ - fade * baseT);
-                const float readDelayR = std::max(kMinLoopDelay, d + modR - satLatency_ - fade * baseT);
+                const float readDelayL = std::max(kMinLoopDelay, dL + modL - satLatency_ - fade * baseT);
+                const float readDelayR = std::max(kMinLoopDelay, dR + modR - satLatency_ - fade * baseT);
 
                 tapL = FracDelayTap::read(ringL_, writeIdx_, readDelayL);
                 tapR = hasR
@@ -921,7 +959,8 @@ namespace MarsDSP::Delays
         double sampleRate_ = 48000.0;
         bool firstBlock_ = true;
 
-        Smoothers::LinearSmoother<float> delaySm_;
+        Smoothers::LinearSmoother<float> delaySmL_;
+        Smoothers::LinearSmoother<float> delaySmR_;
         Smoothers::LinearSmoother<float> fbSm_;
         Smoothers::LinearSmoother<float> crossSm_;
         Smoothers::LinearSmoother<float> driveSm_;
@@ -930,7 +969,8 @@ namespace MarsDSP::Delays
         Smoothers::LinearSmoother<float> satLatencySm_;
 
         // Last glide ramp duration, in seconds.
-        double lastGlideRampTime_ = 0.020;
+        double lastGlideRampTimeL_ = 0.020;
+        double lastGlideRampTimeR_ = 0.020;
 
         // block-rate coefficients
         float dampG_ = 0.0f;

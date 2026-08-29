@@ -58,7 +58,8 @@ int main()
         engine.reset();
 
         ChronosEngine::Params p{};
-        p.delaySamples = 240.0f;
+        p.delaySamplesL = 240.0f;
+        p.delaySamplesR = 240.0f;
         p.driveLin     = 3.981f;   // ~12 dB
         p.mix          = 100.0f;
         p.gainLin      = 1.0f;

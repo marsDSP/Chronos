@@ -41,7 +41,9 @@ void runGlide(float startMs, float endMs)
     fb.prepare(kFs, kBlock, kMaxDelay);
 
     FeedbackDelay::Params p;
-    p.delaySamples   = static_cast<float>(startMs * 0.001f * static_cast<float>(kFsInt));
+    const float dlyStart = static_cast<float>(startMs * 0.001f * static_cast<float>(kFsInt));
+    p.delaySamplesL  = dlyStart;
+    p.delaySamplesR  = dlyStart;
     p.feedback       = 0.0f;   // plain delay, no recursion
     p.dampHz         = 6000.0f;
     p.crossFeed      = 0.0f;
@@ -55,7 +57,8 @@ void runGlide(float startMs, float endMs)
     fb.resetParams(p);
 
     const float target = static_cast<float>(endMs * 0.001f * static_cast<float>(kFsInt));
-    p.delaySamples = target;
+    p.delaySamplesL = target;
+    p.delaySamplesR = target;
 
     std::vector<float> inL(static_cast<std::size_t>(kBlock), 0.0f);
     std::vector<float> inR(static_cast<std::size_t>(kBlock), 0.0f);

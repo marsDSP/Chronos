@@ -37,7 +37,8 @@ Engine::Params baseParams(bool enableDiff, float diffusion, float size,
                           float delay, float feedback)
 {
     Engine::Params p{};
-    p.delaySamples = delay;
+    p.delaySamplesL = delay;
+    p.delaySamplesR = delay;
     p.driveLin = 1.0f; p.mix = 100.0f; p.gainLin = 1.0f;
     p.hpfHz = 20.0f; p.lpfHz = 20000.0f; p.bits = 24; p.adaaOrder = 0;
     p.feedback = feedback; p.dampHz = 6000.0f; p.crossFeed = 0.0f;

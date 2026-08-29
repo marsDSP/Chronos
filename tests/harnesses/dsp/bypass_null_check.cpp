@@ -29,7 +29,8 @@ const char* g_section = "(startup)";
 MarsDSP::ChronosEngine::Params makeParams(int adaaOrder)
 {
     MarsDSP::ChronosEngine::Params p{};
-    p.delaySamples = 240.0f;
+    p.delaySamplesL = 240.0f;
+    p.delaySamplesR = 240.0f;
     p.driveLin     = 1.0f;
     p.mix          = 100.0f;
     p.gainLin      = 1.0f;

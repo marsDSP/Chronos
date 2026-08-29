@@ -373,7 +373,8 @@ int main()
             FeedbackDelay fb;
             fb.prepare(kFs, 256, 262144);
             FeedbackDelay::Params p;
-            p.delaySamples = 4800.0f;
+            p.delaySamplesL = 4800.0f;
+            p.delaySamplesR = 4800.0f;
             p.feedback = 0.0f;
             p.dampHz = 20000.0f;
             p.loopCutHz = 20.0f;
@@ -396,7 +397,8 @@ int main()
             FeedbackDelay fb;
             fb.prepare(kFs, 256, 262144);
             FeedbackDelay::Params p;
-            p.delaySamples = 4800.0f;
+            p.delaySamplesL = 4800.0f;
+            p.delaySamplesR = 4800.0f;
             p.feedback = 0.9f;
             p.dampHz = 20000.0f;
             p.loopCutHz = 20.0f;

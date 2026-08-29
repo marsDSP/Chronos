@@ -43,7 +43,8 @@ double g_worstEnvDb = 0.0;
 
 struct Cfg
 {
-    int   delay;
+    int   delayL;
+    int   delayR;
     float feedback;
     float cross;
     int   satOrder;
@@ -74,7 +75,8 @@ void runOne(const Cfg& c, bool automateDelay, bool automateDampCross)
     ref.prepare(kFs, c.block, kMaxDelay);
 
     FeedbackDelay::Params p;
-    p.delaySamples = static_cast<float>(c.delay);
+    p.delaySamplesL = static_cast<float>(c.delayL);
+    p.delaySamplesR = static_cast<float>(c.delayR);
     p.feedback     = c.feedback;
     p.crossFeed    = c.cross;
     p.dampHz       = kDampHz;
@@ -115,8 +117,10 @@ void runOne(const Cfg& c, bool automateDelay, bool automateDampCross)
             // Sweep delay across blocks: oscillate ±40% around the base.
             const float frac = static_cast<float>(off) / static_cast<float>(kTotal);
             const float swing = 0.4f * std::sin(2.0f * std::numbers::pi_v<float> * frac);
-            p.delaySamples = static_cast<float>(c.delay) * (1.0f + swing);
-            p.delaySamples = std::max(p.delaySamples, FeedbackDelay::kMinLoopDelay + 2.0f);
+            p.delaySamplesL = static_cast<float>(c.delayL) * (1.0f + swing);
+            p.delaySamplesR = static_cast<float>(c.delayR) * (1.0f + swing);
+            p.delaySamplesL = std::max(p.delaySamplesL, FeedbackDelay::kMinLoopDelay + 2.0f);
+            p.delaySamplesR = std::max(p.delaySamplesR, FeedbackDelay::kMinLoopDelay + 2.0f);
             fast.setParams(p);
             ref.setParams(p);
         }
@@ -141,7 +145,7 @@ void runOne(const Cfg& c, bool automateDelay, bool automateDampCross)
     }
 
     // Compare
-    const int D = c.delay;
+    const int D = std::max(c.delayL, c.delayR);
     const int twoD = std::min(2 * D, kTotal);
     // All cells use a COMBINED gate (abs <= 1e-6 OR rel <= 1e-3). S5's
     // loopTrim_ = pow(rmsRatio, -0.5) uses std::pow, which is not bit-exact
@@ -164,8 +168,8 @@ void runOne(const Cfg& c, bool automateDelay, bool automateDampCross)
             const float rel = absL / denom;
             g_worstRel = std::max(g_worstRel, static_cast<double>(rel));
             const bool okL = (absL <= 1e-6f || rel <= 1e-3f);
-            if (!okL) { tolOk = false; FAIL("TOL delay={} fb={:.2} cross={:.2} sat={} blk={} i={} L: abs={:.3} rel={:.3} ({} vs {})",
-                     c.delay, c.feedback, c.cross, c.satOrder, c.block, i,
+            if (!okL) { tolOk = false; FAIL("TOL delayL={} delayR={} fb={:.2} cross={:.2} sat={} blk={} i={} L: abs={:.3} rel={:.3} ({} vs {})",
+                     c.delayL, c.delayR, c.feedback, c.cross, c.satOrder, c.block, i,
                      static_cast<double>(absL), static_cast<double>(rel),
                      static_cast<double>(fL[u]), static_cast<double>(rL[u])); }
             if (hasR)
@@ -175,8 +179,8 @@ void runOne(const Cfg& c, bool automateDelay, bool automateDampCross)
                 const float relR = absR / denomR;
                 g_worstRel = std::max(g_worstRel, static_cast<double>(relR));
                 const bool okR = (absR <= 1e-6f || relR <= 1e-3f);
-                if (!okR) { tolOk = false; FAIL("TOL delay={} fb={:.2} cross={:.2} sat={} blk={} i={} R: abs={:.3} rel={:.3} ({} vs {})",
-                         c.delay, c.feedback, c.cross, c.satOrder, c.block, i,
+                if (!okR) { tolOk = false; FAIL("TOL delayL={} delayR={} fb={:.2} cross={:.2} sat={} blk={} i={} R: abs={:.3} rel={:.3} ({} vs {})",
+                         c.delayL, c.delayR, c.feedback, c.cross, c.satOrder, c.block, i,
                          static_cast<double>(absR), static_cast<double>(relR),
                          static_cast<double>(fR[u]), static_cast<double>(rR[u])); }
             }
@@ -200,8 +204,8 @@ void runOne(const Cfg& c, bool automateDelay, bool automateDampCross)
                 if (std::fabs(devDb) > 0.1)
                 {
                     envOk = false;
-                    FAIL("ENV delay={} fb={:.2} sat={} blk={} start={}: {:.3} dB > 0.1 dB",
-                         c.delay, c.feedback, c.satOrder, c.block, start, devDb);
+                    FAIL("ENV delayL={} delayR={} fb={:.2} sat={} blk={} start={}: {:.3} dB > 0.1 dB",
+                         c.delayL, c.delayR, c.feedback, c.satOrder, c.block, start, devDb);
                 }
             }
             if (envOk) ++g_envOk;
@@ -232,7 +236,23 @@ int main()
     for (bool stereo : stereos)
     {
         g_section = "matrix";
-        runOne({ delay, fbk, cr, sat, blk, stereo }, false, false);
+        runOne({ delay, delay, fbk, cr, sat, blk, stereo }, false, false);
+        ++configs;
+    }
+
+    // Unequal-times cell axis (L != R at {0.7x, 1.3x}).
+    g_section = "unequal-times";
+    for (int delayBase : { 48, 480, 4800 })
+    for (float ratio : { 0.7f, 1.3f })
+    for (float fbk : { 0.0f, 0.5f, 0.95f })
+    for (float cr : { 0.0f, 0.37f, 1.0f })
+    for (int sat : { 0, 2 })
+    for (int blk : { 17, 64, 256 })
+    for (int dMode : { 0, 1 })
+    {
+        const int dL = delayBase;
+        const int dR = static_cast<int>(std::round(static_cast<float>(delayBase) * ratio));
+        runOne({ dL, dR, fbk, cr, sat, blk, true, false, 0.7f, 0.5f, 0.0f, 1.0f, dMode }, false, false);
         ++configs;
     }
 
@@ -242,7 +262,7 @@ int main()
     for (int blk : { 17, 64, 256, 512 })
     for (bool stereo : stereos)
     {
-        runOne({ 480, 0.95f, 0.37f, sat, blk, stereo }, true, false);
+        runOne({ 480, 480, 0.95f, 0.37f, sat, blk, stereo }, true, false);
         ++configs;
     }
 
@@ -252,7 +272,7 @@ int main()
     for (int blk : { 64, 256, 512 })
     for (bool stereo : stereos)
     {
-        runOne({ 480, 0.95f, 0.0f, sat, blk, stereo, false }, false, true);
+        runOne({ 480, 480, 0.95f, 0.0f, sat, blk, stereo, false }, false, true);
         ++configs;
     }
 
@@ -264,13 +284,13 @@ int main()
     for (int blk : { 1, 17, 64, 256, 512 })
     for (bool stereo : stereos)
     {
-        runOne({ 4800, 0.5f, 0.37f, sat, blk, stereo, false, 0.7f, 0.5f, 25.0f, 1.5f }, false, false);
+        runOne({ 4800, 4800, 0.5f, 0.37f, sat, blk, stereo, false, 0.7f, 0.5f, 25.0f, 1.5f }, false, false);
         ++configs;
     }
     for (int blk : { 64, 256 })
     for (bool stereo : stereos)
     {
-        runOne({ 4800, 0.95f, 0.37f, 2, blk, stereo, false, 0.7f, 0.5f, 25.0f, 1.5f }, false, false);
+        runOne({ 4800, 4800, 0.95f, 0.37f, 2, blk, stereo, false, 0.7f, 0.5f, 25.0f, 1.5f }, false, false);
         ++configs;
     }
 
@@ -286,7 +306,7 @@ int main()
         for (float sz : { 0.5f, 0.0f })
         for (float df : { 0.5f, 1.0f })
         {
-            runOne({ 4800, fbk, 0.37f, sat, blk, stereo, true, df, sz }, false, false);
+            runOne({ 4800, 4800, fbk, 0.37f, sat, blk, stereo, true, df, sz }, false, false);
             ++configs;
         }
         // clamp region: delay < baseTransport (loop tap at kMinLoopDelay,
@@ -294,14 +314,14 @@ int main()
         for (int blk : { 17, 64 })
         for (bool stereo : stereos)
         {
-            runOne({ 480, 0.5f, 0.37f, sat, blk, stereo, true, 1.0f, 0.5f }, false, false);
+            runOne({ 480, 480, 0.5f, 0.37f, sat, blk, stereo, true, 1.0f, 0.5f }, false, false);
             ++configs;
         }
         // delay automation with the diffuser live (moving walk, non-settled).
         for (int blk : { 64, 256 })
         for (bool stereo : stereos)
         {
-            runOne({ 4800, 0.95f, 0.37f, sat, blk, stereo, true, 0.7f, 0.5f }, true, false);
+            runOne({ 4800, 4800, 0.95f, 0.37f, sat, blk, stereo, true, 0.7f, 0.5f }, true, false);
             ++configs;
         }
         // enable-toggle mid-run: FadingIn/FadingOut parity (the fade forces
@@ -315,7 +335,8 @@ int main()
             ref.prepare(kFs, blk, kMaxDelay);
 
             FeedbackDelay::Params p;
-            p.delaySamples = 4800.0f;
+            p.delaySamplesL = 4800.0f;
+            p.delaySamplesR = 4800.0f;
             p.feedback     = 0.95f;
             p.crossFeed    = 0.37f;
             p.dampHz       = kDampHz;
@@ -389,7 +410,7 @@ int main()
     for (int blk : { 64, 256 })
     for (bool stereo : stereos)
     {
-        runOne({ delay, fbk, cr, sat, blk, stereo, false, 0.7f, 0.5f, 25.0f, 1.5f, 1 }, false, false);
+        runOne({ delay, delay, fbk, cr, sat, blk, stereo, false, 0.7f, 0.5f, 25.0f, 1.5f, 1 }, false, false);
         ++configs;
     }
 

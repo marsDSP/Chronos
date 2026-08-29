@@ -216,7 +216,9 @@ const std::array<Config, 14>& configs()
 MarsDSP::ChronosEngine::Params buildParams(const Config& c)
 {
     MarsDSP::ChronosEngine::Params p{};
-    p.delaySamples   = c.delayMs * 0.001f * static_cast<float>(kFsInt);
+    const float dly = c.delayMs * 0.001f * static_cast<float>(kFsInt);
+    p.delaySamplesL  = dly;
+    p.delaySamplesR  = dly;
     p.driveLin       = std::pow(10.0f, c.driveDb / 20.0f);
     p.mix            = c.mixPercent;
     p.gainLin        = 1.0f;

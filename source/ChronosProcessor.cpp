@@ -9,7 +9,7 @@
 
 namespace {
     // State schema version written into every saved state tree.
-    constexpr int kStateVersion = 4;
+    constexpr int kStateVersion = 5;
     // Cap on the repeat count for the tail length above self-oscillation.
     constexpr int kMaxTailRepeats = 240;
     // Ring-down margin in samples, added to the delay repeat tail.
@@ -69,7 +69,8 @@ double ChronosProcessor::getTailLengthSeconds() const
     if (sr <= 0.0) return 0.0;
     // Use the synced delay when tempo sync is on. The knob value alone
     // truncates the tail.
-    const double delaySeconds = static_cast<double>(computeDelaySamples_()) / sr;
+    const auto [delL, delR] = computeDelaySamples_();
+    const double delaySeconds = static_cast<double>(std::max(delL, delR)) / sr;
     // Clamp the feedback before the logarithm to stay finite at zero.
     const double g = std::max(static_cast<double>(parameters.getRawFeedback()), 1e-4);
     const double n = (g >= 1.0)
@@ -117,7 +118,9 @@ void ChronosProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     engine.reset();
 
     MarsDSP::ChronosEngine::Params p {};
-    p.delaySamples = computeDelaySamples_();
+    const auto [delL, delR] = computeDelaySamples_();
+    p.delaySamplesL = delL;
+    p.delaySamplesR = delR;
     p.driveLin = parameters.getRawDriveLin();
     p.mix = parameters.getRawMix();
     p.gainLin = parameters.getRawGainLin();
@@ -147,13 +150,15 @@ void ChronosProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     setLatencySamples(MarsDSP::Align::SaturatorAlign::kBudget);
 }
 
-float ChronosProcessor::computeDelaySamples_() const
+std::pair<float, float> ChronosProcessor::computeDelaySamples_() const
 {
-    if (! parameters.getRawDelaySync()) return parameters.getDelaySamples();
+    if (! parameters.getRawDelaySync())
+        return { parameters.getDelaySamplesL(), parameters.getDelaySamplesR() };
     const double ms = MarsDSP::Utils::Helpers::TempoSync::convertChoiceIndexToMilliseconds(
                         parameters.getRawDelayDivision(), cachedBpm_);
     const double clamped = std::clamp(ms, 1.0, 5000.0);
-    return static_cast<float>(clamped * 0.001 * getSampleRate());
+    const float s = static_cast<float>(clamped * 0.001 * getSampleRate());
+    return { s, s };
 }
 
 void ChronosProcessor::releaseResources()
@@ -210,7 +215,9 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
     if (numSamples <= 0) return;
 
     MarsDSP::ChronosEngine::Params p {};
-    p.delaySamples = computeDelaySamples_();
+    const auto [delL, delR] = computeDelaySamples_();
+    p.delaySamplesL = delL;
+    p.delaySamplesR = delR;
     p.driveLin = parameters.getRawDriveLin();
     p.mix = parameters.getRawMix();
     p.gainLin = parameters.getRawGainLin();
@@ -276,9 +283,47 @@ void ChronosProcessor::setStateInformation(const void *data, int sizeInBytes)
 
 void ChronosProcessor::migrateState_(ValueTree& state, int fromVersion)
 {
+    // Schema version 5 added delayTimeR and timeLink parameters.
     // Schema version 4 added the delay mode parameter.
     // Schema version 3 added the output filter mode parameter.
     // The default Digital value needs no conversion.
+    if (fromVersion < 5)
+    {
+        float delayTimeVal = 375.0f;
+        for (int i = 0; i < state.getNumChildren(); ++i)
+        {
+            auto child = state.getChild(i);
+            if (child.getProperty("id").toString() == "delayTime")
+            {
+                delayTimeVal = child.getProperty("value");
+                break;
+            }
+        }
+        bool hasDelayR = false;
+        bool hasTimeLink = false;
+        for (int i = 0; i < state.getNumChildren(); ++i)
+        {
+            auto child = state.getChild(i);
+            const String id = child.getProperty("id").toString();
+            if (id == "delayTimeR") hasDelayR = true;
+            else if (id == "timeLink") hasTimeLink = true;
+        }
+        if (!hasDelayR)
+        {
+            ValueTree c("PARAM");
+            c.setProperty("id", "delayTimeR", nullptr);
+            c.setProperty("value", delayTimeVal, nullptr);
+            state.addChild(c, -1, nullptr);
+        }
+        if (!hasTimeLink)
+        {
+            ValueTree c("PARAM");
+            c.setProperty("id", "timeLink", nullptr);
+            c.setProperty("value", 1.0f, nullptr);
+            state.addChild(c, -1, nullptr);
+        }
+    }
+
     if (fromVersion < 2)
     {
         for (int i = state.getNumChildren() - 1; i >= 0; --i)

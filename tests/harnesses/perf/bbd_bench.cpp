@@ -94,7 +94,8 @@ int main (int argc, char** argv)
             MarsDSP::Delays::FeedbackDelay fb;
             fb.prepare (kFs, kBlock, 262144);
             MarsDSP::Delays::FeedbackDelay::Params p;
-            p.delaySamples = delaySamples;
+            p.delaySamplesL = delaySamples;
+            p.delaySamplesR = delaySamples;
             p.feedback = 0.42f;
             p.satOrder = 2;
             p.enableDiffuser = false;

@@ -200,7 +200,8 @@ int main(int argc, char **argv)
                         FeedbackDelay fb;
                         fb.prepare(kFs, block, fbMaxDelay);
                         FeedbackDelay::Params p;
-                        p.delaySamples = static_cast<float>(delay);
+                        p.delaySamplesL = static_cast<float>(delay);
+                        p.delaySamplesR = static_cast<float>(delay);
                         p.feedback = fbk;
                         p.dampHz = kDampHz;
                         p.crossFeed = kCrossFeed;

@@ -106,7 +106,9 @@ int main()
 
         // Snap the initial delay.
         const double ms0 = TS::convertChoiceIndexToMilliseconds(kDivision, kBpmStart);
-        p.delaySamples = static_cast<float>(std::clamp(ms0, 1.0, 5000.0) * 0.001 * kFs);
+        const float dly0 = static_cast<float>(std::clamp(ms0, 1.0, 5000.0) * 0.001 * kFs);
+        p.delaySamplesL = dly0;
+        p.delaySamplesR = dly0;
         engine.reset();
         engine.resetParams(p);
 
@@ -125,7 +127,9 @@ int main()
             const double t = static_cast<double>(pos) / kFs;
             const double bpm = kBpmStart + (kBpmEnd - kBpmStart) * (t / kDuration);
             const double ms = TS::convertChoiceIndexToMilliseconds(kDivision, bpm);
-            p.delaySamples = static_cast<float>(std::clamp(ms, 1.0, 5000.0) * 0.001 * kFs);
+            const float dly = static_cast<float>(std::clamp(ms, 1.0, 5000.0) * 0.001 * kFs);
+            p.delaySamplesL = dly;
+            p.delaySamplesR = dly;
 
             for (int i = 0; i < n; ++i)
             {

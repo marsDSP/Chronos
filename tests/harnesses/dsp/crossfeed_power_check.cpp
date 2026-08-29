@@ -94,7 +94,8 @@ int main()
     fb.prepare(kFs, kBlock, kMaxDelay);
 
     FeedbackDelay::Params p;
-    p.delaySamples    = 4800.0f;   // 100 ms
+    p.delaySamplesL   = 4800.0f;   // 100 ms
+    p.delaySamplesR   = 4800.0f;
     p.feedback        = 0.5f;
     p.dampHz          = 6000.0f;
     p.loopCutHz       = 40.0f;

@@ -150,7 +150,8 @@ int main()
         // Process a long block with zeros input, mix=100, drive=0, gain=1
         // The output is pure dither noise.
         MarsDSP::ChronosEngine::Params p{};
-        p.delaySamples = 0.0f;
+        p.delaySamplesL = 0.0f;
+        p.delaySamplesR = 0.0f;
         p.driveLin = 1.0f;
         p.mix = 100.0f;
         p.gainLin = 1.0f;
@@ -266,7 +267,8 @@ int main()
         engine.setBypass(false);
 
         MarsDSP::ChronosEngine::Params p{};
-        p.delaySamples = 0.0f;
+        p.delaySamplesL = 0.0f;
+        p.delaySamplesR = 0.0f;
         p.driveLin = 1.0f;
         p.mix = 100.0f;
         p.gainLin = 1.0f;

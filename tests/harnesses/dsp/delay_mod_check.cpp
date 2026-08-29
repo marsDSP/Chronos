@@ -45,7 +45,8 @@ double measureRmsCents(float depthCents, float rateHz, double& maxAbsCents)
     fb.prepare(kFs, kBlock, kMaxDelay);
 
     FeedbackDelay::Params p;
-    p.delaySamples   = 24000.0f;   // 500 ms; the calibration is delay-free
+    p.delaySamplesL  = 24000.0f;   // 500 ms; the calibration is delay-free
+    p.delaySamplesR  = 24000.0f;
     p.feedback       = 0.0f;
     p.dampHz         = 20000.0f;
     p.loopCutHz      = 20.0f;
