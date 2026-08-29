@@ -9,6 +9,12 @@
 #include "gui/LookAndFeel.h"
 #include "gui/PanelPage.h"
 #include "gui/TabBar.h"
+#include "gui/PedalKnob.h"
+#include "gui/controls/PowerButton.h"
+#include "gui/controls/ConsoleButton.h"
+#include "gui/controls/TimeLockButton.h"
+#include "gui/controls/TimeDisplay.h"
+#include "gui/controls/DotMatrixDisplay.h"
 #include "gui/tap/TapDisplay.h"
 
 // The main plugin editor component.
