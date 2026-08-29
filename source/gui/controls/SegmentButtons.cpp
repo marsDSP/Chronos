@@ -1,0 +1,89 @@
+#include "SegmentButtons.h"
+#include "../Colours.h"
+
+namespace MarsDSP::GUI {
+
+SegmentButtons::SegmentButtons(AudioProcessorValueTreeState& apvts, const String& paramID,
+                               const StringArray& items, const Colour accent, const bool coreLinked)
+    : accent_(accent), coreLinked_(coreLinked), paramID_(paramID), apvts_(apvts)
+{
+    // A hidden combo carries the parameter attachment. The buttons mirror it.
+    combo_.addItemList(items, 1);
+    addChildComponent(combo_);
+    combo_.setVisible(false);
+
+    attach_ = std::make_unique<AudioProcessorValueTreeState::ComboBoxAttachment>(apvts_, paramID_, combo_);
+
+    for (int i = 0; i < items.size(); ++i)
+    {
+        auto btn = std::make_unique<ConsoleButton>(items[i]);
+        btn->setClickingTogglesState(false);
+        btn->setAccentColours(accent_, Colours::background);
+        btn->onClick = [this, i]
+        {
+            combo_.setSelectedId(i + 1, sendNotificationSync);
+            syncButtons();
+        };
+        addAndMakeVisible(*btn);
+        buttons_.push_back(std::move(btn));
+    }
+
+    apvts_.addParameterListener(paramID_, this);
+    if (coreLinked_)
+        apvts_.addParameterListener("delayMode", this);
+
+    syncButtons();
+}
+
+SegmentButtons::~SegmentButtons()
+{
+    apvts_.removeParameterListener(paramID_, this);
+    if (coreLinked_)
+        apvts_.removeParameterListener("delayMode", this);
+}
+
+void SegmentButtons::setAccentColours(const Colour activeBg, const Colour activeText)
+{
+    accent_ = activeBg;
+    for (auto& btn : buttons_)
+        btn->setAccentColours(activeBg, activeText);
+    repaint();
+}
+
+void SegmentButtons::syncButtons()
+{
+    const int idx = combo_.getSelectedId() - 1;
+    for (int i = 0; i < static_cast<int>(buttons_.size()); ++i)
+        buttons_[static_cast<std::size_t>(i)]->setToggleState(i == idx, dontSendNotification);
+}
+
+void SegmentButtons::parameterChanged(const String& parameterID, const float newValue)
+{
+    if (parameterID == paramID_)
+    {
+        MessageManager::callAsync([this] { syncButtons(); });
+    }
+    else if (coreLinked_ && parameterID == "delayMode")
+    {
+        const Colour col = (newValue > 0.5f) ? Colours::accentDelayBBD : Colours::accentDelayDigital;
+        MessageManager::callAsync([this, col] { setAccentColours(col, Colours::background); });
+    }
+}
+
+void SegmentButtons::resized()
+{
+    if (buttons_.empty())
+        return;
+
+    const int n = static_cast<int>(buttons_.size());
+    constexpr int gap = 4;
+    const int bw = (getWidth() - gap * (n - 1)) / n;
+    int x = 0;
+    for (auto& btn : buttons_)
+    {
+        btn->setBounds(x, 0, bw, getHeight());
+        x += bw + gap;
+    }
+}
+
+} // namespace MarsDSP::GUI

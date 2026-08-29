@@ -1,16 +1,37 @@
 #include "ChronosEditor.h"
+#include "gui/controls/SegmentButtons.h"
 
 namespace {
 
 using namespace MarsDSP::GUI::Knobs;
 using GUIColours = MarsDSP::GUI::Colours;
 
+// Uniform grid constants.
+constexpr int kPad = 12;
+constexpr int kKnobGap = 10;
+constexpr int kSelectorH = 22;
+constexpr int kDisplayH = 18;
+
+// Scale one knob cell width to fit the panel. Keep it inside a safe band.
+int knobCellWidth(const int panelWidth, const int cols)
+{
+    const int w = (panelWidth - 2 * kPad - (cols - 1) * kKnobGap) / cols;
+    return std::clamp(w, 40, 80);
+}
+
+// Return the core accent for the current delay mode.
+Colour coreAccent(const ChronosProcessor& proc)
+{
+    return (proc.getParameters().getRawDelayMode() == 1) ? GUIColours::accentDelayBBD
+                                                          : GUIColours::accentDelayDigital;
+}
+
 // 1. TIME card -> TIME sub-panel
 class TimePanel final : public Component {
 public:
     explicit TimePanel(ChronosProcessor& proc)
-        : timeLKnob("LEFT TIME", proc.getAPVTS(), delayTimeParamID, GUIColours::accentDelayDigital),
-          timeRKnob("RIGHT TIME", proc.getAPVTS(), delayTimeRParamID, GUIColours::accentDelayDigital)
+        : timeLKnob("LEFT TIME", proc.getAPVTS(), delayTimeParamID, coreAccent(proc)),
+          timeRKnob("RIGHT TIME", proc.getAPVTS(), delayTimeRParamID, coreAccent(proc))
     {
         timeLDisplay.setSlider(&timeLKnob.getSlider());
         timeRDisplay.setSlider(&timeRKnob.getSlider());
@@ -19,13 +40,13 @@ public:
         addAndMakeVisible(timeLKnob);
         addAndMakeVisible(timeRKnob);
 
-        timeLinkButton.setColours(GUIColours::accentDelayDigital, GUIColours::textDim);
+        timeLinkButton.setColours(coreAccent(proc), GUIColours::textDim);
         timeLinkAttach = std::make_unique<AudioProcessorValueTreeState::ButtonAttachment>(
             proc.getAPVTS(), timeLinkParamID.getParamID(), timeLinkButton);
         addAndMakeVisible(timeLinkButton);
 
         syncButton.setMusicalNote(true);
-        syncButton.setColours(GUIColours::accentDelayDigital, GUIColours::textDim);
+        syncButton.setColours(coreAccent(proc), GUIColours::textDim);
         syncAttach = std::make_unique<AudioProcessorValueTreeState::ButtonAttachment>(
             proc.getAPVTS(), delaySyncParamID.getParamID(), syncButton);
         addAndMakeVisible(syncButton);
@@ -44,21 +65,22 @@ public:
 
     void resized() override
     {
-        constexpr int knobSize = 76;
-        constexpr int knobGap = 16;
-        const int x0 = 10;
-        const int y0 = 8;
+        const int w = getWidth();
+        const int kw = knobCellWidth(w, 2);
+        const int kh = kw + 14;
+        int x = kPad;
+        const int y = kPad;
 
-        timeLKnob.setBounds(x0, y0, knobSize, knobSize);
-        timeRKnob.setBounds(x0 + knobSize + knobGap, y0, knobSize, knobSize);
+        timeLKnob.setBounds(x, y, kw, kh);
+        timeRKnob.setBounds(x + kw + kKnobGap, y, kw, kh);
 
-        timeLDisplay.setBounds(x0, y0 + knobSize + 2, knobSize, 20);
-        timeRDisplay.setBounds(x0 + knobSize + knobGap, y0 + knobSize + 2, knobSize, 20);
+        timeLDisplay.setBounds(x, y + kh + 2, kw, kDisplayH);
+        timeRDisplay.setBounds(x + kw + kKnobGap, y + kh + 2, kw, kDisplayH);
 
-        const int yCtrl = y0 + knobSize + 28;
-        timeLinkButton.setBounds(x0, yCtrl, 24, 24);
-        syncButton.setBounds(x0 + 30, yCtrl, 24, 24);
-        divisionBox.setBounds(x0 + 60, yCtrl + 1, 92, 22);
+        const int yc = y + kh + kDisplayH + 14;
+        timeLinkButton.setBounds(x, yc, 24, 24);
+        syncButton.setBounds(x + 28, yc, 24, 24);
+        divisionBox.setBounds(x + 56, yc + 1, w - 2 * kPad - 56, kSelectorH);
     }
 
 private:
@@ -87,13 +109,15 @@ public:
 
     void resized() override
     {
-        constexpr int knobSize = 84;
-        constexpr int knobGap = 14;
-        const int x0 = 14;
-        const int y0 = 30;
+        const int w = getWidth();
+        const int kw = knobCellWidth(w, 2);
+        const int kh = kw + 14;
+        const int totalW = 2 * kw + kKnobGap;
+        const int x0 = (w - totalW) / 2;
+        const int y = kPad + 12;
 
-        depthKnob.setBounds(x0, y0, knobSize, knobSize + 16);
-        rateKnob.setBounds(x0 + knobSize + knobGap, y0, knobSize, knobSize + 16);
+        depthKnob.setBounds(x0, y, kw, kh);
+        rateKnob.setBounds(x0 + kw + kKnobGap, y, kw, kh);
     }
 
 private:
@@ -107,48 +131,42 @@ public:
     explicit LoopPanel(ChronosProcessor& proc)
         : feedbackKnob("FEEDBACK", proc.getAPVTS(), feedbackParamID, GUIColours::accentOrange),
           crossFeedKnob("CROSS", proc.getAPVTS(), crossFeedParamID, GUIColours::accentOrange),
-          loopDriveKnob("DRIVE", proc.getAPVTS(), loopDriveParamID, GUIColours::accentOrange)
+          loopDriveKnob("DRIVE", proc.getAPVTS(), loopDriveParamID, GUIColours::accentOrange),
+          loopSatSeg_(proc.getAPVTS(), loopSatOrderParamID.getParamID(),
+                      StringArray{"Off", "1st", "2nd"}, coreAccent(proc), true),
+          delayModeSeg_(proc.getAPVTS(), delayModeParamID.getParamID(),
+                        StringArray{"Digital", "BBD"}, coreAccent(proc), true)
     {
         addAndMakeVisible(feedbackKnob);
         addAndMakeVisible(crossFeedKnob);
         addAndMakeVisible(loopDriveKnob);
-
-        loopSatBox.addItemList(StringArray{"Off", "1st", "2nd"}, 1);
-        loopSatAttach = std::make_unique<AudioProcessorValueTreeState::ComboBoxAttachment>(
-            proc.getAPVTS(), loopSatOrderParamID.getParamID(), loopSatBox);
-        addAndMakeVisible(loopSatBox);
-
-        delayModeBox.addItemList(StringArray{"Digital", "BBD"}, 1);
-        delayModeAttach = std::make_unique<AudioProcessorValueTreeState::ComboBoxAttachment>(
-            proc.getAPVTS(), delayModeParamID.getParamID(), delayModeBox);
-        addAndMakeVisible(delayModeBox);
+        addAndMakeVisible(loopSatSeg_);
+        addAndMakeVisible(delayModeSeg_);
     }
 
     void resized() override
     {
-        constexpr int knobSize = 64;
-        constexpr int knobGap = 8;
-        const int x0 = 8;
-        const int y0 = 6;
+        const int w = getWidth();
+        const int kw = knobCellWidth(w, 3);
+        const int kh = kw + 14;
+        int x = kPad;
+        const int y = kPad;
 
-        int x = x0;
-        feedbackKnob.setBounds(x, y0, knobSize, knobSize + 12);  x += knobSize + knobGap;
-        crossFeedKnob.setBounds(x, y0, knobSize, knobSize + 12); x += knobSize + knobGap;
-        loopDriveKnob.setBounds(x, y0, knobSize, knobSize + 12);
+        feedbackKnob.setBounds(x, y, kw, kh);   x += kw + kKnobGap;
+        crossFeedKnob.setBounds(x, y, kw, kh);  x += kw + kKnobGap;
+        loopDriveKnob.setBounds(x, y, kw, kh);
 
-        const int ySel = y0 + knobSize + 20;
-        loopSatBox.setBounds(x0, ySel, 92, 22);
-        delayModeBox.setBounds(x0 + 92 + 8, ySel, 92, 22);
+        const int y1 = y + kh + 12;
+        loopSatSeg_.setBounds(kPad, y1, w - 2 * kPad, kSelectorH);
+        delayModeSeg_.setBounds(kPad, y1 + kSelectorH + 6, w - 2 * kPad, kSelectorH);
     }
 
 private:
     PDLKnob feedbackKnob;
     PDLKnob crossFeedKnob;
     PDLKnob loopDriveKnob;
-    ComboBox loopSatBox;
-    ComboBox delayModeBox;
-    std::unique_ptr<AudioProcessorValueTreeState::ComboBoxAttachment> loopSatAttach;
-    std::unique_ptr<AudioProcessorValueTreeState::ComboBoxAttachment> delayModeAttach;
+    MarsDSP::GUI::SegmentButtons loopSatSeg_;
+    MarsDSP::GUI::SegmentButtons delayModeSeg_;
 };
 
 // 4. REPEATS card -> TONE sub-panel
@@ -164,13 +182,15 @@ public:
 
     void resized() override
     {
-        constexpr int knobSize = 84;
-        constexpr int knobGap = 14;
-        const int x0 = 14;
-        const int y0 = 30;
+        const int w = getWidth();
+        const int kw = knobCellWidth(w, 2);
+        const int kh = kw + 14;
+        const int totalW = 2 * kw + kKnobGap;
+        const int x0 = (w - totalW) / 2;
+        const int y = kPad + 12;
 
-        dampKnob.setBounds(x0, y0, knobSize, knobSize + 16);
-        loopCutKnob.setBounds(x0 + knobSize + knobGap, y0, knobSize, knobSize + 16);
+        dampKnob.setBounds(x0, y, kw, kh);
+        loopCutKnob.setBounds(x0 + kw + kKnobGap, y, kw, kh);
     }
 
 private:
@@ -182,30 +202,29 @@ private:
 class DrivePanel final : public Component {
 public:
     explicit DrivePanel(ChronosProcessor& proc)
-        : driveKnob("DRIVE", proc.getAPVTS(), driveParamID, GUIColours::accentRed)
+        : driveKnob("DRIVE", proc.getAPVTS(), driveParamID, GUIColours::accentRed),
+          adaaSeg_(proc.getAPVTS(), adaaOrderParamID.getParamID(),
+                   StringArray{"Off", "1st", "2nd"}, GUIColours::accentPurple, false)
     {
         addAndMakeVisible(driveKnob);
-
-        adaaOrderBox.addItemList(StringArray{"Off", "1st", "2nd"}, 1);
-        adaaAttach = std::make_unique<AudioProcessorValueTreeState::ComboBoxAttachment>(
-            proc.getAPVTS(), adaaOrderParamID.getParamID(), adaaOrderBox);
-        addAndMakeVisible(adaaOrderBox);
+        addAndMakeVisible(adaaSeg_);
     }
 
     void resized() override
     {
-        constexpr int knobSize = 84;
-        const int x0 = 14;
-        const int y0 = 30;
+        const int w = getWidth();
+        const int kw = knobCellWidth(w, 1);
+        const int kh = kw + 14;
+        const int x0 = (w - kw) / 2;
+        const int y = kPad + 8;
 
-        driveKnob.setBounds(x0, y0, knobSize, knobSize + 16);
-        adaaOrderBox.setBounds(x0, y0 + knobSize + 22, 120, 22);
+        driveKnob.setBounds(x0, y, kw, kh);
+        adaaSeg_.setBounds(kPad, y + kh + 12, w - 2 * kPad, kSelectorH);
     }
 
 private:
     PDLKnob driveKnob;
-    ComboBox adaaOrderBox;
-    std::unique_ptr<AudioProcessorValueTreeState::ComboBoxAttachment> adaaAttach;
+    MarsDSP::GUI::SegmentButtons adaaSeg_;
 };
 
 // 6. CHARACTER card -> DIFFUSE sub-panel
@@ -230,19 +249,20 @@ public:
 
     void resized() override
     {
-        constexpr int knobSize = 72;
-        constexpr int knobGap = 8;
-        const int x0 = 14;
+        const int w = getWidth();
+        const int kw = knobCellWidth(w, 2);
+        const int kh = kw + 14;
+        int x = kPad;
 
-        enableButton.setBounds(getWidth() / 2 - 12, 6, 24, 24);
+        enableButton.setBounds((w - 24) / 2, 4, 24, 24);
 
-        const int y1 = 36;
-        diffusionKnob.setBounds(x0, y1, knobSize, knobSize + 12);
-        sizeKnob.setBounds(x0 + knobSize + knobGap, y1, knobSize, knobSize + 12);
+        const int y1 = kPad + 30;
+        diffusionKnob.setBounds(x, y1, kw, kh);
+        sizeKnob.setBounds(x + kw + kKnobGap, y1, kw, kh);
 
-        const int y2 = y1 + knobSize + 16;
-        modDepthKnob.setBounds(x0, y2, knobSize, knobSize + 12);
-        modRateKnob.setBounds(x0 + knobSize + knobGap, y2, knobSize, knobSize + 12);
+        const int y2 = y1 + kh + 8;
+        modDepthKnob.setBounds(x, y2, kw, kh);
+        modRateKnob.setBounds(x + kw + kKnobGap, y2, kw, kh);
     }
 
 private:
@@ -259,35 +279,34 @@ class FilterPanel final : public Component {
 public:
     explicit FilterPanel(ChronosProcessor& proc)
         : hpfKnob("OUTPUT HPF", proc.getAPVTS(), hpfFreqParamID, GUIColours::accentBlue),
-          lpfKnob("OUTPUT LPF", proc.getAPVTS(), lpfFreqParamID, GUIColours::accentBlue)
+          lpfKnob("OUTPUT LPF", proc.getAPVTS(), lpfFreqParamID, GUIColours::accentBlue),
+          modeSeg_(proc.getAPVTS(), filterModeParamID.getParamID(),
+                   StringArray{"Digital", "Analog"}, GUIColours::accentBlue, false)
     {
-        filterModeBox.addItemList(StringArray{"Digital", "Analog"}, 1);
-        modeAttach = std::make_unique<AudioProcessorValueTreeState::ComboBoxAttachment>(
-            proc.getAPVTS(), filterModeParamID.getParamID(), filterModeBox);
-        addAndMakeVisible(filterModeBox);
-
+        addAndMakeVisible(modeSeg_);
         addAndMakeVisible(hpfKnob);
         addAndMakeVisible(lpfKnob);
     }
 
     void resized() override
     {
-        constexpr int knobSize = 84;
-        constexpr int knobGap = 14;
-        const int x0 = 14;
+        const int w = getWidth();
+        const int kw = knobCellWidth(w, 2);
+        const int kh = kw + 14;
+        const int totalW = 2 * kw + kKnobGap;
+        const int x0 = (w - totalW) / 2;
 
-        filterModeBox.setBounds(x0, 8, 120, 22);
+        modeSeg_.setBounds(kPad, kPad, w - 2 * kPad, kSelectorH);
 
-        const int y0 = 38;
-        hpfKnob.setBounds(x0, y0, knobSize, knobSize + 16);
-        lpfKnob.setBounds(x0 + knobSize + knobGap, y0, knobSize, knobSize + 16);
+        const int y = kPad + kSelectorH + 14;
+        hpfKnob.setBounds(x0, y, kw, kh);
+        lpfKnob.setBounds(x0 + kw + kKnobGap, y, kw, kh);
     }
 
 private:
-    ComboBox filterModeBox;
     PDLKnob hpfKnob;
     PDLKnob lpfKnob;
-    std::unique_ptr<AudioProcessorValueTreeState::ComboBoxAttachment> modeAttach;
+    MarsDSP::GUI::SegmentButtons modeSeg_;
 };
 
 // 8. OUTPUT card -> LEVEL sub-panel
@@ -305,15 +324,15 @@ public:
 
     void resized() override
     {
-        constexpr int knobSize = 64;
-        constexpr int knobGap = 8;
-        const int x0 = 8;
-        const int y0 = 20;
+        const int w = getWidth();
+        const int kw = knobCellWidth(w, 3);
+        const int kh = kw + 14;
+        int x = kPad;
+        const int y = kPad + 16;
 
-        int x = x0;
-        mixKnob.setBounds(x, y0, knobSize, knobSize + 12);  x += knobSize + knobGap;
-        gainKnob.setBounds(x, y0, knobSize, knobSize + 12); x += knobSize + knobGap;
-        bitsKnob.setBounds(x, y0, knobSize, knobSize + 12);
+        mixKnob.setBounds(x, y, kw, kh);   x += kw + kKnobGap;
+        gainKnob.setBounds(x, y, kw, kh);  x += kw + kKnobGap;
+        bitsKnob.setBounds(x, y, kw, kh);
     }
 
 private:
