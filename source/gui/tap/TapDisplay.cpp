@@ -8,9 +8,17 @@
 namespace MarsDSP::GUI {
 namespace {
 
-constexpr int kDisplayTimerHz = 30;
+constexpr int kDisplayTimerHz = 60;
 constexpr int kVerticalGridLines = 12;
-constexpr float kDisplayTransitionSeconds = 0.18f;
+
+// Ease time constants in seconds.
+constexpr float kTauMove = 0.060f;
+constexpr float kTauGain = 0.050f;
+constexpr float kTauDie  = 0.080f;
+constexpr float kTauSpan = 0.120f;
+
+// A dying tap below this gain is removed.
+constexpr float kCullGain = 0.005f;
 
 String formatTimeSpanLabel(const float seconds)
 {
@@ -18,11 +26,6 @@ String formatTimeSpanLabel(const float seconds)
         return String(std::round(seconds * 1000.0f)) + " ms";
 
     return String(std::round(seconds * 100.0f) / 100.0f) + " s";
-}
-
-float blendValue(const float current, const float target, const float amount)
-{
-    return current + (target - current) * amount;
 }
 
 } // namespace
@@ -74,102 +77,126 @@ TapSim::Parameters TapDisplay::buildParameters_() const
     return p;
 }
 
-TapDisplay::DisplayState TapDisplay::toDisplayState_(const TapSim::SimulationResult& sim)
+bool TapDisplay::paramsChanged_(const TapSim::Parameters& p) const
 {
-    DisplayState state;
-    state.totalTimeSeconds = std::max(0.25f, sim.totalTimeSeconds);
-
-    state.left.reserve(sim.left.size());
-    for (const auto& t : sim.left)
-    {
-        if (!t.empty)
-            state.left.push_back({ t.dry, t.timeSeconds, t.gain });
-    }
-
-    state.right.reserve(sim.right.size());
-    for (const auto& t : sim.right)
-    {
-        if (!t.empty)
-            state.right.push_back({ t.dry, t.timeSeconds, t.gain });
-    }
-
-    return state;
+    const auto& a = lastParams_;
+    return a.timeLSeconds != p.timeLSeconds
+        || a.timeRSeconds != p.timeRSeconds
+        || a.feedback != p.feedback
+        || a.crossFeed != p.crossFeed
+        || a.mix != p.mix
+        || a.delaySync != p.delaySync
+        || a.delayDivision != p.delayDivision
+        || a.secondsPerBeat != p.secondsPerBeat;
 }
 
-TapDisplay::DisplayState TapDisplay::blendDisplayState_(const DisplayState& current,
-                                                       const DisplayState& target,
-                                                       const float blendAmount)
+void TapDisplay::runSimulation_(const TapSim::Parameters& p)
 {
-    DisplayState blended;
-    blended.totalTimeSeconds = std::max(0.25f, blendValue(current.totalTimeSeconds, target.totalTimeSeconds, blendAmount));
+    const auto result = TapSim::Engine::simulate(p);
+    targetTotalTime_ = std::max(0.25f, result.totalTimeSeconds);
 
-    const auto blendLane = [blendAmount](const std::vector<DisplayTap>& curLane,
-                                         const std::vector<DisplayTap>& tgtLane,
-                                         const float curTotalTime,
-                                         std::vector<DisplayTap>& dst)
+    // The base delay is the first repeat time. Fall back to the parameter.
+    const float baseL = (result.left.size() > 1) ? result.left[1].timeSeconds : p.timeLSeconds;
+    const float baseR = (result.right.size() > 1) ? result.right[1].timeSeconds : p.timeRSeconds;
+
+    matchChannel_(trackedL_, result.left, baseL);
+    matchChannel_(trackedR_, result.right, baseR);
+}
+
+void TapDisplay::matchChannel_(std::vector<TrackedTap>& tracked,
+                                const std::vector<TapSim::Tap>& simTaps,
+                                const float baseTime)
+{
+    const float invBase = (baseTime > 1e-6f) ? (1.0f / baseTime) : 0.0f;
+
+    // Mark every tracked tap as dying. Clear the flag when a sim tap matches.
+    for (auto& t : tracked)
+        t.dying = true;
+
+    for (const auto& sim : simTaps)
     {
-        dst.clear();
-        const std::size_t count = std::max(curLane.size(), tgtLane.size());
-        dst.reserve(count);
+        if (sim.empty)
+            continue;
 
-        for (std::size_t i = 0; i < count; ++i)
+        // Key by the repeat index. The dry tap keys to zero.
+        const int key = (invBase > 0.0f && !sim.dry)
+            ? static_cast<int>(std::round(sim.timeSeconds * invBase))
+            : 0;
+
+        TrackedTap* found = nullptr;
+        for (auto& t : tracked)
         {
-            const bool hasCur = i < curLane.size();
-            const bool hasTgt = i < tgtLane.size();
-
-            DisplayTap tap;
-            if (hasCur && hasTgt)
+            if (t.key == key)
             {
-                tap.dry = tgtLane[i].dry;
-                tap.timeSeconds = blendValue(curLane[i].timeSeconds, tgtLane[i].timeSeconds, blendAmount);
-                tap.gain = blendValue(curLane[i].gain, tgtLane[i].gain, blendAmount);
+                found = &t;
+                break;
             }
-            else if (hasCur)
+        }
+
+        if (found != nullptr)
+        {
+            found->dry = sim.dry;
+            found->targetTime = sim.timeSeconds;
+            found->targetGain = sim.gain;
+            found->dying = false;
+        }
+        else
+        {
+            TrackedTap t;
+            t.key = key;
+            t.dry = sim.dry;
+            t.targetTime = sim.timeSeconds;
+            t.targetGain = sim.gain;
+            // A new tap grows from gain zero at its own position.
+            t.displayedTime = sim.timeSeconds;
+            t.displayedGain = 0.0f;
+            t.dying = false;
+            tracked.push_back(std::move(t));
+        }
+    }
+}
+
+void TapDisplay::advanceEases_(const float deltaSeconds)
+{
+    if (deltaSeconds <= 0.0f)
+        return;
+
+    const float kMove = 1.0f - std::exp(-deltaSeconds / kTauMove);
+    const float kGain = 1.0f - std::exp(-deltaSeconds / kTauGain);
+    const float kDie  = 1.0f - std::exp(-deltaSeconds / kTauDie);
+    const float kSpan = 1.0f - std::exp(-deltaSeconds / kTauSpan);
+
+    const auto easeLane = [&](std::vector<TrackedTap>& lane)
+    {
+        for (auto it = lane.begin(); it != lane.end(); )
+        {
+            TrackedTap& t = *it;
+
+            if (t.dying)
             {
-                tap = curLane[i];
-                tap.gain = blendValue(curLane[i].gain, 0.0f, blendAmount);
+                // A dying tap keeps its position. Only the gain decays.
+                t.displayedGain += (0.0f - t.displayedGain) * kDie;
+
+                if (std::fabs(t.displayedGain) < kCullGain)
+                {
+                    it = lane.erase(it);
+                    continue;
+                }
             }
             else
             {
-                tap.dry = tgtLane[i].dry;
-                tap.timeSeconds = blendValue(curTotalTime, tgtLane[i].timeSeconds, blendAmount);
-                tap.gain = blendValue(0.0f, tgtLane[i].gain, blendAmount);
+                t.displayedTime += (t.targetTime - t.displayedTime) * kMove;
+                t.displayedGain += (t.targetGain - t.displayedGain) * kGain;
             }
 
-            if (std::fabs(tap.gain) > 0.001f)
-                dst.push_back(tap);
+            ++it;
         }
     };
 
-    blendLane(current.left, target.left, current.totalTimeSeconds, blended.left);
-    blendLane(current.right, target.right, current.totalTimeSeconds, blended.right);
+    easeLane(trackedL_);
+    easeLane(trackedR_);
 
-    return blended;
-}
-
-TapDisplay::DisplayState TapDisplay::transitionDisplayState_(const DisplayState& current,
-                                                            const DisplayState& target,
-                                                            const float deltaSeconds)
-{
-    if (deltaSeconds <= 0.0f)
-        return current;
-
-    const float blendAmount = std::clamp(deltaSeconds / kDisplayTransitionSeconds, 0.0f, 1.0f);
-    return blendDisplayState_(current, target, blendAmount);
-}
-
-void TapDisplay::advanceDisplayState_(const float deltaSeconds)
-{
-    const auto target = toDisplayState_(TapSim::Engine::simulate(buildParameters_()));
-
-    if (!hasDisplayState_)
-    {
-        displayState_ = target;
-        hasDisplayState_ = true;
-        return;
-    }
-
-    displayState_ = transitionDisplayState_(displayState_, target, deltaSeconds);
+    displayedTotalTime_ += (targetTotalTime_ - displayedTotalTime_) * kSpan;
 }
 
 void TapDisplay::timerCallback()
@@ -184,6 +211,7 @@ void TapDisplay::timerCallback()
     const double dt = timeSecs - lastTimeSecs_;
     lastTimeSecs_ = timeSecs;
 
+    // Drain the wet-level feed every tick. This is independent of the sim.
     TapFeedFrame frame{};
     float latestL = currentWetLevelL_;
     float latestR = currentWetLevelR_;
@@ -205,7 +233,16 @@ void TapDisplay::timerCallback()
         currentWetLevelR_ *= 0.90f;
     }
 
-    advanceDisplayState_(static_cast<float>(dt));
+    // Run the sim once per tick, and only when a parameter changed.
+    const auto params = buildParameters_();
+    if (!hasState_ || paramsChanged_(params))
+    {
+        runSimulation_(params);
+        lastParams_ = params;
+        hasState_ = true;
+    }
+
+    advanceEases_(static_cast<float>(dt));
     repaint();
 }
 
@@ -228,9 +265,7 @@ void TapDisplay::paint(Graphics& g)
     if (maxLaneHeight <= 0.0f)
         return;
 
-    advanceDisplayState_(0.0f);
-
-    const float totalTime = std::max(0.25f, displayState_.totalTimeSeconds);
+    const float totalTime = std::max(0.25f, displayedTotalTime_);
 
     // Center divider
     g.setColour(accent.withAlpha(0.12f));
@@ -255,17 +290,17 @@ void TapDisplay::paint(Graphics& g)
                false);
 
     // Draw taps
-    const auto drawLane = [&](const std::vector<DisplayTap>& taps, bool isTopLane)
+    const auto drawLane = [&](const std::vector<TrackedTap>& taps, bool isTopLane)
     {
         const float wetLevel = isTopLane ? currentWetLevelL_ : currentWetLevelR_;
         const float envIntensity = std::clamp(wetLevel * 3.5f, 0.0f, 1.0f);
 
         for (const auto& tap : taps)
         {
-            const float timeNorm = std::clamp(tap.timeSeconds / totalTime, 0.0f, 1.0f);
+            const float timeNorm = std::clamp(tap.displayedTime / totalTime, 0.0f, 1.0f);
             const float x = displayBounds.getX() + timeNorm * displayBounds.getWidth();
 
-            const float gain = std::clamp(std::fabs(tap.gain), 0.0f, 1.0f);
+            const float gain = std::clamp(std::fabs(tap.displayedGain), 0.0f, 1.0f);
             if (gain <= 0.001f)
                 continue;
 
@@ -297,8 +332,8 @@ void TapDisplay::paint(Graphics& g)
         }
     };
 
-    drawLane(displayState_.left, true);
-    drawLane(displayState_.right, false);
+    drawLane(trackedL_, true);
+    drawLane(trackedR_, false);
 
     // Hover affordance: highlight active channel half and indicator
     if (isHovered_)

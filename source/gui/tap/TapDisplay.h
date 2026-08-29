@@ -35,31 +35,32 @@ public:
 private:
     void timerCallback() override;
 
-    struct DisplayTap {
+    // One tap tracked by identity across frames.
+    struct TrackedTap {
+        int key = 0;
         bool dry = false;
-        float timeSeconds = 0.0f;
-        float gain = 0.0f;
-    };
-
-    struct DisplayState {
-        std::vector<DisplayTap> left;
-        std::vector<DisplayTap> right;
-        float totalTimeSeconds = 0.25f;
+        float targetTime = 0.0f;
+        float targetGain = 0.0f;
+        float displayedTime = 0.0f;
+        float displayedGain = 0.0f;
+        bool dying = false;
     };
 
     [[nodiscard]] TapSim::Parameters buildParameters_() const;
-    [[nodiscard]] static DisplayState toDisplayState_(const TapSim::SimulationResult& sim);
-    [[nodiscard]] static DisplayState blendDisplayState_(const DisplayState& current,
-                                                        const DisplayState& target,
-                                                        float blendAmount);
-    [[nodiscard]] static DisplayState transitionDisplayState_(const DisplayState& current,
-                                                             const DisplayState& target,
-                                                             float deltaSeconds);
-    void advanceDisplayState_(float deltaSeconds);
+    [[nodiscard]] bool paramsChanged_(const TapSim::Parameters& p) const;
+    void runSimulation_(const TapSim::Parameters& p);
+    void matchChannel_(std::vector<TrackedTap>& tracked,
+                       const std::vector<TapSim::Tap>& simTaps,
+                       float baseTime);
+    void advanceEases_(float deltaSeconds);
 
     ChronosProcessor& processorRef_;
-    DisplayState displayState_;
-    bool hasDisplayState_ = false;
+    std::vector<TrackedTap> trackedL_;
+    std::vector<TrackedTap> trackedR_;
+    float displayedTotalTime_ = 0.25f;
+    float targetTotalTime_ = 0.25f;
+    bool hasState_ = false;
+    TapSim::Parameters lastParams_ {};
     double lastTimeSecs_ = 0.0;
     int delayMode_ = 0;
     float currentWetLevelL_ = 0.0f;
