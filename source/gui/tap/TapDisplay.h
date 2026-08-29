@@ -11,8 +11,8 @@ class ChronosProcessor;
 namespace MarsDSP::GUI {
 
 // Component that displays delay taps on a horizontal ruler.
-// The top lane shows left taps.
-// The bottom lane shows right taps.
+// Dragging the upper half adjusts the left delay time.
+// Dragging the lower half adjusts the right delay time.
 class TapDisplay : public Component,
                    private Timer,
                    public AudioProcessorValueTreeState::Listener {
@@ -22,6 +22,13 @@ public:
 
     void paint(Graphics& g) override;
     void resized() override;
+
+    void mouseDown(const MouseEvent& e) override;
+    void mouseDrag(const MouseEvent& e) override;
+    void mouseUp(const MouseEvent& e) override;
+    void mouseMove(const MouseEvent& e) override;
+    void mouseEnter(const MouseEvent& e) override;
+    void mouseExit(const MouseEvent& e) override;
 
     void parameterChanged(const String& parameterID, float newValue) override;
 
@@ -55,6 +62,20 @@ private:
     bool hasDisplayState_ = false;
     double lastTimeSecs_ = 0.0;
     int delayMode_ = 0;
+
+    // Drag and hover state
+    enum class DragTarget { None, LeftTime, RightTime };
+    DragTarget activeDragTarget_ = DragTarget::None;
+    float dragStartX_ = 0.0f;
+    float dragStartY_ = 0.0f;
+    float startNormL_ = 0.0f;
+    float startNormR_ = 0.0f;
+    float startNormFb_ = 0.0f;
+    int startDiv_ = 11;
+    bool dragging_ = false;
+
+    Point<float> hoverPos_{};
+    bool isHovered_ = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TapDisplay)
 };

@@ -273,6 +273,208 @@ void TapDisplay::paint(Graphics& g)
 
     drawLane(displayState_.left, true);
     drawLane(displayState_.right, false);
+
+    // Hover affordance: highlight active channel half and indicator
+    if (isHovered_)
+    {
+        const bool timeLinked = processorRef_.getParameters().getRawTimeLink();
+        const bool hoverUpper = (hoverPos_.y <= centerY);
+
+        if (timeLinked)
+        {
+            g.setColour(accent.withAlpha(0.04f));
+            g.fillRect(displayBounds);
+
+            g.setColour(accent.withAlpha(0.6f));
+            g.setFont(Font(FontOptions(10.0f)).boldened());
+            g.drawText("L/R LINK", displayBounds.reduced(4.0f).toNearestInt(), Justification::topLeft, false);
+        }
+        else if (hoverUpper)
+        {
+            const auto upperArea = displayBounds.withBottom(centerY);
+            g.setColour(accent.withAlpha(0.05f));
+            g.fillRect(upperArea);
+
+            g.setColour(accent.withAlpha(0.6f));
+            g.setFont(Font(FontOptions(10.0f)).boldened());
+            g.drawText("LEFT TIME", displayBounds.reduced(4.0f).toNearestInt(), Justification::topLeft, false);
+        }
+        else
+        {
+            const auto lowerArea = displayBounds.withTop(centerY);
+            g.setColour(accent.withAlpha(0.05f));
+            g.fillRect(lowerArea);
+
+            g.setColour(accent.withAlpha(0.6f));
+            g.setFont(Font(FontOptions(10.0f)).boldened());
+            g.drawText("RIGHT TIME", displayBounds.reduced(4.0f).toNearestInt(), Justification::bottomLeft, false);
+        }
+    }
+}
+
+void TapDisplay::mouseDown(const MouseEvent& e)
+{
+    dragStartX_ = e.position.x;
+    dragStartY_ = e.position.y;
+    dragging_ = true;
+
+    auto& apvts = processorRef_.getAPVTS();
+    auto* pDelayL = apvts.getParameter("delayTime");
+    auto* pDelayR = apvts.getParameter("delayTimeR");
+    auto* pFb = apvts.getParameter("feedback");
+    auto* pDiv = apvts.getParameter("delayDivision");
+
+    startNormL_ = pDelayL ? pDelayL->getValue() : 0.0f;
+    startNormR_ = pDelayR ? pDelayR->getValue() : 0.0f;
+    startNormFb_ = pFb ? pFb->getValue() : 0.0f;
+    startDiv_ = processorRef_.getParameters().getRawDelayDivision();
+
+    const bool isUpper = (e.position.y <= getHeight() * 0.5f);
+    activeDragTarget_ = isUpper ? DragTarget::LeftTime : DragTarget::RightTime;
+
+    const bool synced = processorRef_.getParameters().getRawDelaySync();
+    const bool timeLinked = processorRef_.getParameters().getRawTimeLink();
+
+    if (synced)
+    {
+        if (pDiv) pDiv->beginChangeGesture();
+    }
+    else
+    {
+        if (timeLinked)
+        {
+            if (pDelayL) pDelayL->beginChangeGesture();
+        }
+        else if (isUpper)
+        {
+            if (pDelayL) pDelayL->beginChangeGesture();
+        }
+        else
+        {
+            if (pDelayR) pDelayR->beginChangeGesture();
+        }
+    }
+
+    if (pFb) pFb->beginChangeGesture();
+}
+
+void TapDisplay::mouseDrag(const MouseEvent& e)
+{
+    if (!dragging_)
+        return;
+
+    const float dx = e.position.x - dragStartX_;
+    const float dy = e.position.y - dragStartY_;
+    const float w = static_cast<float>(std::max(1, getWidth()));
+    const float h = static_cast<float>(std::max(1, getHeight()));
+
+    auto& apvts = processorRef_.getAPVTS();
+    auto* pDelayL = apvts.getParameter("delayTime");
+    auto* pDelayR = apvts.getParameter("delayTimeR");
+    auto* pFb = apvts.getParameter("feedback");
+    auto* pDiv = apvts.getParameter("delayDivision");
+
+    const bool synced = processorRef_.getParameters().getRawDelaySync();
+    const bool timeLinked = processorRef_.getParameters().getRawTimeLink();
+    const bool isUpper = (activeDragTarget_ == DragTarget::LeftTime);
+
+    if (synced)
+    {
+        if (pDiv)
+        {
+            constexpr float pixelsPerDiv = 25.0f;
+            const int step = static_cast<int>(std::round(dx / pixelsPerDiv));
+            const int newDiv = std::clamp(startDiv_ + step, 0, 19);
+            pDiv->setValueNotifyingHost(pDiv->getNormalisableRange().convertTo0to1(static_cast<float>(newDiv)));
+        }
+    }
+    else
+    {
+        const float dNorm = (dx / w) * 1.2f;
+        if (timeLinked)
+        {
+            if (pDelayL)
+                pDelayL->setValueNotifyingHost(std::clamp(startNormL_ + dNorm, 0.0f, 1.0f));
+        }
+        else if (isUpper)
+        {
+            if (pDelayL)
+                pDelayL->setValueNotifyingHost(std::clamp(startNormL_ + dNorm, 0.0f, 1.0f));
+        }
+        else
+        {
+            if (pDelayR)
+                pDelayR->setValueNotifyingHost(std::clamp(startNormR_ + dNorm, 0.0f, 1.0f));
+        }
+    }
+
+    // Vertical drag modulates feedback
+    if (pFb)
+    {
+        const float dNormFb = -dy / h;
+        pFb->setValueNotifyingHost(std::clamp(startNormFb_ + dNormFb, 0.0f, 1.0f));
+    }
+}
+
+void TapDisplay::mouseUp(const MouseEvent&)
+{
+    if (!dragging_)
+        return;
+
+    auto& apvts = processorRef_.getAPVTS();
+    auto* pDelayL = apvts.getParameter("delayTime");
+    auto* pDelayR = apvts.getParameter("delayTimeR");
+    auto* pFb = apvts.getParameter("feedback");
+    auto* pDiv = apvts.getParameter("delayDivision");
+
+    const bool synced = processorRef_.getParameters().getRawDelaySync();
+    const bool timeLinked = processorRef_.getParameters().getRawTimeLink();
+    const bool isUpper = (activeDragTarget_ == DragTarget::LeftTime);
+
+    if (synced)
+    {
+        if (pDiv) pDiv->endChangeGesture();
+    }
+    else
+    {
+        if (timeLinked)
+        {
+            if (pDelayL) pDelayL->endChangeGesture();
+        }
+        else if (isUpper)
+        {
+            if (pDelayL) pDelayL->endChangeGesture();
+        }
+        else
+        {
+            if (pDelayR) pDelayR->endChangeGesture();
+        }
+    }
+
+    if (pFb) pFb->endChangeGesture();
+
+    dragging_ = false;
+    activeDragTarget_ = DragTarget::None;
+}
+
+void TapDisplay::mouseMove(const MouseEvent& e)
+{
+    hoverPos_ = e.position;
+    isHovered_ = true;
+    repaint();
+}
+
+void TapDisplay::mouseEnter(const MouseEvent& e)
+{
+    hoverPos_ = e.position;
+    isHovered_ = true;
+    repaint();
+}
+
+void TapDisplay::mouseExit(const MouseEvent&)
+{
+    isHovered_ = false;
+    repaint();
 }
 
 void TapDisplay::resized()
