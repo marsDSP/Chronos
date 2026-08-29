@@ -248,7 +248,46 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
         buffer.getWritePointer(0),
         totalNumInputChannels > 1 ? buffer.getWritePointer(1) : nullptr
     };
+
+    float sumInL = 0.0f;
+    float sumInR = 0.0f;
+    for (int i = 0; i < numSamples; ++i)
+    {
+        const float l = buffer.getSample(0, i);
+        sumInL += l * l;
+        if (totalNumInputChannels > 1)
+        {
+            const float r = buffer.getSample(1, i);
+            sumInR += r * r;
+        }
+    }
+    const float rmsL = std::sqrt(sumInL / static_cast<float>(numSamples));
+    const float rmsR = (totalNumInputChannels > 1) ? std::sqrt(sumInR / static_cast<float>(numSamples)) : rmsL;
+
     engine.process(io.data(), totalNumInputChannels, numSamples);
+
+    float sumOutL = 0.0f;
+    float sumOutR = 0.0f;
+    for (int i = 0; i < numSamples; ++i)
+    {
+        const float l = buffer.getSample(0, i);
+        sumOutL += l * l;
+        if (totalNumInputChannels > 1)
+        {
+            const float r = buffer.getSample(1, i);
+            sumOutR += r * r;
+        }
+    }
+    const float wetRmsL = std::sqrt(sumOutL / static_cast<float>(numSamples));
+    const float wetRmsR = (totalNumInputChannels > 1) ? std::sqrt(sumOutR / static_cast<float>(numSamples)) : wetRmsL;
+
+    const MarsDSP::GUI::TapFeedFrame frame{
+        .rmsL = rmsL,
+        .rmsR = rmsR,
+        .wetRmsL = wetRmsL,
+        .wetRmsR = wetRmsR
+    };
+    tapFifo_.push(frame);
 }
 
 //==============================================================================

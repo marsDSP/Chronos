@@ -4,6 +4,8 @@
 #include <random>
 #include "dsp/ChronosEngine.h"
 #include "ChronosParameters.h"
+#include "utils/memory/SpscFifo.h"
+#include "gui/tap/TapFeedFrame.h"
 
 //==============================================================================
 class ChronosProcessor final : public AudioProcessor
@@ -43,6 +45,8 @@ public:
     ChronosParameters& getParameters() noexcept { return parameters; }
     const ChronosParameters& getParameters() const noexcept { return parameters; }
 
+    [[nodiscard]] MarsDSP::Memory::SpscFifo<MarsDSP::GUI::TapFeedFrame, 256>& getTapFifo() noexcept { return tapFifo_; }
+
     [[nodiscard]] double getCachedBpm() const noexcept { return cachedBpm_.load(std::memory_order_relaxed); }
 
     //==============================================================================
@@ -61,6 +65,7 @@ private:
     ChronosParameters parameters {apvts};
 
     MarsDSP::ChronosEngine engine;
+    MarsDSP::Memory::SpscFifo<MarsDSP::GUI::TapFeedFrame, 256> tapFifo_;
 
     /// Bring a stored state up to the current schema version.
     void migrateState_ (ValueTree& state, int fromVersion);

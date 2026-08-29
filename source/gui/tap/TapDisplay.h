@@ -62,6 +62,8 @@ private:
     bool hasDisplayState_ = false;
     double lastTimeSecs_ = 0.0;
     int delayMode_ = 0;
+    float currentWetLevelL_ = 0.0f;
+    float currentWetLevelR_ = 0.0f;
 
     // Drag and hover state
     enum class DragTarget { None, LeftTime, RightTime };

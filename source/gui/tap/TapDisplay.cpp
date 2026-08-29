@@ -184,6 +184,27 @@ void TapDisplay::timerCallback()
     const double dt = timeSecs - lastTimeSecs_;
     lastTimeSecs_ = timeSecs;
 
+    TapFeedFrame frame{};
+    float latestL = currentWetLevelL_;
+    float latestR = currentWetLevelR_;
+    bool hasFrame = false;
+    while (processorRef_.getTapFifo().pop(frame))
+    {
+        latestL = frame.wetRmsL;
+        latestR = frame.wetRmsR;
+        hasFrame = true;
+    }
+    if (hasFrame)
+    {
+        currentWetLevelL_ = 0.65f * currentWetLevelL_ + 0.35f * latestL;
+        currentWetLevelR_ = 0.65f * currentWetLevelR_ + 0.35f * latestR;
+    }
+    else
+    {
+        currentWetLevelL_ *= 0.90f;
+        currentWetLevelR_ *= 0.90f;
+    }
+
     advanceDisplayState_(static_cast<float>(dt));
     repaint();
 }
@@ -236,6 +257,9 @@ void TapDisplay::paint(Graphics& g)
     // Draw taps
     const auto drawLane = [&](const std::vector<DisplayTap>& taps, bool isTopLane)
     {
+        const float wetLevel = isTopLane ? currentWetLevelL_ : currentWetLevelR_;
+        const float envIntensity = std::clamp(wetLevel * 3.5f, 0.0f, 1.0f);
+
         for (const auto& tap : taps)
         {
             const float timeNorm = std::clamp(tap.timeSeconds / totalTime, 0.0f, 1.0f);
@@ -260,13 +284,15 @@ void TapDisplay::paint(Graphics& g)
                 barPath.lineTo(x, centerY + barHeight);
             }
 
-            g.setColour(tapCol.withAlpha(tap.dry ? 0.45f : 0.85f));
+            const float baseAlpha = tap.dry ? 0.45f : 0.85f;
+            g.setColour(tapCol.withAlpha(baseAlpha));
             g.strokePath(barPath, PathStrokeType(2.5f, PathStrokeType::curved, PathStrokeType::rounded));
 
-            // Head dot
+            // Head dot with envelope brightness modulation
             const float headY = isTopLane ? (centerY - barHeight) : (centerY + barHeight);
-            constexpr float headRadius = 2.5f;
-            g.setColour(tapCol);
+            const float headRadius = tap.dry ? 2.5f : (2.5f + envIntensity * 2.0f);
+            const float glowAlpha = tap.dry ? 1.0f : std::clamp(0.8f + envIntensity * 0.2f, 0.0f, 1.0f);
+            g.setColour(tapCol.withAlpha(glowAlpha));
             g.fillEllipse(x - headRadius, headY - headRadius, headRadius * 2.0f, headRadius * 2.0f);
         }
     };
