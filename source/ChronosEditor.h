@@ -6,6 +6,7 @@
 #include <JuceHeader.h>
 #include "ChronosProcessor.h"
 #include "gui/Colours.h"
+#include "gui/Metrics.h"
 #include "gui/LookAndFeel.h"
 #include "gui/Card.h"
 #include "gui/Header.h"
@@ -35,6 +36,7 @@ private:
     void updateCoreAccentColour_(float delayModeVal);
 
     ChronosProcessor& processorRef;
+    MarsDSP::GUI::Metrics metrics_;
     MarsDSP::GUI::LookAndFeel lnf_;
 
     MarsDSP::GUI::TapDisplay tapDisplay_;

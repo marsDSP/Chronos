@@ -19,6 +19,14 @@ void Card::setAccentColour(const Colour c)
     repaint();
 }
 
+void Card::setMetrics(const Metrics& m)
+{
+    metrics_ = m;
+    subTabs_.setMetrics(m);
+    resized();
+    repaint();
+}
+
 void Card::addContent(const String& tabName, std::unique_ptr<Component> panel)
 {
     const int index = static_cast<int>(contents_.size());
@@ -56,22 +64,31 @@ void Card::setSelectedContent(const int index)
 void Card::paint(Graphics& g)
 {
     const auto bounds = getLocalBounds().toFloat();
+    const float r = metrics_.pxf(static_cast<float>(Metrics::kCardCornerRadius));
+    const float sw = metrics_.stroke(static_cast<float>(Metrics::kCardBorderStroke));
 
     g.setColour(Colours::panelBackground);
-    g.fillRoundedRectangle(bounds, 6.0f);
+    g.fillRoundedRectangle(bounds, r);
 
     g.setColour(accent_.withAlpha(0.35f));
-    g.drawRoundedRectangle(bounds.reduced(0.5f), 6.0f, 1.0f);
+    g.drawRoundedRectangle(bounds.reduced(sw * 0.5f), r, sw);
 }
 
 void Card::resized()
 {
-    const auto bounds = getLocalBounds().reduced(8);
-    constexpr int subTabHeight = 26;
+    const int border = metrics_.px(static_cast<float>(Metrics::kCardBorderStroke));
+    const int hpad = metrics_.px(static_cast<float>(Metrics::kCardHPad));
+    const int subTabH = metrics_.px(static_cast<float>(Metrics::kSubTabStripH));
+    const int gap = metrics_.px(static_cast<float>(Metrics::kSubTabGap));
+    const int bottomPad = metrics_.px(static_cast<float>(Metrics::kCardBottomPad));
 
-    subTabs_.setBounds(bounds.getX(), bounds.getY(), bounds.getWidth(), subTabHeight);
+    const int x = border + hpad;
+    const int w = getWidth() - 2 * (border + hpad);
+    subTabs_.setBounds(x, border, w, subTabH);
 
-    const auto contentArea = bounds.withTrimmedTop(subTabHeight + 6);
+    const int contentY = border + subTabH + gap;
+    const int contentH = getHeight() - contentY - bottomPad;
+    const Rectangle<int> contentArea(x, contentY, w, contentH);
     for (auto& panel : contents_)
     {
         if (panel->isVisible())

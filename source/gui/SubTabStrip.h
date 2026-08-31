@@ -5,6 +5,7 @@
 
 #include <JuceHeader.h>
 #include "Colours.h"
+#include "Metrics.h"
 #include <functional>
 #include <vector>
 
@@ -21,6 +22,9 @@ public:
 
     // Set the accent colour for the active subtab.
     void setAccentColour(Colour c);
+
+    // Set the scale metrics for the button layout.
+    void setMetrics(const Metrics& m);
 
     // Set the selected subtab index.
     void setSelectedSubTab(int index);
@@ -47,6 +51,7 @@ private:
     std::vector<std::unique_ptr<SubTabButton>> buttons_;
     int selectedIndex_ = 0;
     Colour accentColour_ { Colours::textBright };
+    Metrics metrics_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SubTabStrip)
 };

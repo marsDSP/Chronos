@@ -61,6 +61,13 @@ void Header::setCoreMode(const int mode, const Colour accent)
     badge_.setMode(mode, accent);
 }
 
+void Header::setMetrics(const Metrics& m)
+{
+    metrics_ = m;
+    resized();
+    repaint();
+}
+
 void Header::toggleDelayMode_()
 {
     auto* p = processorRef_.getAPVTS().getParameter("delayMode");
@@ -83,17 +90,19 @@ void Header::paint(Graphics& g)
 void Header::resized()
 {
     const int h = getHeight();
+    const int left = metrics_.px(16.0f);
 
-    wordmark_.setBounds(16, 6, 130, 22);
-    subline_.setBounds(16, 28, 180, 14);
+    wordmark_.setBounds(left, metrics_.px(6.0f), metrics_.px(130.0f), metrics_.px(22.0f));
+    subline_.setBounds(left, metrics_.px(28.0f), metrics_.px(180.0f), metrics_.px(14.0f));
 
-    constexpr int badgeW = 70;
-    constexpr int badgeH = 22;
-    constexpr int bypassSize = 24;
-    const int right = getWidth() - 12;
+    const int badgeW = metrics_.px(70.0f);
+    const int badgeH = metrics_.px(22.0f);
+    const int bypassSize = metrics_.px(24.0f);
+    const int right = getWidth() - metrics_.px(12.0f);
 
     bypassButton_.setBounds(right - bypassSize, (h - bypassSize) / 2, bypassSize, bypassSize);
-    badge_.setBounds(right - bypassSize - 8 - badgeW, (h - badgeH) / 2, badgeW, badgeH);
+    badge_.setBounds(right - bypassSize - metrics_.px(8.0f) - badgeW,
+                     (h - badgeH) / 2, badgeW, badgeH);
 }
 
 } // namespace MarsDSP::GUI

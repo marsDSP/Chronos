@@ -5,6 +5,7 @@
 
 #include <JuceHeader.h>
 #include "Colours.h"
+#include "Metrics.h"
 
 class ChronosProcessor;
 
@@ -17,6 +18,9 @@ public:
     explicit Footer(ChronosProcessor& proc);
     ~Footer() override;
 
+    // Set the scale metrics for the footer layout.
+    void setMetrics(const Metrics& m);
+
     void paint(Graphics& g) override;
     void resized() override;
 
@@ -25,6 +29,7 @@ private:
     void refreshText_();
 
     ChronosProcessor& processorRef_;
+    Metrics metrics_;
     String statusText_;
     String versionText_;
 

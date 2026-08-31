@@ -1,6 +1,8 @@
 #include "ChronosEditor.h"
 #include "gui/controls/SegmentButtons.h"
 
+using Metrics = MarsDSP::GUI::Metrics;
+
 namespace {
 
 using namespace MarsDSP::GUI::Knobs;
@@ -377,9 +379,10 @@ ChronosEditor::ChronosEditor(ChronosProcessor& p)
     processorRef.getAPVTS().addParameterListener("delayMode", this);
 
     setResizable(true, true);
-    setResizeLimits(600, 384, 1600, 1024);
-    getConstrainer()->setFixedAspectRatio(1000.0 / 640.0);
-    setSize(1000, 640);
+    setResizeLimits(Metrics::kMinWidth, Metrics::kMinHeight,
+                    Metrics::kMaxWidth, Metrics::kMaxHeight);
+    getConstrainer()->setFixedAspectRatio(Metrics::kDesignAspect);
+    setSize(Metrics::kDefaultWidth, Metrics::kDefaultHeight);
 }
 
 ChronosEditor::~ChronosEditor()
@@ -392,9 +395,11 @@ void ChronosEditor::parameterChanged(const String& parameterID, const float newV
 {
     if (parameterID == "delayMode")
     {
-        MessageManager::callAsync([this, newValue]
+        const auto safe = Component::SafePointer<ChronosEditor>(this);
+        MessageManager::callAsync([safe, newValue]
         {
-            updateCoreAccentColour_(newValue);
+            if (safe != nullptr)
+                safe->updateCoreAccentColour_(newValue);
         });
     }
 }
@@ -416,28 +421,38 @@ void ChronosEditor::paint(Graphics& g)
 
 void ChronosEditor::resized()
 {
+    const auto m = Metrics::fromWidth(getWidth());
+    metrics_ = m;
+
+    header_.setMetrics(m);
+    footer_.setMetrics(m);
+    timeCard_.setMetrics(m);
+    repeatsCard_.setMetrics(m);
+    characterCard_.setMetrics(m);
+    outputCard_.setMetrics(m);
+
     const int w = getWidth();
-    const int h = getHeight();
-    const float scale = static_cast<float>(h) / 640.0f;
+    const int side = m.px(Metrics::kSideMargin);
+    const int gutter = m.px(Metrics::kCardGutter);
 
-    const int headerH = juce::roundToInt(52.0f * scale);
-    const int footerH = juce::roundToInt(36.0f * scale);
-    const int tapH = juce::roundToInt(200.0f * scale);
+    int y = m.px(Metrics::kTopPad);
+    const int headerH = m.px(Metrics::kHeaderH);
+    header_.setBounds(0, y, w, headerH);
+    y += headerH + m.px(Metrics::kGapHeader);
 
-    header_.setBounds(0, 0, w, headerH);
-    footer_.setBounds(0, h - footerH, w, footerH);
+    const int tapH = m.px(Metrics::kTapH);
+    tapDisplay_.setBounds(side, y, w - 2 * side, tapH);
+    y += tapH + m.px(Metrics::kGapTap);
 
-    const int tapY = headerH + 4;
-    tapDisplay_.setBounds(12, tapY, w - 24, tapH);
+    const int cardH = m.px(Metrics::kCardRowH);
+    const int cardW = (w - 2 * side - 3 * gutter) / 4;
+    int cx = side;
+    timeCard_.setBounds(cx, y, cardW, cardH);      cx += cardW + gutter;
+    repeatsCard_.setBounds(cx, y, cardW, cardH);    cx += cardW + gutter;
+    characterCard_.setBounds(cx, y, cardW, cardH);  cx += cardW + gutter;
+    outputCard_.setBounds(cx, y, cardW, cardH);
+    y += cardH + m.px(Metrics::kGapCards);
 
-    const int cardY = tapY + tapH + 8;
-    const int cardH = h - cardY - footerH - 4;
-    constexpr int cardInset = 12;
-    constexpr int cardGap = 8;
-    const int cardW = (w - 2 * cardInset - 3 * cardGap) / 4;
-    int cx = cardInset;
-    timeCard_.setBounds(cx, cardY, cardW, cardH);      cx += cardW + cardGap;
-    repeatsCard_.setBounds(cx, cardY, cardW, cardH);    cx += cardW + cardGap;
-    characterCard_.setBounds(cx, cardY, cardW, cardH);  cx += cardW + cardGap;
-    outputCard_.setBounds(cx, cardY, cardW, cardH);
+    const int footerH = m.px(Metrics::kFooterH);
+    footer_.setBounds(0, y, w, footerH);
 }

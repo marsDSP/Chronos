@@ -5,6 +5,7 @@
 
 #include <JuceHeader.h>
 #include "Colours.h"
+#include "Metrics.h"
 #include "controls/PowerButton.h"
 #include <memory>
 
@@ -20,6 +21,9 @@ public:
 
     // Update the core badge text and fill for the delay mode.
     void setCoreMode(int mode, Colour accent);
+
+    // Set the scale metrics for the header layout.
+    void setMetrics(const Metrics& m);
 
     void paint(Graphics& g) override;
     void resized() override;
@@ -37,6 +41,7 @@ private:
     };
 
     ChronosProcessor& processorRef_;
+    Metrics metrics_;
     Label wordmark_;
     Label subline_;
     CoreBadge badge_;

@@ -59,14 +59,20 @@ void SegmentButtons::syncButtons()
 
 void SegmentButtons::parameterChanged(const String& parameterID, const float newValue)
 {
+    const auto safe = Component::SafePointer<SegmentButtons>(this);
+
     if (parameterID == paramID_)
     {
-        MessageManager::callAsync([this] { syncButtons(); });
+        MessageManager::callAsync([safe] { if (safe != nullptr) safe->syncButtons(); });
     }
     else if (coreLinked_ && parameterID == "delayMode")
     {
         const Colour col = (newValue > 0.5f) ? Colours::accentDelayBBD : Colours::accentDelayDigital;
-        MessageManager::callAsync([this, col] { setAccentColours(col, Colours::background); });
+        MessageManager::callAsync([safe, col]
+        {
+            if (safe != nullptr)
+                safe->setAccentColours(col, Colours::background);
+        });
     }
 }
 

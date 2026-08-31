@@ -44,6 +44,13 @@ void SubTabStrip::setAccentColour(const Colour c)
         btn->setAccentColour(c);
 }
 
+void SubTabStrip::setMetrics(const Metrics& m)
+{
+    metrics_ = m;
+    resized();
+    repaint();
+}
+
 void SubTabStrip::addSubTab(const String& name)
 {
     const int index = static_cast<int>(buttons_.size());
@@ -86,14 +93,16 @@ void SubTabStrip::resized()
         return;
 
     const auto bounds = getLocalBounds();
-    constexpr int buttonWidth = 90;
-    constexpr int gap = 6;
-    const int totalWidth = static_cast<int>(buttons_.size()) * buttonWidth + (static_cast<int>(buttons_.size()) - 1) * gap;
+    const int buttonWidth = metrics_.px(90.0f);
+    const int gap = metrics_.px(6.0f);
+    const int buttonH = metrics_.px(24.0f);
+    const int n = static_cast<int>(buttons_.size());
+    const int totalWidth = n * buttonWidth + (n - 1) * gap;
     int startX = (bounds.getWidth() - totalWidth) / 2;
 
     for (auto& btn : buttons_)
     {
-        btn->setBounds(startX, (bounds.getHeight() - 24) / 2, buttonWidth, 24);
+        btn->setBounds(startX, (bounds.getHeight() - buttonH) / 2, buttonWidth, buttonH);
         startX += buttonWidth + gap;
     }
 }

@@ -16,6 +16,12 @@ Footer::~Footer()
     stopTimer();
 }
 
+void Footer::setMetrics(const Metrics& m)
+{
+    metrics_ = m;
+    repaint();
+}
+
 void Footer::refreshText_()
 {
     const double sr = processorRef_.getSampleRate();
@@ -44,7 +50,7 @@ void Footer::paint(Graphics& g)
     g.setColour(Colours::textDim);
     g.setFont(Font(FontOptions(11.0f)));
 
-    const auto bounds = getLocalBounds().reduced(12, 0);
+    const auto bounds = getLocalBounds().reduced(metrics_.px(12.0f), 0);
     g.drawText(statusText_, bounds, Justification::centredLeft, true);
     g.drawText("v" + versionText_, bounds, Justification::centredRight, true);
 }
