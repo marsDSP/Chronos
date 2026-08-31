@@ -1,6 +1,7 @@
 #include "TapDisplay.h"
 #include "../../ChronosProcessor.h"
 #include "../Colours.h"
+#include "../Fonts.h"
 #include "utils/helpers/TempoSync.h"
 
 #include <algorithm>
@@ -187,6 +188,12 @@ TapDisplay::~TapDisplay()
 {
     stopTimer();
     processorRef_.getAPVTS().removeParameterListener("delayMode", this);
+}
+
+void TapDisplay::setMetrics(const Metrics& m)
+{
+    metrics_ = m;
+    repaint();
 }
 
 void TapDisplay::parameterChanged(const String& parameterID, const float newValue)
@@ -507,7 +514,7 @@ void TapDisplay::paint(Graphics& g)
             g.setColour(accent.withAlpha(0.04f));
             g.fillRect(plotBounds);
             g.setColour(accent.withAlpha(0.6f));
-            g.setFont(Font(FontOptions(10.0f)).boldened());
+            g.setFont(Fonts::font(Fonts::Weight::Medium, metrics_.font(10.0f)));
             g.drawText("L/R LINK", plotBounds.reduced(4.0f).toNearestInt(), Justification::topLeft, false);
         }
         else if (hoverUpper)
@@ -515,7 +522,7 @@ void TapDisplay::paint(Graphics& g)
             g.setColour(accent.withAlpha(0.05f));
             g.fillRect(plotBounds.withBottom(centerY));
             g.setColour(accent.withAlpha(0.6f));
-            g.setFont(Font(FontOptions(10.0f)).boldened());
+            g.setFont(Fonts::font(Fonts::Weight::Medium, metrics_.font(10.0f)));
             g.drawText("LEFT TIME", plotBounds.reduced(4.0f).toNearestInt(), Justification::topLeft, false);
         }
         else
@@ -523,7 +530,7 @@ void TapDisplay::paint(Graphics& g)
             g.setColour(accent.withAlpha(0.05f));
             g.fillRect(plotBounds.withTop(centerY));
             g.setColour(accent.withAlpha(0.6f));
-            g.setFont(Font(FontOptions(10.0f)).boldened());
+            g.setFont(Fonts::font(Fonts::Weight::Medium, metrics_.font(10.0f)));
             g.drawText("RIGHT TIME", plotBounds.reduced(4.0f).toNearestInt(), Justification::bottomLeft, false);
         }
     }
@@ -540,7 +547,7 @@ void TapDisplay::paint(Graphics& g)
 
     // Ruler labels
     g.setColour(Colours::rulerText);
-    g.setFont(Font(FontOptions(10.0f)));
+    g.setFont(Fonts::font(Fonts::Weight::Regular, metrics_.font(9.0f)));
     if (synced)
     {
         const int div = processorRef_.getParameters().getRawDelayDivision();
@@ -603,7 +610,7 @@ void TapDisplay::paint(Graphics& g)
         }
 
         g.setColour(Colours::rulerText);
-        g.setFont(Font(FontOptions(10.0f)).boldened());
+        g.setFont(Fonts::font(Fonts::Weight::Medium, metrics_.font(10.0f)));
         const float readoutW = 160.0f;
         float rx = cursorX + 6.0f;
         if (rx + readoutW > displayBounds.getRight())

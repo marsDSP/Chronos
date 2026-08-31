@@ -423,9 +423,11 @@ void ChronosEditor::resized()
 {
     const auto m = Metrics::fromWidth(getWidth());
     metrics_ = m;
+    setCurrentMetrics(m);
 
     header_.setMetrics(m);
     footer_.setMetrics(m);
+    tapDisplay_.setMetrics(m);
     timeCard_.setMetrics(m);
     repeatsCard_.setMetrics(m);
     characterCard_.setMetrics(m);

@@ -1,5 +1,6 @@
 #include "SubTabStrip.h"
 #include "Colours.h"
+#include "Fonts.h"
 
 namespace MarsDSP::GUI {
 
@@ -31,8 +32,8 @@ void SubTabStrip::SubTabButton::paintButton(Graphics& g,
     else
         g.setColour(Colours::textDim);
 
-    g.setFont(Font(FontOptions(11.0f)).boldened());
-    g.drawText(getButtonText().toUpperCase(), bounds, Justification::centred, true);
+    g.setFont(Fonts::font(Fonts::Weight::Medium, currentMetrics().font(10.0f)));
+    g.drawText(getButtonText().toUpperCase(), bounds, Justification::centred, false);
 }
 
 SubTabStrip::SubTabStrip() = default;

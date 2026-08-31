@@ -4,6 +4,8 @@
 #define CHRONOS_TAP_DISPLAY_H
 
 #include <JuceHeader.h>
+#include "../Metrics.h"
+#include "../Fonts.h"
 #include "TapSimulation.h"
 
 class ChronosProcessor;
@@ -34,6 +36,9 @@ public:
 
     void parameterChanged(const String& parameterID, float newValue) override;
 
+    // Set the scale metrics for the label fonts.
+    void setMetrics(const Metrics& m);
+
 private:
     void timerCallback() override;
 
@@ -57,6 +62,7 @@ private:
     void advanceEases_(float deltaSeconds);
 
     ChronosProcessor& processorRef_;
+    Metrics metrics_;
     std::vector<TrackedTap> trackedL_;
     std::vector<TrackedTap> trackedR_;
     float displayedTotalTime_ = 0.25f;

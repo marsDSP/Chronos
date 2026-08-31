@@ -5,6 +5,8 @@
 
 #include <JuceHeader.h>
 #include "../Colours.h"
+#include "../Fonts.h"
+#include "../Metrics.h"
 
 namespace MarsDSP::GUI {
 
@@ -47,9 +49,9 @@ public:
             g.setColour(shouldDrawButtonAsHighlighted ? Colours::textPrimary : Colours::textDim);
         }
 
-        const auto font = Font(FontOptions(11.0f)).boldened();
+        const auto font = Fonts::font(Fonts::Weight::Medium, currentMetrics().font(10.0f));
         g.setFont(font);
-        g.drawText(getButtonText().toUpperCase(), bounds, Justification::centred, true);
+        g.drawText(getButtonText().toUpperCase(), bounds, Justification::centred, false);
     }
 
 private:

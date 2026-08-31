@@ -1,5 +1,6 @@
 #include "Footer.h"
 #include "../ChronosProcessor.h"
+#include "Fonts.h"
 
 namespace MarsDSP::GUI {
 
@@ -48,7 +49,7 @@ void Footer::paint(Graphics& g)
     g.drawHorizontalLine(0, 0.0f, static_cast<float>(getWidth()));
 
     g.setColour(Colours::textDim);
-    g.setFont(Font(FontOptions(11.0f)));
+    g.setFont(Fonts::font(Fonts::Weight::Regular, metrics_.font(10.0f)));
 
     const auto bounds = getLocalBounds().reduced(metrics_.px(12.0f), 0);
     g.drawText(statusText_, bounds, Justification::centredLeft, true);

@@ -5,6 +5,8 @@
 
 #include <JuceHeader.h>
 #include "../Colours.h"
+#include "../Fonts.h"
+#include "../Metrics.h"
 #include "TimeDisplayFormatter.h"
 
 namespace MarsDSP::GUI {
@@ -48,10 +50,8 @@ public:
         g.drawRoundedRectangle(bounds.reduced(0.5f), 4.0f, 1.0f);
 
         const String text = TimeDisplayFormatter::getDelayTimeText(slider_, syncActive_);
-
-        g.setFont(Font(FontOptions(13.0f)).boldened());
-        g.setColour(accentColour_);
-        g.drawText(text, bounds, Justification::centred, false);
+        const Font f = Fonts::font(Fonts::Weight::Semibold, currentMetrics().font(13.0f));
+        Fonts::drawFixedAdvanceText(g, f, text, bounds, accentColour_);
     }
 
     void mouseDown(const MouseEvent& e) override

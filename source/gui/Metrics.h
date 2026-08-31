@@ -82,9 +82,24 @@ namespace MarsDSP::GUI
         // Scale a font height. Never round.
         [[nodiscard]] float font(const float v) const noexcept { return v * s; }
 
-        // Scale a stroke width. Hold a hairline above zero.
-        [[nodiscard]] float stroke(const float v) const noexcept { return std::max(1.0f, v * s); }
-    };
-} // namespace MarsDSP::GUI
+    // Scale a stroke width. Hold a hairline above zero.
+    float stroke(float v) const noexcept { return std::max(1.0f, v * s); }
+};
 
+// The current editor metrics. The editor sets this once per resized().
+// Components read it to scale dimensions and fonts.
+inline Metrics& metricsMutable() noexcept
+{
+    static Metrics m{};
+    return m;
+}
+
+inline const Metrics& currentMetrics() noexcept
+{
+    return metricsMutable();
+}
+
+inline void setCurrentMetrics(Metrics m) noexcept { metricsMutable() = m; }
+
+} // namespace MarsDSP::GUI
 #endif

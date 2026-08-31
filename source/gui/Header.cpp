@@ -1,5 +1,6 @@
 #include "Header.h"
 #include "../ChronosProcessor.h"
+#include "Fonts.h"
 
 namespace MarsDSP::GUI {
 
@@ -28,7 +29,7 @@ void Header::CoreBadge::paintButton(Graphics& g,
     g.fillRoundedRectangle(bounds, bounds.getHeight() * 0.5f);
 
     g.setColour(Colours::background);
-    g.setFont(Font(FontOptions(11.0f)).boldened());
+    g.setFont(Fonts::font(Fonts::Weight::Semibold, currentMetrics().font(11.0f)));
     g.drawText(mode_ == 1 ? "BBD" : "DIGITAL", bounds, Justification::centred, true);
 }
 
@@ -37,13 +38,11 @@ Header::Header(ChronosProcessor& proc)
 {
     wordmark_.setText("CHRONOS", dontSendNotification);
     wordmark_.setColour(Label::textColourId, Colours::textBright);
-    wordmark_.setFont(Font(FontOptions(18.0f)).boldened());
     wordmark_.setJustificationType(Justification::centredLeft);
     addAndMakeVisible(wordmark_);
 
     subline_.setText("NONLINEAR DELAY ENGINE", dontSendNotification);
     subline_.setColour(Label::textColourId, Colours::textDim);
-    subline_.setFont(Font(FontOptions(9.0f)));
     subline_.setJustificationType(Justification::centredLeft);
     addAndMakeVisible(subline_);
 
@@ -91,6 +90,9 @@ void Header::resized()
 {
     const int h = getHeight();
     const int left = metrics_.px(16.0f);
+
+    wordmark_.setFont(Fonts::font(Fonts::Weight::Semibold, metrics_.font(15.0f)));
+    subline_.setFont(Fonts::font(Fonts::Weight::Regular, metrics_.font(9.0f)));
 
     wordmark_.setBounds(left, metrics_.px(6.0f), metrics_.px(130.0f), metrics_.px(22.0f));
     subline_.setBounds(left, metrics_.px(28.0f), metrics_.px(180.0f), metrics_.px(14.0f));

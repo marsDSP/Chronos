@@ -5,6 +5,8 @@
 
 #include <JuceHeader.h>
 #include "Colours.h"
+#include "Fonts.h"
+#include "Metrics.h"
 
 namespace MarsDSP::GUI::Knobs {
     class PedalKnob : public LookAndFeel_V4 {
@@ -107,17 +109,16 @@ namespace MarsDSP::GUI::Knobs {
         ~PDLKnob() override;
 
         void paint(Graphics &g) override;
-        void paintOverChildren(Graphics &g) override;
         void resized() override;
         Slider &getSlider() { return slider; }
-        void setLabelText(const String &text) { label.setText(text, dontSendNotification); }
+        void setLabelText(const String &text) { labelText_ = text; repaint(); }
         void setArcColour(Colour c);
         void setDrawFromMiddle(bool v) { slider.getProperties().set("drawFromMiddle", v); }
 
     private:
         Slider slider;
-        Label label;
-        Label valueLabel;
+        String labelText_;
+        Colour labelColour_ { Colours::textDim };
         Colour arcColour;
         PedalKnob lnf;
         std::unique_ptr<AudioProcessorValueTreeState::SliderAttachment> attachment;

@@ -1,4 +1,6 @@
 #include "LookAndFeel.h"
+#include "Fonts.h"
+#include "Metrics.h"
 
 namespace MarsDSP::GUI {
 
@@ -21,17 +23,17 @@ LookAndFeel::LookAndFeel()
 
 Font LookAndFeel::getLabelFont(Label&)
 {
-    return Font(FontOptions(13.0f));
+    return Fonts::font(Fonts::Weight::Regular, currentMetrics().font(13.0f));
 }
 
 Font LookAndFeel::getComboBoxFont(ComboBox&)
 {
-    return Font(FontOptions(12.0f));
+    return Fonts::font(Fonts::Weight::Regular, currentMetrics().font(12.0f));
 }
 
 Font LookAndFeel::getPopupMenuFont()
 {
-    return Font(FontOptions(14.0f));
+    return Fonts::font(Fonts::Weight::Regular, currentMetrics().font(14.0f));
 }
 
 void LookAndFeel::drawRotarySlider(Graphics& g,
@@ -135,7 +137,7 @@ void LookAndFeel::drawGroupComponentOutline(Graphics& g,
     constexpr float textEdgeGap = 4.0f;
     auto cornerSize = 5.0f;
 
-    const Font font = Font(FontOptions(textH));
+    const Font font = Fonts::font(Fonts::Weight::Semibold, currentMetrics().font(textH));
     constexpr auto x = indent;
     const auto y = font.getAscent() - 3.0f;
     const auto w = std::max(0.0f, static_cast<float>(width) - x * 2.0f);

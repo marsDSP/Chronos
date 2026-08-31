@@ -130,14 +130,32 @@ file(GLOB_RECURSE SourceFiles CONFIGURE_DEPENDS
 # Sources to main project
 target_sources("${PROJECT_NAME}" PRIVATE ${SourceFiles})
 
-# Assets setup
-file(GLOB_RECURSE Assets CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/assets/*.*")
+# Assets setup. Embed the knob artwork only. The raw font download under
+# assets/fonts is excluded; label fonts come from the resources/fonts target below.
+file(GLOB_RECURSE Assets CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/*.*")
+list(FILTER Assets EXCLUDE REGEX "/fonts/")
 
 if(Assets)
     juce_add_binary_data(AudioPluginData SOURCES ${Assets})
     target_link_libraries("${PROJECT_NAME}" PRIVATE AudioPluginData)
 endif()
 
+# Label typeface (section 4.5). The repository owner supplies the TTF files.
+# Guard on the directory and a nonempty file list so a clean checkout without
+# the fonts still configures and builds; the editor falls back to the default
+# face when the resource is absent.
+set(ChronosFontsDir "${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts")
+if(EXISTS "${ChronosFontsDir}" AND IS_DIRECTORY "${ChronosFontsDir}")
+    file(GLOB ChronosFontFiles CONFIGURE_DEPENDS "${ChronosFontsDir}/*.ttf")
+    if(ChronosFontFiles)
+        juce_add_binary_data(ChronosFonts
+                NAMESPACE ChronosFonts
+                HEADER_NAME ChronosFonts.h
+                SOURCES ${ChronosFontFiles})
+        target_link_libraries("${PROJECT_NAME}" PRIVATE ChronosFonts)
+    endif()
+endif()
 # Link libraries to main project
 target_link_libraries("${PROJECT_NAME}" PUBLIC
         SharedCode
