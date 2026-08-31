@@ -625,7 +625,12 @@ ChronosEditor::ChronosEditor(ChronosProcessor& p)
     setResizeLimits(Metrics::kMinWidth, Metrics::kMinHeight,
                     Metrics::kMaxWidth, Metrics::kMaxHeight);
     getConstrainer()->setFixedAspectRatio(Metrics::kDesignAspect);
-    setSize(Metrics::kDefaultWidth, Metrics::kDefaultHeight);
+
+    // Read the stored editor width. Default to 760. Clamp to [640, 1600].
+    const int storedW = static_cast<int>(processorRef.getAPVTS().state.getProperty("editorWidth", 760));
+    const int w = std::clamp(storedW, Metrics::kMinWidth, Metrics::kMaxWidth);
+    const int h = juce::roundToInt(static_cast<float>(w) / static_cast<float>(Metrics::kDesignAspect));
+    setSize(w, h);
 
     header_.setExplicitFocusOrder(1);
     tapDisplay_.setExplicitFocusOrder(2);
@@ -745,4 +750,7 @@ void ChronosEditor::resized()
 
     const int footerH = m.px(Metrics::kFooterH);
     footer_.setBounds(0, y, w, footerH);
+
+    // Persist the editor width on the message thread. Height is derived.
+    processorRef.getAPVTS().state.setProperty("editorWidth", getWidth(), nullptr);
 }

@@ -385,15 +385,41 @@ void TapDisplay::timerCallback()
     }
 
     // Run the sim once per tick, and only when a parameter changed.
+    bool simRan = false;
     const auto params = buildParameters_();
     if (!hasState_ || paramsChanged_(params))
     {
         runSimulation_(params);
         lastParams_ = params;
         hasState_ = true;
+        simRan = true;
     }
 
     advanceEases_(static_cast<float>(dt));
+
+    // Repaint only when something changed since the last tick.
+    const bool hoverChanged = (isHovered_ != prevIsHovered_)
+                         || (hoverPos_ != prevHoverPos_);
+    const bool wetChanged = (std::fabs(currentWetLevelL_ - prevWetLevelL_) > 0.005f
+                          || std::fabs(currentWetLevelR_ - prevWetLevelR_) > 0.005f);
+
+    const auto laneConverging = [](const std::vector<TrackedTap>& lane) {
+        for (const auto& t : lane)
+            if (t.dying || std::fabs(t.displayedTime - t.targetTime) > 1e-4f
+                || std::fabs(t.displayedGain - t.targetGain) > 1e-4f)
+                return true;
+        return false;
+    };
+    const bool tapsConverging = laneConverging(trackedL_) || laneConverging(trackedR_);
+    const bool spanConverging = (std::fabs(displayedTotalTime_ - targetTotalTime_) > 1e-4f);
+
+    prevIsHovered_ = isHovered_;
+    prevHoverPos_ = hoverPos_;
+    prevWetLevelL_ = currentWetLevelL_;
+    prevWetLevelR_ = currentWetLevelR_;
+    if (! simRan && ! tapsConverging && ! spanConverging && ! hoverChanged && ! wetChanged)
+        return;
+
     repaint();
 }
 

@@ -76,6 +76,12 @@ private:
     float currentWetLevelL_ = 0.0f;
     float currentWetLevelR_ = 0.0f;
 
+    // Previous-frame state for the paint budget gate.
+    Point<float> prevHoverPos_{};
+    bool prevIsHovered_ = false;
+    float prevWetLevelL_ = 0.0f;
+    float prevWetLevelR_ = 0.0f;
+
     // Drag and hover state
     enum class DragTarget { None, LeftTime, RightTime };
     DragTarget activeDragTarget_ = DragTarget::None;

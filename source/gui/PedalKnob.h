@@ -39,61 +39,74 @@ namespace MarsDSP::GUI::Knobs {
                               const float sliderPos,
                               const float rotaryStartAngle,
                               const float rotaryEndAngle,
-                              Slider&) override
-        {
-            const auto radius = std::min((height / 2.0f), (width / 2.0f));
-            const auto centreX = x + width * 0.5f;
-            const auto centreY = y + height * 0.5f;
-            const auto rw = radius * 2.0f;
-            const auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
+                              Slider& slider) override
+    {
+        const auto radius = std::min((height / 2.0f), (width / 2.0f));
+        const auto centreX = x + width * 0.5f;
+        const auto centreY = y + height * 0.5f;
+        const auto rw = radius * 2.0f;
+        const auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
 
-            // Rebuild the resampled frame set only when the integer diameter changes.
-            const int d = juce::roundToInt(rw);
-            rebuildCache(d);
-            const float scale = static_cast<float>(d) / 431.0f;
 
-            g.setImageResamplingQuality(Graphics::highResamplingQuality);
+        // Read the display scale. Clamp to [1, 4]. Fall back to 1.0 off-display.
+        double scaleFactor = Component::getApproximateScaleFactorForComponent(&slider);
+        if (scaleFactor < 1.0) scaleFactor = 1.0;
+        if (scaleFactor > 4.0) scaleFactor = 4.0;
 
-            // Draw a cached layer. The image is already at the target size,
-            // so the transform carries rotation and translation only.
-            auto drawLayer = [&](const Image &img,
+        // The cache key is the physical diameter.
+        const int d = juce::roundToInt(rw);
+        const int physicalD = juce::roundToInt(static_cast<double>(d) * scaleFactor);
+        rebuildCache(physicalD);
+        const float scale = static_cast<float>(d) / 431.0f;
+
+        g.setImageResamplingQuality(Graphics::highResamplingQuality);
+
+        // Draw a cached layer. The image is at the physical size,
+        // so the transform scales down to the logical size and carries
+        // rotation and translation.
+        auto drawLayer = [&](const Image &img,
                                  const float cxSrc,
                                  const float cySrc,
                                  const float rotationAngle)
-            {
-                if (! img.isValid())
-                    return;
-                const float cx = cxSrc * scale;
-                const float cy = cySrc * scale;
+        {
+            if (! img.isValid())
+                return;
+            const float cx = cxSrc * scale;
+            const float cy = cySrc * scale;
 
-                AffineTransform t;
-                t = t.translated(-cx, -cy);
-                if (rotationAngle != 0.0f) t = t.rotated(rotationAngle);
-                t = t.translated(centreX, centreY);
-                g.drawImageTransformed(img, t);
-            };
+            const float invScale = static_cast<float>(1.0 / scaleFactor);
 
-            drawLayer(cache_.ellipse2, 215.0f, 157.5f, 0.0f);
-            drawLayer(cache_.ellipse3,
-                      static_cast<float>(srcEllipse3.getWidth()) * 0.5f,
-                      static_cast<float>(srcEllipse3.getHeight()) * 0.5f, 0.0f);
-            drawLayer(cache_.ellipse4,
-                      static_cast<float>(srcEllipse4.getWidth()) * 0.5f,
-                      static_cast<float>(srcEllipse4.getHeight()) * 0.5f, angle);
+            AffineTransform t;
+            t = t.scaled(invScale);
+            t = t.translated(-cx, -cy);
+            if (rotationAngle != 0.0f) t = t.rotated(rotationAngle);
+            t = t.translated(centreX, centreY);
+            g.drawImageTransformed(img, t);
+        };
 
-            if (cache_.rectangle2.isValid())
-            {
-                const float rcx = static_cast<float>(srcRectangle2.getWidth()) * 0.5f * scale;
-                const float rcy = static_cast<float>(srcRectangle2.getHeight()) * 0.5f * scale;
+        drawLayer(cache_.ellipse2, 215.0f, 157.5f, 0.0f);
+        drawLayer(cache_.ellipse3,
+                  static_cast<float>(srcEllipse3.getWidth()) * 0.5f,
+                  static_cast<float>(srcEllipse3.getHeight()) * 0.5f, 0.0f);
+        drawLayer(cache_.ellipse4,
+                  static_cast<float>(srcEllipse4.getWidth()) * 0.5f,
+                  static_cast<float>(srcEllipse4.getHeight()) * 0.5f, angle);
 
-                AffineTransform t;
-                t = t.translated(-rcx, -rcy);
-                t = t.translated(0.0f, -80.0f * scale);
-                t = t.rotated(angle);
-                t = t.translated(centreX, centreY);
-                g.drawImageTransformed(cache_.rectangle2, t);
-            }
+        if (cache_.rectangle2.isValid())
+        {
+            const float rcx = static_cast<float>(srcRectangle2.getWidth()) * 0.5f * scale;
+            const float rcy = static_cast<float>(srcRectangle2.getHeight()) * 0.5f * scale;
+            const float invScale = static_cast<float>(1.0 / scaleFactor);
+
+            AffineTransform t;
+            t = t.scaled(invScale);
+            t = t.translated(-rcx, -rcy);
+            t = t.translated(0.0f, -80.0f * scale);
+            t = t.rotated(angle);
+            t = t.translated(centreX, centreY);
+            g.drawImageTransformed(cache_.rectangle2, t);
         }
+    }
 
     private:
         struct CachedFrames {
