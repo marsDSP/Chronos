@@ -16,6 +16,11 @@ void Card::setAccentColour(const Colour c)
 {
     accent_ = c;
     subTabs_.setAccentColour(c);
+
+    for (auto& panel : contents_)
+        if (auto* ac = dynamic_cast<AccentConsumer*>(panel.get()))
+            ac->setAccentColour(c);
+
     repaint();
 }
 
@@ -70,7 +75,7 @@ void Card::paint(Graphics& g)
     g.setColour(Colours::panelBackground);
     g.fillRoundedRectangle(bounds, r);
 
-    g.setColour(accent_.withAlpha(0.35f));
+    g.setColour(tint(Colours::panelBackground, accent_, kTintCardBorder));
     g.drawRoundedRectangle(bounds.reduced(sw * 0.5f), r, sw);
 }
 

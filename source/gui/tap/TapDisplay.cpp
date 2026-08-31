@@ -178,16 +178,12 @@ RulerTicks computeSyncTicks(const float span, const float secondsPerBeat, const 
 TapDisplay::TapDisplay(ChronosProcessor& processor)
     : processorRef_(processor)
 {
-    delayMode_ = processorRef_.getParameters().getRawDelayMode();
-    processorRef_.getAPVTS().addParameterListener("delayMode", this);
-
     startTimerHz(kDisplayTimerHz);
 }
 
 TapDisplay::~TapDisplay()
 {
     stopTimer();
-    processorRef_.getAPVTS().removeParameterListener("delayMode", this);
 }
 
 void TapDisplay::setMetrics(const Metrics& m)
@@ -196,16 +192,10 @@ void TapDisplay::setMetrics(const Metrics& m)
     repaint();
 }
 
-void TapDisplay::parameterChanged(const String& parameterID, const float newValue)
+void TapDisplay::setAccentColour(const Colour c)
 {
-    if (parameterID == "delayMode")
-    {
-        MessageManager::callAsync([this, newValue]
-        {
-            delayMode_ = static_cast<int>(newValue + 0.5f);
-            repaint();
-        });
-    }
+    accentColour_ = c;
+    repaint();
 }
 
 TapSim::Parameters TapDisplay::buildParameters_() const
@@ -400,14 +390,15 @@ void TapDisplay::timerCallback()
 void TapDisplay::paint(Graphics& g)
 {
     const auto bounds = getLocalBounds().toFloat();
-    const Colour accent = (delayMode_ == 1) ? Colours::accentDelayBBD : Colours::accentDelayDigital;
+    const Colour accent = accentColour_;
+    const Colour plotFill    = tintInk(accent, kTintPlotFill);
+    const Colour plotFillLit = tintInk(accent, kTintPlotFillLit);
 
-    g.setColour(Colours::burntOrange);
+    g.setColour(plotFill);
     g.fillRoundedRectangle(bounds, 5.0f);
 
-    g.setColour(accent.withAlpha(0.25f));
+    g.setColour(tintInk(accent, kTintDisplayBorder));
     g.drawRoundedRectangle(bounds.reduced(0.5f), 5.0f, 1.0f);
-
     constexpr float padding = 10.0f;
     const auto displayBounds = bounds.reduced(padding);
 
@@ -444,17 +435,17 @@ void TapDisplay::paint(Graphics& g)
     };
 
     // Minor grid lines
-    g.setColour(accent.withAlpha(0.05f));
+    g.setColour(tintInk(accent, kTintGridMinor));
     for (const float t : ticks.minors)
         g.drawVerticalLine(static_cast<int>(timeToX(t)), plotBounds.getY(), plotBounds.getBottom());
 
     // Major grid lines
-    g.setColour(accent.withAlpha(0.12f));
+    g.setColour(tintInk(accent, kTintGridMajor));
     for (const float t : ticks.majors)
         g.drawVerticalLine(static_cast<int>(timeToX(t)), plotBounds.getY(), plotBounds.getBottom());
 
     // Center divider
-    g.setColour(accent.withAlpha(0.12f));
+    g.setColour(tint(plotFillLit, accent, kTintCentreLine));
     g.drawHorizontalLine(static_cast<int>(centerY), plotBounds.getX(), plotBounds.getRight());
 
     // Draw taps
@@ -537,11 +528,11 @@ void TapDisplay::paint(Graphics& g)
 
     // Ruler tick marks
     const float tickTop = plotBounds.getBottom();
-    g.setColour(accent.withAlpha(0.25f));
+    g.setColour(tintInk(accent, kTintGridMajor));
     for (const float t : ticks.minors)
         g.drawVerticalLine(static_cast<int>(timeToX(t)), tickTop, tickTop + 4.0f);
 
-    g.setColour(accent.withAlpha(0.5f));
+    g.setColour(tintInk(accent, kTintGridMajor));
     for (const float t : ticks.majors)
         g.drawVerticalLine(static_cast<int>(timeToX(t)), tickTop, tickTop + 6.0f);
 
@@ -609,7 +600,7 @@ void TapDisplay::paint(Graphics& g)
             readout = formatHoverTime(t, secondsPerBeat, synced);
         }
 
-        g.setColour(Colours::rulerText);
+        g.setColour(accent);
         g.setFont(Fonts::font(Fonts::Weight::Medium, metrics_.font(10.0f)));
         const float readoutW = 160.0f;
         float rx = cursorX + 6.0f;

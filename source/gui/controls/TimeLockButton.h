@@ -23,6 +23,13 @@ public:
         repaint();
     }
 
+    // Store the engaged colour. Keep the off colour.
+    void setAccentColour(Colour c)
+    {
+        onColour_ = c;
+        repaint();
+    }
+
     void paintButton(Graphics& g,
                      const bool shouldDrawButtonAsHighlighted,
                      const bool shouldDrawButtonAsDown) override

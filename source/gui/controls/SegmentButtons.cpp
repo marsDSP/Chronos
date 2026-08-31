@@ -29,8 +29,6 @@ SegmentButtons::SegmentButtons(AudioProcessorValueTreeState& apvts, const String
     }
 
     apvts_.addParameterListener(paramID_, this);
-    if (coreLinked_)
-        apvts_.addParameterListener("delayMode", this);
 
     syncButtons();
 }
@@ -38,8 +36,6 @@ SegmentButtons::SegmentButtons(AudioProcessorValueTreeState& apvts, const String
 SegmentButtons::~SegmentButtons()
 {
     apvts_.removeParameterListener(paramID_, this);
-    if (coreLinked_)
-        apvts_.removeParameterListener("delayMode", this);
 }
 
 void SegmentButtons::setAccentColours(const Colour activeBg, const Colour activeText)
@@ -48,6 +44,11 @@ void SegmentButtons::setAccentColours(const Colour activeBg, const Colour active
     for (auto& btn : buttons_)
         btn->setAccentColours(activeBg, activeText);
     repaint();
+}
+
+void SegmentButtons::setAccentColour(const Colour c)
+{
+    setAccentColours(c, Colours::background);
 }
 
 void SegmentButtons::syncButtons()
@@ -64,15 +65,6 @@ void SegmentButtons::parameterChanged(const String& parameterID, const float new
     if (parameterID == paramID_)
     {
         MessageManager::callAsync([safe] { if (safe != nullptr) safe->syncButtons(); });
-    }
-    else if (coreLinked_ && parameterID == "delayMode")
-    {
-        const Colour col = (newValue > 0.5f) ? Colours::accentDelayBBD : Colours::accentDelayDigital;
-        MessageManager::callAsync([safe, col]
-        {
-            if (safe != nullptr)
-                safe->setAccentColours(col, Colours::background);
-        });
     }
 }
 

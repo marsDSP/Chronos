@@ -36,7 +36,7 @@ public:
     {
         const auto bounds = getLocalBounds().toFloat();
 
-        g.setColour(Colours::burntOrange);
+        g.setColour(tintInk(accentColour_, kTintGridMinor));
         g.fillRoundedRectangle(bounds, 4.0f);
 
         g.setColour(accentColour_.withAlpha(0.2f));

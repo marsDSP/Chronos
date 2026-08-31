@@ -7,7 +7,8 @@ namespace {
 
 using namespace MarsDSP::GUI::Knobs;
 using GUIColours = MarsDSP::GUI::Colours;
-
+using MarsDSP::GUI::Metrics;
+using MarsDSP::GUI::AccentConsumer;
 // Uniform grid constants (design units, section 4.4).
 constexpr float kSelectorHDU = 24.0f;
 constexpr float kEnableRowDU = 22.0f;
@@ -58,7 +59,7 @@ Colour coreAccent(const ChronosProcessor& proc)
 }
 
 // 1. TIME card -> TIME sub-panel
-class TimePanel final : public Component {
+class TimePanel final : public Component, public AccentConsumer {
 public:
     explicit TimePanel(ChronosProcessor& proc)
         : timeLKnob("LEFT TIME", proc.getAPVTS(), delayTimeParamID, coreAccent(proc)),
@@ -135,6 +136,13 @@ public:
         divisionBox.setBounds(sx, y + m.px(1.0f), getWidth() - sx, selH);
     }
 
+    void setAccentColour(Colour c) override
+    {
+        timeLDisplay.setAccentColour(c);
+        timeRDisplay.setAccentColour(c);
+        timeLinkButton.setAccentColour(c);
+    }
+
 private:
     PDLKnob timeLKnob;
     PDLKnob timeRKnob;
@@ -185,7 +193,7 @@ private:
 };
 
 // 3. REPEATS card -> LOOP sub-panel
-class LoopPanel final : public Component {
+class LoopPanel final : public Component, public AccentConsumer {
 public:
     explicit LoopPanel(ChronosProcessor& proc)
         : feedbackKnob("FEEDBACK", proc.getAPVTS(), feedbackParamID, GUIColours::accentOrange),
@@ -237,6 +245,12 @@ public:
         delayModeSeg_.setBounds(0, y, getWidth(), selH);
     }
 
+    void setAccentColour(Colour c) override
+    {
+        loopSatSeg_.setAccentColour(c);
+        delayModeSeg_.setAccentColour(c);
+    }
+
 private:
     PDLKnob feedbackKnob;
     PDLKnob crossFeedKnob;
@@ -282,7 +296,7 @@ private:
 };
 
 // 5. CHARACTER card -> DRIVE sub-panel
-class DrivePanel final : public Component {
+class DrivePanel final : public Component, public AccentConsumer {
 public:
     explicit DrivePanel(ChronosProcessor& proc)
         : driveKnob("DRIVE", proc.getAPVTS(), driveParamID, GUIColours::accentRed),
@@ -317,6 +331,11 @@ public:
 
         y += cellH + rowGap;
         adaaSeg_.setBounds(0, y, getWidth(), selH);
+    }
+
+    void setAccentColour(Colour c) override
+    {
+        adaaSeg_.setAccentColour(c);
     }
 
 private:
@@ -392,7 +411,7 @@ private:
 };
 
 // 7. OUTPUT card -> FILTER sub-panel
-class FilterPanel final : public Component {
+class FilterPanel final : public Component, public AccentConsumer {
 public:
     explicit FilterPanel(ChronosProcessor& proc)
         : hpfKnob("OUTPUT HPF", proc.getAPVTS(), hpfFreqParamID, GUIColours::accentBlue),
@@ -432,6 +451,11 @@ public:
         int x = 0;
         hpfKnob.setBounds(x, y, cellWPx, cellH);  x += cellWPx + gapPx;
         lpfKnob.setBounds(x, y, cellWPx, cellH);
+    }
+
+    void setAccentColour(Colour c) override
+    {
+        modeSeg_.setAccentColour(c);
     }
 
 private:
@@ -546,6 +570,7 @@ void ChronosEditor::updateCoreAccentColour_(const float delayModeVal)
     const int mode = (delayModeVal > 0.5f) ? 1 : 0;
     const auto col = (mode == 1) ? MarsDSP::GUI::Colours::accentDelayBBD
                                  : MarsDSP::GUI::Colours::accentDelayDigital;
+    tapDisplay_.setAccentColour(col);
     timeCard_.setAccentColour(col);
     repeatsCard_.setAccentColour(col);
 }

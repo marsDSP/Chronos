@@ -6,6 +6,7 @@
 #include <JuceHeader.h>
 #include "../Metrics.h"
 #include "../Fonts.h"
+#include "../Colours.h"
 #include "TapSimulation.h"
 
 class ChronosProcessor;
@@ -16,8 +17,7 @@ namespace MarsDSP::GUI {
 // Dragging the upper half adjusts the left delay time.
 // Dragging the lower half adjusts the right delay time.
 class TapDisplay : public Component,
-                   private Timer,
-                   public AudioProcessorValueTreeState::Listener {
+                   private Timer {
 public:
     explicit TapDisplay(ChronosProcessor& processor);
     ~TapDisplay() override;
@@ -34,10 +34,11 @@ public:
     void mouseDoubleClick(const MouseEvent& e) override;
     void mouseWheelMove(const MouseEvent& e, const MouseWheelDetails& wheel) override;
 
-    void parameterChanged(const String& parameterID, float newValue) override;
-
     // Set the scale metrics for the label fonts.
     void setMetrics(const Metrics& m);
+
+    // Store the live core accent and repaint.
+    void setAccentColour(Colour c);
 
 private:
     void timerCallback() override;
@@ -70,7 +71,7 @@ private:
     bool hasState_ = false;
     TapSim::Parameters lastParams_ {};
     double lastTimeSecs_ = 0.0;
-    int delayMode_ = 0;
+    Colour accentColour_ { Colours::accentDelayDigital };
     float currentWetLevelL_ = 0.0f;
     float currentWetLevelR_ = 0.0f;
 

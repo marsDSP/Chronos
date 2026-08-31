@@ -7,6 +7,7 @@
 #include "SubTabStrip.h"
 #include "Colours.h"
 #include "Metrics.h"
+#include "AccentConsumer.h"
 #include <memory>
 #include <vector>
 

@@ -18,7 +18,6 @@ struct Colours {
     static inline const Colour cardBackground   { 0xFF1C1C1F };
     static inline const Colour cardBorder       { 0xFF333337 };
     static inline const Colour rulerText        { 0xFF9A9A9A };
-    static inline const Colour burntOrange      { 0xFF1A1410 };
 
     // Text colours
     static inline const Colour textPrimary { 0xFFABABAB };
@@ -28,14 +27,14 @@ struct Colours {
     // Accent colours
     static inline const Colour accentRed    { 0xFFE0115F };
     static inline const Colour accentGreen  { 0xFF14EEA4 };
-    static inline const Colour accentBlue   { 0xFF4FC3F7 };
-    static inline const Colour accentPurple { 0xFF7E6AFF };
+    static inline const Colour accentBlue   { 0xFF4AC6F4 };
+    static inline const Colour accentPurple { 0xFF7E6EFA };
     static inline const Colour accentPink   { 0xFFFF6B9D };
-    static inline const Colour accentOrange { 0xFFFF8A50 };
+    static inline const Colour accentOrange { 0xFFFF8557 };
     static inline const Colour accentYellow { 0xFFE8D44D };
 
-    // Delay core accent colours
-    static inline const Colour accentDelayDigital { 0xFFFF8A50 };
+    // Delay core accent colours (section 3.8 reference values)
+    static inline const Colour accentDelayDigital { 0xFFFF8557 };
     static inline const Colour accentDelayBBD     { 0xFF14EEA4 };
 
     // Knob colours
@@ -49,6 +48,32 @@ struct Colours {
     static inline const Colour dropdownBg     { 0xFF232326 };
     static inline const Colour dropdownBorder { 0xFF3A3A3D };
 };
+
+// The tint law (section 4.6). One ink base, one accent, one coefficient.
+constexpr juce::uint8 kTintInk = 13;
+
+// Blend a base colour toward an accent by the fraction t.
+inline Colour tint (Colour base, Colour accent, float t) noexcept
+{
+    return base.interpolatedWith (accent, t);
+}
+
+// Blend the ink base toward an accent by the fraction t.
+inline Colour tintInk (Colour accent, float t) noexcept
+{
+    return tint (Colour (kTintInk, kTintInk, kTintInk), accent, t);
+}
+
+// Tint coefficients (section 4.6), solved from the shipped baseline (section 3.7).
+constexpr float kTintPlotFill       = 0.052f;
+constexpr float kTintPlotFillLit    = 0.093f;
+constexpr float kTintGridMinor      = 0.136f;
+constexpr float kTintGridMajor      = 0.199f;
+constexpr float kTintDisplayBorder  = 0.294f;
+constexpr float kTintReadoutFill    = 0.052f;
+constexpr float kTintReadoutBorder  = 0.242f;
+constexpr float kTintCardBorder     = 0.352f;
+constexpr float kTintCentreLine     = 0.473f;
 
 } // namespace MarsDSP::GUI
 

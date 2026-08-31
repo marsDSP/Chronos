@@ -43,10 +43,10 @@ public:
     {
         const auto bounds = getLocalBounds().toFloat();
 
-        g.setColour(Colours::burntOrange);
+        g.setColour(tintInk(accentColour_, kTintReadoutFill));
         g.fillRoundedRectangle(bounds, 4.0f);
 
-        g.setColour(accentColour_.withAlpha(0.2f));
+        g.setColour(tintInk(accentColour_, kTintReadoutBorder));
         g.drawRoundedRectangle(bounds.reduced(0.5f), 4.0f, 1.0f);
 
         const String text = TimeDisplayFormatter::getDelayTimeText(slider_, syncActive_);

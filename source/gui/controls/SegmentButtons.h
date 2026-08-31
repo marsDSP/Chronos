@@ -4,6 +4,7 @@
 #define CHRONOS_SEGMENT_BUTTONS_H
 
 #include <JuceHeader.h>
+#include "../AccentConsumer.h"
 #include "ConsoleButton.h"
 #include <memory>
 #include <vector>
@@ -12,7 +13,8 @@ namespace MarsDSP::GUI {
 
 // A mutually exclusive row of segment buttons bound to a choice parameter.
 class SegmentButtons : public Component,
-                       private AudioProcessorValueTreeState::Listener {
+                       private AudioProcessorValueTreeState::Listener,
+                       public AccentConsumer {
 public:
     // Bind to a choice parameter. Set coreLinked to follow the delay core accent.
     SegmentButtons(AudioProcessorValueTreeState& apvts, const String& paramID,
@@ -21,6 +23,9 @@ public:
 
     // Set the active segment fill and text colours.
     void setAccentColours(Colour activeBg, Colour activeText);
+
+    // Store the accent colour and repaint (AccentConsumer).
+    void setAccentColour(Colour c) override;
 
     void resized() override;
 
