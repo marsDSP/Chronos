@@ -4,7 +4,8 @@
 namespace MarsDSP::GUI {
 
 SegmentButtons::SegmentButtons(AudioProcessorValueTreeState& apvts, const String& paramID,
-                               const StringArray& items, const Colour accent, const bool coreLinked)
+                               const StringArray& items, const Colour accent, const bool coreLinked,
+                               const StringArray& displayLabels, const StringArray& tooltips)
     : accent_(accent), coreLinked_(coreLinked), paramID_(paramID), apvts_(apvts)
 {
     // A hidden combo carries the parameter attachment. The buttons mirror it.
@@ -16,9 +17,13 @@ SegmentButtons::SegmentButtons(AudioProcessorValueTreeState& apvts, const String
 
     for (int i = 0; i < items.size(); ++i)
     {
-        auto btn = std::make_unique<ConsoleButton>(items[i]);
+        // Use the display labels for the buttons when they are present.
+        const String btnLabel = (i < displayLabels.size()) ? displayLabels[i] : items[i];
+        auto btn = std::make_unique<ConsoleButton>(btnLabel);
         btn->setClickingTogglesState(false);
         btn->setAccentColours(accent_, Colours::background);
+        if (i < tooltips.size() && tooltips[i].isNotEmpty())
+            btn->setTooltip(tooltips[i]);
         btn->onClick = [this, i]
         {
             combo_.setSelectedId(i + 1, sendNotificationSync);

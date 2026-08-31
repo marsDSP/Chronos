@@ -17,8 +17,11 @@ class SegmentButtons : public Component,
                        public AccentConsumer {
 public:
     // Bind to a choice parameter. Set coreLinked to follow the delay core accent.
+    // items hold the APVTS choice strings. displayLabels name the buttons. tooltips
+    // give each button a help string. Pass empty arrays to ignore them.
     SegmentButtons(AudioProcessorValueTreeState& apvts, const String& paramID,
-                   const StringArray& items, Colour accent, bool coreLinked = false);
+                   const StringArray& items, Colour accent, bool coreLinked = false,
+                   const StringArray& displayLabels = {}, const StringArray& tooltips = {});
     ~SegmentButtons() override;
 
     // Set the active segment fill and text colours.
@@ -42,6 +45,14 @@ private:
     AudioProcessorValueTreeState& apvts_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SegmentButtons)
+};
+
+// Anti-alias mode labels and tooltips. The APVTS choice strings do not change.
+inline const StringArray kAntiAliasLabels   { "OFF", "LOW", "HIGH" };
+inline const StringArray kAntiAliasTooltips {
+    "The saturator runs raw. This setting costs the least CPU and gives the most edge.",
+    "The saturator suppresses some alias tones. This setting balances clarity and CPU.",
+    "The saturator suppresses the most alias tones. This setting costs the most CPU."
 };
 
 } // namespace MarsDSP::GUI

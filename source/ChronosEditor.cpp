@@ -200,7 +200,8 @@ public:
           crossFeedKnob("CROSS", proc.getAPVTS(), crossFeedParamID, GUIColours::accentOrange),
           loopDriveKnob("DRIVE", proc.getAPVTS(), loopDriveParamID, GUIColours::accentOrange),
           loopSatSeg_(proc.getAPVTS(), loopSatOrderParamID.getParamID(),
-                      StringArray{"Off", "1st", "2nd"}, coreAccent(proc), true),
+                      StringArray{"Off", "1st", "2nd"}, coreAccent(proc), true,
+                      MarsDSP::GUI::kAntiAliasLabels, MarsDSP::GUI::kAntiAliasTooltips),
           delayModeSeg_(proc.getAPVTS(), delayModeParamID.getParamID(),
                         StringArray{"Digital", "BBD"}, coreAccent(proc), true)
     {
@@ -220,19 +221,20 @@ public:
         const float g = m.pxf(static_cast<float>(Metrics::kKnobGutter));
         const int selH = m.px(kSelectorHDU);
         const int rowGap = m.px(static_cast<float>(Metrics::kInterRowGap));
-        const int segGap = m.px(6.0f);
 
-        // Row 1: three knobs. Rows 2 and 3: the two segment controls.
-        const float row1H = h - 2.0f * static_cast<float>(selH) - 2.0f * static_cast<float>(rowGap)
-                           - static_cast<float>(segGap);
-        const float d = knobDiameterPx(m, w, row1H, 3, false);
+        // Row 1: the delay-mode segment. Row 2: three knobs. Row 3: the loop-sat segment.
+        const float knobRowH = h - 2.0f * static_cast<float>(selH) - 2.0f * static_cast<float>(rowGap);
+        const float d = knobDiameterPx(m, w, knobRowH, 3, false);
         const int dPx = roundToInt(d);
         const int cellH = knobCellHeightPx(m, dPx);
         const int cellWPx = roundToInt((w - 2.0f * g) / 3.0f);
         const int gapPx = roundToInt(g);
 
-        const int blockH = cellH + rowGap + selH + segGap + selH;
+        const int blockH = selH + rowGap + cellH + rowGap + selH;
         int y = roundToInt((h - static_cast<float>(blockH)) * 0.5f);
+
+        delayModeSeg_.setBounds(0, y, getWidth(), selH);
+        y += selH + rowGap;
 
         int x = 0;
         feedbackKnob.setBounds(x, y, cellWPx, cellH);   x += cellWPx + gapPx;
@@ -241,8 +243,6 @@ public:
 
         y += cellH + rowGap;
         loopSatSeg_.setBounds(0, y, getWidth(), selH);
-        y += selH + segGap;
-        delayModeSeg_.setBounds(0, y, getWidth(), selH);
     }
 
     void setAccentColour(Colour c) override
@@ -300,10 +300,13 @@ class DrivePanel final : public Component, public AccentConsumer {
 public:
     explicit DrivePanel(ChronosProcessor& proc)
         : driveKnob("DRIVE", proc.getAPVTS(), driveParamID, GUIColours::accentRed),
+          bitsKnob("BIT DEPTH", proc.getAPVTS(), bitsParamID, GUIColours::accentPurple),
           adaaSeg_(proc.getAPVTS(), adaaOrderParamID.getParamID(),
-                   StringArray{"Off", "1st", "2nd"}, GUIColours::accentPurple, false)
+                   StringArray{"Off", "1st", "2nd"}, GUIColours::accentPurple, false,
+                   MarsDSP::GUI::kAntiAliasLabels, MarsDSP::GUI::kAntiAliasTooltips)
     {
         addAndMakeVisible(driveKnob);
+        addAndMakeVisible(bitsKnob);
         addAndMakeVisible(adaaSeg_);
     }
 
@@ -315,21 +318,27 @@ public:
 
         const int selH = m.px(kSelectorHDU);
         const int rowGap = m.px(static_cast<float>(Metrics::kInterRowGap));
+        const float g = m.pxf(static_cast<float>(Metrics::kKnobGutter));
 
-        // Row 1: the hero knob. Row 2: the anti-alias segment.
+        // Row 1: the hero drive knob and the bit-depth knob. Row 2: the anti-alias segment.
         const float row1H = h - static_cast<float>(selH) - static_cast<float>(rowGap);
-        const float d = knobDiameterPx(m, w, row1H, 1, false,
-                                      static_cast<float>(Metrics::kHeroKnobMax));
-        const int dPx = roundToInt(d);
-        const int cellH = knobCellHeightPx(m, dPx);
-        const int cellWPx = getWidth();
+        const float dDrive = knobDiameterPx(m, w, row1H, 2, false,
+                                            static_cast<float>(Metrics::kHeroKnobMax));
+        const float dBits  = knobDiameterPx(m, w, row1H, 2, false,
+                                            static_cast<float>(Metrics::kKnobMax));
+        const int cellHDrive = knobCellHeightPx(m, roundToInt(dDrive));
+        const int cellHBits  = knobCellHeightPx(m, roundToInt(dBits));
+        const int rowH = std::max(cellHDrive, cellHBits);
+        const int cellWPx = roundToInt((w - g) / 2.0f);
+        const int gapPx = roundToInt(g);
 
-        const int blockH = cellH + rowGap + selH;
+        const int blockH = rowH + rowGap + selH;
         int y = roundToInt((h - static_cast<float>(blockH)) * 0.5f);
 
-        driveKnob.setBounds(0, y, cellWPx, cellH);
+        driveKnob.setBounds(0, y, cellWPx, cellHDrive);
+        bitsKnob.setBounds(cellWPx + gapPx, y, cellWPx, cellHBits);
 
-        y += cellH + rowGap;
+        y += rowH + rowGap;
         adaaSeg_.setBounds(0, y, getWidth(), selH);
     }
 
@@ -340,6 +349,7 @@ public:
 
 private:
     PDLKnob driveKnob;
+    PDLKnob bitsKnob;
     MarsDSP::GUI::SegmentButtons adaaSeg_;
 };
 
@@ -388,7 +398,7 @@ public:
         int y = roundToInt((h - static_cast<float>(blockH)) * 0.5f);
 
         const int btnSize = m.px(24.0f);
-        enableButton.setBounds((getWidth() - btnSize) / 2, y, btnSize, btnSize);
+        enableButton.setBounds(getWidth() - btnSize, y, btnSize, btnSize);
         y += enableH + enableGap;
 
         int x = 0;
@@ -469,12 +479,10 @@ class LevelPanel final : public Component {
 public:
     explicit LevelPanel(ChronosProcessor& proc)
         : mixKnob("MIX", proc.getAPVTS(), mixParamID, GUIColours::accentBlue),
-          gainKnob("GAIN", proc.getAPVTS(), gainParamID, GUIColours::accentBlue),
-          bitsKnob("BIT DEPTH", proc.getAPVTS(), bitsParamID, GUIColours::accentBlue)
+          gainKnob("GAIN", proc.getAPVTS(), gainParamID, GUIColours::accentBlue)
     {
         addAndMakeVisible(mixKnob);
         addAndMakeVisible(gainKnob);
-        addAndMakeVisible(bitsKnob);
     }
 
     void resized() override
@@ -484,24 +492,22 @@ public:
         const auto h = static_cast<float>(getHeight());
 
         const float g = m.pxf(static_cast<float>(Metrics::kKnobGutter));
-        const float d = knobDiameterPx(m, w, h, 3, false);
+        const float d = knobDiameterPx(m, w, h, 2, false);
         const int dPx = roundToInt(d);
         const int cellH = knobCellHeightPx(m, dPx);
-        const int cellWPx = roundToInt((w - 2.0f * g) / 3.0f);
+        const int cellWPx = roundToInt((w - g) / 2.0f);
         const int gapPx = roundToInt(g);
 
         const int y = roundToInt((h - static_cast<float>(cellH)) * 0.5f);
 
         int x = 0;
         mixKnob.setBounds(x, y, cellWPx, cellH);   x += cellWPx + gapPx;
-        gainKnob.setBounds(x, y, cellWPx, cellH);   x += cellWPx + gapPx;
-        bitsKnob.setBounds(x, y, cellWPx, cellH);
+        gainKnob.setBounds(x, y, cellWPx, cellH);
     }
 
 private:
     PDLKnob mixKnob;
     PDLKnob gainKnob;
-    PDLKnob bitsKnob;
 };
 
 } // namespace
