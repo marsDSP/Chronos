@@ -6,6 +6,7 @@
 #include "ChronosParameters.h"
 #include "utils/memory/SpscFifo.h"
 #include "gui/tap/TapFeedFrame.h"
+#include "presets/PresetManager.h"
 
 //==============================================================================
 class ChronosProcessor final : public AudioProcessor
@@ -44,6 +45,7 @@ public:
     const AudioProcessorValueTreeState& getAPVTS() const noexcept { return apvts; }
     ChronosParameters& getParameters() noexcept { return parameters; }
     const ChronosParameters& getParameters() const noexcept { return parameters; }
+    MarsDSP::Presets::PresetManager& getPresetManager() noexcept { return presetManager_; }
 
     [[nodiscard]] MarsDSP::Memory::SpscFifo<MarsDSP::GUI::TapFeedFrame, 256>& getTapFifo() noexcept { return tapFifo_; }
 
@@ -66,6 +68,9 @@ private:
 
     MarsDSP::ChronosEngine engine;
     MarsDSP::Memory::SpscFifo<MarsDSP::GUI::TapFeedFrame, 256> tapFifo_;
+
+    // The preset layer owns the identity and the change flag.
+    MarsDSP::Presets::PresetManager presetManager_ { *this, apvts };
 
     /// Bring a stored state up to the current schema version.
     void migrateState_ (ValueTree& state, int fromVersion);
