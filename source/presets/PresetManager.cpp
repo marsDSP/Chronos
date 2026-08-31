@@ -103,6 +103,40 @@ bool PresetManager::saveCurrent(const String& author, const String& category)
     return true;
 }
 
+// Reject a preset with an unknown parameter or an out-of-range value.
+// Run this check before the state applies, so a bad file leaves the state untouched.
+bool PresetManager::validatePresetXml_(const XmlElement& xml)
+{
+    if (! xml.hasTagName(apvtsRef_.state.getType()))
+        return false;
+
+    for (int i = 0; i < xml.getNumChildElements(); ++i)
+    {
+        auto* el = xml.getChildElement(i);
+        if (el == nullptr || ! el->hasTagName("PARAM"))
+            continue;
+
+        const String id = el->getStringAttribute("id");
+        if (id == "version")
+            continue;
+
+        auto* param = apvtsRef_.getParameter(id);
+        if (param == nullptr)
+            return false;
+
+        const String valueText = el->getStringAttribute("value");
+        if (valueText.isEmpty() || ! valueText.containsAnyOf("0123456789"))
+            return false;
+
+        const float value = valueText.getFloatValue();
+        const auto range = param->getNormalisableRange();
+        if (value < range.start || value > range.end)
+            return false;
+    }
+
+    return true;
+}
+
 // Apply a state tree through the processor recall path.
 // Return false on a root tag mismatch.
 bool PresetManager::applyStateXml_(const XmlElement& xml)
@@ -121,6 +155,9 @@ bool PresetManager::loadPreset(const File& file)
 {
     auto xml = PresetStore::loadPresetFile(file);
     if (xml == nullptr) return false;
+
+    if (! validatePresetXml_(*xml))
+        return false;
 
     if (! applyStateXml_(*xml))
         return false;
@@ -183,6 +220,9 @@ bool PresetManager::pastePresetXml(const String& xmlText)
 {
     auto xml = parseXML(xmlText);
     if (xml == nullptr) return false;
+
+    if (! validatePresetXml_(*xml))
+        return false;
 
     if (! applyStateXml_(*xml))
         return false;

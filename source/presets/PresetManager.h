@@ -73,6 +73,9 @@ private:
     // Apply a state tree through the processor recall path.
     bool applyStateXml_(const XmlElement& xml);
 
+    // Reject a preset with an unknown parameter or an out-of-range value.
+    bool validatePresetXml_(const XmlElement& xml);
+
     AudioProcessor& processorRef_;
     AudioProcessorValueTreeState& apvtsRef_;
     PresetStore store_;

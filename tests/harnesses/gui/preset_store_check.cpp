@@ -168,10 +168,9 @@ static const char* const kParamIDs[] = {
 };
 
 // Return a pseudo-random value for one parameter. The seed fixes the value per run.
-float randomDenorm (const char* id, int seed)
+float randomDenorm (AudioProcessorValueTreeState& a, const char* id, int seed)
 {
-    StubProcessor proc;
-    auto* p = proc.apvts.getParameter (id);
+    auto* p = a.getParameter (id);
     if (p == nullptr) return 0.0f;
     const auto range = p->getNormalisableRange();
     return range.convertFrom0to1 (static_cast<float> ((seed * 2654435761u) % 1000) / 999.0f);
@@ -213,7 +212,7 @@ int main()
 
     // ----------------------------------------------------------------
     // 1. Round trip: set all 28 parameters, save, perturb, then load.
-    //    Compare every value bit-exact.
+    //    Compare every value to a tolerance. Repeat 200 times.
     // ----------------------------------------------------------------
     g_section = "round-trip";
     {
@@ -221,43 +220,58 @@ int main()
         PresetManager pm (proc, proc.apvts);
         pm.getStore().setRootDirectory (tempRoot);
 
-        // Set a random value for each parameter. Read back the stored
-        // value so the discrete parameters compare equal after the load.
-        std::vector<float> saved (std::size (kParamIDs));
-        for (int i = 0; i < 28; ++i)
+        // JUCE writes float32 values through text with reduced precision.
+        // A save and a load can shift a value by about 1e-7 relative.
+        // Allow a relative tolerance with an absolute floor for near zero.
+        constexpr float kRoundTripRel = 1e-5f;
+        constexpr float kRoundTripAbs = 1e-6f;
+
+        for (int iter = 0; iter < 200; ++iter)
         {
-            setDenorm (proc.apvts, kParamIDs[i], randomDenorm (kParamIDs[i], i + 1));
-            saved[std::size_t (i)] = getDenorm (proc.apvts, kParamIDs[i]);
+            const String name = "RoundTrip" + String (iter);
+
+            // Set a random value for each parameter. Read back the stored
+            // value so the discrete parameters compare equal after the load.
+            std::vector<float> saved (std::size (kParamIDs));
+            for (int i = 0; i < 28; ++i)
+            {
+                setDenorm (proc.apvts, kParamIDs[i],
+                           randomDenorm (proc.apvts, kParamIDs[i], i + 1 + iter * 31));
+                saved[std::size_t (i)] = getDenorm (proc.apvts, kParamIDs[i]);
+            }
+
+            CHECK (pm.saveAs (name, "harness", "test"));
+            CHECK (pm.getCurrentName() == name);
+            CHECK (! pm.isModified());
+
+            // Perturb every parameter so the load must restore the saved values.
+            for (int i = 0; i < 28; ++i)
+                setDenorm (proc.apvts, kParamIDs[i],
+                           randomDenorm (proc.apvts, kParamIDs[i], i + 100 + iter * 31));
+
+            CHECK (pm.isModified());
+
+            const auto file = store.presetFile ({}, name);
+            CHECK (pm.loadPreset (file));
+
+            // replaceState fires the parameter listeners synchronously, so
+            // the modified flag is true right after loadPreset returns. The
+            // async clear is queued; clear manually for the headless harness.
+            pm.clearModified();
+
+            for (int i = 0; i < 28; ++i)
+            {
+                const auto v = getDenorm (proc.apvts, kParamIDs[i]);
+                const float diff = std::fabs (v - saved[std::size_t (i)]);
+                const float limit = kRoundTripRel * std::fabs (saved[std::size_t (i)]) + kRoundTripAbs;
+                if (diff > limit)
+                    FAIL("iter {} param {} did not round-trip: got {} expected {} (diff {})",
+                         iter, kParamIDs[i], v, saved[std::size_t (i)], diff);
+            }
+
+            CHECK (! pm.isModified());
+            CHECK (pm.getCurrentName() == name);
         }
-
-        CHECK (pm.saveAs ("RoundTrip", "harness", "test"));
-        CHECK (pm.getCurrentName() == "RoundTrip");
-        CHECK (! pm.isModified());
-
-        // Perturb every parameter so the load must restore the saved values.
-        for (int i = 0; i < 28; ++i)
-            setDenorm (proc.apvts, kParamIDs[i], randomDenorm (kParamIDs[i], i + 100));
-
-        CHECK (pm.isModified());
-
-        const auto file = store.presetFile ({}, "RoundTrip");
-        CHECK (pm.loadPreset (file));
-
-        // replaceState fires the parameter listeners synchronously, so
-        // the modified flag is true right after loadPreset returns. The
-        // async clear is queued; clear manually for the headless harness.
-        pm.clearModified();
-
-        for (int i = 0; i < 28; ++i)
-        {
-            const auto v = getDenorm (proc.apvts, kParamIDs[i]);
-            if (v != saved[std::size_t (i)])
-                FAIL("param {} did not round-trip: got {} expected {}",
-                     kParamIDs[i], v, saved[std::size_t (i)]);
-        }
-
-        CHECK (! pm.isModified());
-        CHECK (pm.getCurrentName() == "RoundTrip");
     }
 
     // ----------------------------------------------------------------
@@ -375,33 +389,36 @@ int main()
         testHostile ("truncated", "<?xml version=\"1.0\"?><Parameters><PARAM id=\"delayTi");
         testHostile ("wrongtag", "<?xml version=\"1.0\"?><WrongRoot/>");
 
-        // A parameter outside its legal range: the migration clamps it.
-        // The load must succeed, and the value must be inside the range.
+        // A parameter outside its legal range fails the load.
+        // The state stays unchanged.
         {
             StubProcessor proc;
             PresetManager pm (proc, proc.apvts);
             pm.getStore().setRootDirectory (tempRoot);
+            setDenorm (proc.apvts, "delayTime", 500.0f);
+            const float before = getDenorm (proc.apvts, "delayTime");
             const auto xmlText = buildVersionedXml (1, StubProcessor().apvts.state.getType().toString(), true, false);
             const auto file = tempRoot.getChildFile ("outofrange.chronos");
             file.replaceWithText (xmlText);
-            CHECK (pm.loadPreset (file));
-            pm.clearModified();
-            const auto fb = getDenorm (proc.apvts, "feedback");
-            CHECK (fb >= 0.0f && fb <= 1.15f);
+            CHECK (! pm.loadPreset (file));
+            const float after = getDenorm (proc.apvts, "delayTime");
+            CHECK (std::fabs (after - before) < 1e-6f);
         }
 
-        // A parameter that no longer exists: the migration drops it.
+        // A parameter that no longer exists fails the load.
+        // The state stays unchanged.
         {
             StubProcessor proc;
             PresetManager pm (proc, proc.apvts);
             pm.getStore().setRootDirectory (tempRoot);
+            setDenorm (proc.apvts, "delayTime", 500.0f);
+            const float before = getDenorm (proc.apvts, "delayTime");
             const auto xmlText = buildVersionedXml (1, StubProcessor().apvts.state.getType().toString(), false, true);
             const auto file = tempRoot.getChildFile ("unknownparam.chronos");
             file.replaceWithText (xmlText);
-            CHECK (pm.loadPreset (file));
-            pm.clearModified();
-            // The unknown parameter is gone; the state loads clean.
-            CHECK (pm.getCurrentName().isEmpty());
+            CHECK (! pm.loadPreset (file));
+            const float after = getDenorm (proc.apvts, "delayTime");
+            CHECK (std::fabs (after - before) < 1e-6f);
         }
 
         // A missing directory: enumeration returns empty, load fails.
