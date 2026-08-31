@@ -7,6 +7,7 @@
 #include "Colours.h"
 #include "Metrics.h"
 #include "AccentConsumer.h"
+#include "../presets/PresetStore.h"
 
 namespace MarsDSP::Presets { class PresetManager; }
 
@@ -16,7 +17,7 @@ namespace MarsDSP::GUI {
 // step arrows, and a menu of preset file actions.
 class PresetBar : public Component,
                   public AccentConsumer,
-                  public TooltipClient,
+                  public SettableTooltipClient,
                   private Timer {
 public:
     explicit PresetBar(MarsDSP::Presets::PresetManager& pm);
@@ -62,6 +63,7 @@ private:
     Point<int> lastMousePos_;
 
     std::vector<File> menuPresetFiles_;
+    std::vector<MarsDSP::Presets::PresetEntry> menuFactoryPresets_;
     std::unique_ptr<FileChooser> exportChooser_;
     std::unique_ptr<FileChooser> importChooser_;
 

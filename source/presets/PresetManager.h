@@ -6,6 +6,7 @@
 #include <JuceHeader.h>
 #include <atomic>
 #include "PresetStore.h"
+#include "FactoryPresets.h"
 
 class ChronosProcessor;
 
@@ -56,6 +57,13 @@ public:
 
     // The list of user presets.
     std::vector<PresetEntry> getUserPresets() const { return store_.enumerateUserPresets(); }
+
+    // The compiled-in factory presets.
+    std::vector<PresetEntry> getFactoryPresets() const;
+
+    // Load a compiled-in factory preset by name and bank.
+    // Return true on success. On failure leave the state untouched.
+    bool loadFactoryPreset(const String& name, const String& bank);
 
     // Copy the current preset XML to a string.
     String copyPresetXml();

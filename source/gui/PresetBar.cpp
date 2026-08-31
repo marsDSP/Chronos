@@ -18,6 +18,7 @@ enum MenuCommand {
     kMenuImport,
     kMenuExport,
     kMenuShowFolder,
+    kMenuFactoryPresetStart = 500,
     kMenuUserPresetStart = 1000
 };
 
@@ -186,7 +187,11 @@ String PresetBar::getTooltip()
 
 void PresetBar::stepPreset_(int direction)
 {
-    auto presets = pm_.getUserPresets();
+    // Build the concatenated list: factory presets first, then user presets.
+    auto presets = pm_.getFactoryPresets();
+    auto user = pm_.getUserPresets();
+    for (auto& e : user)
+        presets.push_back(std::move(e));
     if (presets.empty()) return;
 
     int currentIdx = -1;
@@ -205,10 +210,19 @@ void PresetBar::stepPreset_(int direction)
                                    : (currentIdx + direction + n) % n;
 
     const auto& e = presets[static_cast<size_t>(nextIdx)];
-    const File file = pm_.getStore().presetFile(e.bank, e.name);
-    if (! pm_.loadPreset(file))
-        NativeMessageBox::showMessageBoxAsync(MessageBoxIconType::WarningIcon,
-            "Preset Load Failed", "The preset file could not load.");
+    if (e.factory)
+    {
+        if (! pm_.loadFactoryPreset(e.name, e.bank))
+            NativeMessageBox::showMessageBoxAsync(MessageBoxIconType::WarningIcon,
+                "Preset Load Failed", "The factory preset could not load.");
+    }
+    else
+    {
+        const File file = pm_.getStore().presetFile(e.bank, e.name);
+        if (! pm_.loadPreset(file))
+            NativeMessageBox::showMessageBoxAsync(MessageBoxIconType::WarningIcon,
+                "Preset Load Failed", "The preset file could not load.");
+    }
     refreshName_();
 }
 
@@ -235,26 +249,55 @@ void PresetBar::showMenu_()
     menu.addItem(kMenuShowFolder, "Show Preset Folder", true);
     menu.addSeparator();
 
-    // Preset list grouped by bank. Factory banks come first in L7.
+    // Preset list grouped by bank. Factory banks come first.
     menuPresetFiles_.clear();
-    auto userPresets = pm_.getUserPresets();
-    std::map<String, std::vector<MarsDSP::Presets::PresetEntry>> byBank;
-    for (const auto& e : userPresets)
-        byBank[e.bank].push_back(e);
+    menuFactoryPresets_.clear();
 
-    for (const auto& [bank, entries] : byBank)
+    auto addBankSubmenu = [&](const String& bankName,
+                              const std::vector<MarsDSP::Presets::PresetEntry>& entries,
+                              bool factory)
     {
-        const String bankName = bank.isEmpty() ? String("Presets") : bank;
+        if (entries.empty()) return;
         PopupMenu sub;
         for (const auto& e : entries)
         {
-            const int id = kMenuUserPresetStart + static_cast<int>(menuPresetFiles_.size());
             const bool isCurrent = (e.bank == pm_.getCurrentBank()
                                     && e.name == pm_.getCurrentName());
-            sub.addItem(id, e.name, true, isCurrent);
-            menuPresetFiles_.push_back(pm_.getStore().presetFile(e.bank, e.name));
+            if (factory)
+            {
+                const int id = kMenuFactoryPresetStart
+                    + static_cast<int>(menuFactoryPresets_.size());
+                sub.addItem(id, e.name, true, isCurrent);
+                menuFactoryPresets_.push_back(e);
+            }
+            else
+            {
+                const int id = kMenuUserPresetStart
+                    + static_cast<int>(menuPresetFiles_.size());
+                sub.addItem(id, e.name, true, isCurrent);
+                menuPresetFiles_.push_back(pm_.getStore().presetFile(e.bank, e.name));
+            }
         }
         menu.addSubMenu(bankName, sub, true);
+    };
+
+    // Factory presets grouped by bank, in the order they appear in the table.
+    auto factoryPresets = pm_.getFactoryPresets();
+    std::map<String, std::vector<MarsDSP::Presets::PresetEntry>> factoryByBank;
+    for (const auto& e : factoryPresets)
+        factoryByBank[e.bank].push_back(e);
+    for (const auto& [bank, entries] : factoryByBank)
+        addBankSubmenu(bank, entries, true);
+
+    // User presets grouped by bank.
+    auto userPresets = pm_.getUserPresets();
+    std::map<String, std::vector<MarsDSP::Presets::PresetEntry>> userByBank;
+    for (const auto& e : userPresets)
+        userByBank[e.bank].push_back(e);
+    for (const auto& [bank, entries] : userByBank)
+    {
+        const String bankName = bank.isEmpty() ? String("Presets") : bank;
+        addBankSubmenu(bankName, entries, false);
     }
 
     const auto safe = SafePointer<PresetBar>(this);
@@ -265,6 +308,20 @@ void PresetBar::showMenu_()
 void PresetBar::handleMenuResult_(int result)
 {
     if (result == 0) return;
+
+    if (result >= kMenuFactoryPresetStart && result < kMenuUserPresetStart)
+    {
+        const int idx = result - kMenuFactoryPresetStart;
+        if (idx >= 0 && idx < static_cast<int>(menuFactoryPresets_.size()))
+        {
+            const auto& e = menuFactoryPresets_[static_cast<size_t>(idx)];
+            if (! pm_.loadFactoryPreset(e.name, e.bank))
+                NativeMessageBox::showMessageBoxAsync(MessageBoxIconType::WarningIcon,
+                    "Preset Load Failed", "The factory preset could not load.");
+        }
+        refreshName_();
+        return;
+    }
 
     if (result >= kMenuUserPresetStart)
     {

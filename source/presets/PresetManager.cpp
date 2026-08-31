@@ -4,6 +4,9 @@
 
 namespace MarsDSP::Presets {
 
+// The current state schema version. Factory presets ship at the current schema.
+static constexpr int kFactoryStateVersion = 5;
+
 // The 28 APVTS parameter IDs. Register one dirty listener per ID.
 static const ParameterID kParamIDs[] = {
     gainParamID,          bitsParamID,         delayTimeParamID,    delayTimeRParamID,
@@ -233,6 +236,83 @@ bool PresetManager::pastePresetXml(const String& xmlText)
     currentFile_ = File();
     isFactory_ = false;
     modified_.store(true, std::memory_order_relaxed);
+    return true;
+}
+
+std::vector<PresetEntry> PresetManager::getFactoryPresets() const
+{
+    std::vector<PresetEntry> entries;
+    for (int i = 0; i < kNumFactoryPresets; ++i)
+    {
+        PresetEntry e;
+        e.name = kFactoryPresets[i].name;
+        e.bank = kFactoryPresets[i].bank;
+        e.factory = true;
+        entries.push_back(std::move(e));
+    }
+    return entries;
+}
+
+bool PresetManager::loadFactoryPreset(const String& name, const String& bank)
+{
+    const FactoryPreset* fp = nullptr;
+    for (int i = 0; i < kNumFactoryPresets; ++i)
+    {
+        if (String(kFactoryPresets[i].name) == name
+            && String(kFactoryPresets[i].bank) == bank)
+        {
+            fp = &kFactoryPresets[i];
+            break;
+        }
+    }
+    if (fp == nullptr) return false;
+
+    // Build a state tree from the parameter defaults.
+    ValueTree state(apvtsRef_.state.getType());
+    state.setProperty("version", kFactoryStateVersion, nullptr);
+
+    for (const auto& pid : kParamIDs)
+    {
+        auto* param = apvtsRef_.getParameter(pid.getParamID());
+        if (param == nullptr) continue;
+        const float defaultDenorm =
+            param->getNormalisableRange().convertFrom0to1(param->getDefaultValue());
+        ValueTree child("PARAM");
+        child.setProperty("id", pid.getParamID(), nullptr);
+        child.setProperty("value", defaultDenorm, nullptr);
+        state.addChild(child, -1, nullptr);
+    }
+
+    // Apply the listed pairs. A parameter absent from the table keeps its default.
+    for (int i = 0; i < fp->numPairs; ++i)
+    {
+        for (int c = 0; c < state.getNumChildren(); ++c)
+        {
+            auto child = state.getChild(c);
+            if (child.getProperty("id").toString() == fp->pairs[i].paramID)
+            {
+                child.setProperty("value", fp->pairs[i].value, nullptr);
+                break;
+            }
+        }
+    }
+
+    // Apply through the single deserialiser (invariant 15).
+    if (! applyStateXml_(*state.createXml()))
+        return false;
+
+    presetName_ = fp->name;
+    presetBank_ = fp->bank;
+    isFactory_ = true;
+    currentFile_ = File();
+    presetAuthor_.clear();
+    presetCategory_.clear();
+
+    MessageManager::callAsync([this]
+    {
+        modified_.store(false, std::memory_order_relaxed);
+    });
+
     return true;
 }
 
