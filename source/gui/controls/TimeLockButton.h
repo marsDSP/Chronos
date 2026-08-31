@@ -5,6 +5,7 @@
 
 #include <JuceHeader.h>
 #include "../Colours.h"
+#include "../Metrics.h"
 
 namespace MarsDSP::GUI {
 
@@ -78,7 +79,7 @@ public:
         path.applyTransform(AffineTransform::translation(offsetX, offsetY));
 
         g.setColour(colour);
-        g.strokePath(path, PathStrokeType(1.8f, PathStrokeType::curved, PathStrokeType::rounded));
+        g.strokePath(path, PathStrokeType(currentMetrics().stroke(Metrics::kLockStroke), PathStrokeType::curved, PathStrokeType::rounded));
     }
 
 private:

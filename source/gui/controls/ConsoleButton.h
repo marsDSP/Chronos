@@ -31,25 +31,28 @@ public:
     {
         ignoreUnused(shouldDrawButtonAsDown);
 
+        const auto m = currentMetrics();
         const auto bounds = getLocalBounds().toFloat();
+        const float corner = m.pxf(Metrics::kCornerSmall);
+        const float sw = m.stroke(Metrics::kHairline);
         const bool isOn = getToggleState();
 
         if (isOn)
         {
             g.setColour(activeBg_);
-            g.fillRoundedRectangle(bounds, 4.0f);
+            g.fillRoundedRectangle(bounds, corner);
             g.setColour(activeText_);
         }
         else
         {
             g.setColour(shouldDrawButtonAsHighlighted ? Colours::headerBackground : Colours::panelBackground);
-            g.fillRoundedRectangle(bounds, 4.0f);
+            g.fillRoundedRectangle(bounds, corner);
             g.setColour(Colours::panelBorder);
-            g.drawRoundedRectangle(bounds.reduced(0.5f), 4.0f, 1.0f);
+            g.drawRoundedRectangle(bounds.reduced(sw / 2), corner, sw);
             g.setColour(shouldDrawButtonAsHighlighted ? Colours::textPrimary : Colours::textDim);
         }
 
-        const auto font = Fonts::font(Fonts::Weight::Medium, currentMetrics().font(10.0f));
+        const auto font = Fonts::font(Fonts::Weight::Medium, m.font(10.0f));
         g.setFont(font);
         g.drawText(getButtonText().toUpperCase(), bounds, Justification::centred, false);
     }

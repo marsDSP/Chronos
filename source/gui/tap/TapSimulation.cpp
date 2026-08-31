@@ -45,7 +45,7 @@ SimulationResult Engine::simulate(const Parameters& params)
     float curTimeL = timeL;
     float curTimeR = timeR;
 
-    constexpr int kMaxRepeats = 120;
+    const int kMaxRepeats = 120;
     for (int n = 1; n <= kMaxRepeats; ++n)
     {
         const bool outOfWindowL = curTimeL > maxWindow;

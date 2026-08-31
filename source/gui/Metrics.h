@@ -62,6 +62,35 @@ namespace MarsDSP::GUI
         static constexpr int kKnobMax = 58;
         static constexpr int kHeroKnobMax = 72;
 
+        static constexpr float kCornerSmall        = 4.0f;
+        static constexpr float kCornerDisplay      = 5.0f;
+        static constexpr float kHairline           = 1.0f;
+        static constexpr float kGroupStroke        = 2.0f;
+        static constexpr float kSegmentGap         = 4.0f;
+        static constexpr float kPlotPad            = 10.0f;
+        static constexpr float kTapBarStroke       = 2.5f;
+        static constexpr float kTapHeadRadius      = 2.5f;
+        static constexpr float kTapHeadGrow        = 2.0f;
+        static constexpr float kLaneHeadroom       = 8.0f;
+        static constexpr float kSnapRadius         = 6.0f;
+        static constexpr float kHoverReadoutW      = 160.0f;
+        static constexpr float kHoverReadoutH      = 14.0f;
+        static constexpr float kComboArrowInset    = 20.0f;
+        static constexpr float kMenuItemInset      = 12.0f;
+        static constexpr float kMenuArrowBox       = 16.0f;
+        static constexpr float kMenuSeparatorInset = 14.0f;
+        static constexpr float kIconStroke         = 1.5f;
+        static constexpr float kLockStroke         = 1.8f;
+
+        // Ruler and selector geometry, design units at s = 1.
+        static constexpr float kRulerLaneHeight    = 28.0f;
+        static constexpr float kRulerLabelGap      = 7.0f;
+        static constexpr float kMajorTick          = 6.0f;
+        static constexpr float kMinorTick          = 4.0f;
+        static constexpr float kRulerFont           = 9.0f;
+        static constexpr float kSelectorRowH       = 24.0f;
+        static constexpr float kEnableRowH         = 22.0f;
+
         // The scale factor, clamped to [kScaleMin, kScaleMax].
         float s = 1.0f;
 

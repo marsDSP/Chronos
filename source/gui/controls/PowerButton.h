@@ -5,6 +5,7 @@
 
 #include <JuceHeader.h>
 #include "../Colours.h"
+#include "../Metrics.h"
 
 namespace MarsDSP::GUI {
 
@@ -51,48 +52,58 @@ public:
                      const bool shouldDrawButtonAsHighlighted,
                      const bool shouldDrawButtonAsDown) override
     {
+        ignoreUnused(shouldDrawButtonAsDown);
+
         const auto bounds = getLocalBounds().toFloat();
         const auto cx = bounds.getCentreX();
         const auto cy = bounds.getCentreY();
-        const auto radius = std::min(bounds.getWidth(), bounds.getHeight()) * 0.25f;
+        const float unit = 20.0f;
+        const float scale = std::min(bounds.getWidth(), bounds.getHeight()) / unit;
+        const float stroke = currentMetrics().stroke(Metrics::kIconStroke);
+        const float ox = cx - 10.0f * scale;
+        const float oy = cy - 10.0f * scale;
 
         const bool state = getToggleState();
         g.setColour(state ? onColour_ : offColour_);
 
-        if (shouldDrawButtonAsDown || shouldDrawButtonAsHighlighted)
+        if (shouldDrawButtonAsHighlighted)
             g.setOpacity(0.85f);
 
         if (isMusicalNote_)
         {
             Path note;
-            note.addEllipse(cx - 3.5f, cy + 1.0f, 5.0f, 4.0f);
-            note.startNewSubPath(cx + 1.5f, cy + 3.0f);
-            note.lineTo(cx + 1.5f, cy - 5.0f);
-            note.lineTo(cx + 5.0f, cy - 2.0f);
-            g.strokePath(note, PathStrokeType(1.5f, PathStrokeType::mitered, PathStrokeType::rounded));
+            note.addEllipse(6.5f * scale, 11.0f * scale, 5.0f * scale, 4.0f * scale);
+            note.startNewSubPath(11.5f * scale, 13.0f * scale);
+            note.lineTo(11.5f * scale, 5.0f * scale);
+            note.lineTo(15.0f * scale, 8.0f * scale);
+            note.applyTransform(AffineTransform::translation(ox, oy));
+            g.strokePath(note, PathStrokeType(stroke, PathStrokeType::mitered, PathStrokeType::rounded));
         }
         else if (isLock_)
         {
             Path lock;
-            lock.addRoundedRectangle(cx - 4.0f, cy - 1.0f, 8.0f, 6.0f, 1.0f);
-            lock.startNewSubPath(cx - 2.0f, cy - 1.0f);
-            lock.lineTo(cx - 2.0f, cy - 3.0f);
-            lock.addArc(cx - 2.0f, cy - 5.0f, 4.0f, 4.0f, MathConstants<float>::pi, MathConstants<float>::twoPi, true);
-            lock.lineTo(cx + 2.0f, cy - 1.0f);
+            lock.addRoundedRectangle(6.0f * scale, 9.0f * scale, 8.0f * scale, 6.0f * scale, scale);
+            lock.startNewSubPath(8.0f * scale, 9.0f * scale);
+            lock.lineTo(8.0f * scale, 7.0f * scale);
+            lock.addArc(8.0f * scale, 5.0f * scale, 4.0f * scale, 4.0f * scale,
+                       MathConstants<float>::pi, MathConstants<float>::twoPi, true);
+            lock.lineTo(12.0f * scale, 9.0f * scale);
+            lock.applyTransform(AffineTransform::translation(ox, oy));
 
-            g.strokePath(lock, PathStrokeType(1.5f, PathStrokeType::mitered, PathStrokeType::rounded));
-            g.fillRoundedRectangle(cx - 4.0f, cy - 1.0f, 8.0f, 6.0f, 1.0f);
+            g.strokePath(lock, PathStrokeType(stroke, PathStrokeType::mitered, PathStrokeType::rounded));
+            g.fillRoundedRectangle(cx - 4 * scale, cy - 1 * scale, 8 * scale, 6 * scale, scale);
 
             g.setColour(Colours::background);
-            g.drawLine(cx, cy + 1.0f, cx, cy + 3.0f, 1.0f);
+            g.drawLine(cx, cy + 1 * scale, cx, cy + 3 * scale, stroke);
         }
         else
         {
+            const float r = 5.0f * scale;
             Path powerCircle;
-            powerCircle.addArc(cx - radius, cy - radius, radius * 2.0f, radius * 2.0f,
+            powerCircle.addArc(cx - r, cy - r, r * 2, r * 2,
                                0.6f, MathConstants<float>::twoPi - 0.6f, true);
-            g.strokePath(powerCircle, PathStrokeType(1.5f, PathStrokeType::mitered, PathStrokeType::rounded));
-            g.drawLine(cx, cy - radius - 2.0f, cx, cy + 1.0f, 1.5f);
+            g.strokePath(powerCircle, PathStrokeType(stroke, PathStrokeType::mitered, PathStrokeType::rounded));
+            g.drawLine(cx, cy - r - 2 * scale, cx, cy + 1 * scale, stroke);
         }
     }
 

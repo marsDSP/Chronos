@@ -52,7 +52,7 @@ void LookAndFeel::drawRotarySlider(Graphics& g,
     const auto centreY = bounds.getCentreY();
     const auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
 
-    constexpr float arcThickness = 2.0f;
+    const float arcThickness = currentMetrics().stroke(Metrics::kGroupStroke);
     Path trackArc;
     trackArc.addCentredArc(centreX, centreY, radius, radius, 0.0f, rotaryStartAngle, rotaryEndAngle, true);
 
@@ -82,7 +82,8 @@ void LookAndFeel::drawRotarySlider(Graphics& g,
     g.fillEllipse(centreX - knobRadius, centreY - knobRadius, knobDiameter, knobDiameter);
 
     g.setColour(Colour(0x08FFFFFF));
-    g.drawEllipse(centreX - knobRadius, centreY - knobRadius, knobDiameter, knobDiameter, 1.5f);
+    const float outline = currentMetrics().stroke(Metrics::kIconStroke);
+    g.drawEllipse(centreX - knobRadius, centreY - knobRadius, knobDiameter, knobDiameter, outline);
 
     Path pointer;
     const auto pointerLength = knobRadius * 0.6f;
@@ -106,14 +107,17 @@ void LookAndFeel::drawComboBox(Graphics& g,
 {
     ignoreUnused(isButtonDown, buttonX, buttonY, buttonW, buttonH, box);
 
+    const auto m = currentMetrics();
     const auto bounds = Rectangle<int>(0, 0, width, height).toFloat();
+    const float corner = m.pxf(Metrics::kCornerSmall);
+    const float sw = m.stroke(Metrics::kHairline);
 
     g.setColour(Colours::dropdownBg);
-    g.fillRoundedRectangle(bounds, 4.0f);
+    g.fillRoundedRectangle(bounds, corner);
     g.setColour(Colours::dropdownBorder);
-    g.drawRoundedRectangle(bounds.reduced(0.5f), 4.0f, 1.0f);
+    g.drawRoundedRectangle(bounds.reduced(sw / 2), corner, sw);
 
-    const auto arrowX = static_cast<float>(width) - 20.0f;
+    const auto arrowX = static_cast<float>(width) - m.pxf(Metrics::kComboArrowInset);
     const auto arrowY = static_cast<float>(height) * 0.5f;
 
     Path arrow;
@@ -132,13 +136,13 @@ void LookAndFeel::drawGroupComponentOutline(Graphics& g,
                                             const Justification& position,
                                             GroupComponent& group)
 {
-    constexpr float textH = 15.0f;
-    constexpr float indent = 3.0f;
-    constexpr float textEdgeGap = 4.0f;
+    const float textH = 15.0f;
+    const float indent = 3.0f;
+    const float textEdgeGap = 4.0f;
     auto cornerSize = 5.0f;
 
     const Font font = Fonts::font(Fonts::Weight::Semibold, currentMetrics().font(textH));
-    constexpr auto x = indent;
+    const auto x = indent;
     const auto y = font.getAscent() - 3.0f;
     const auto w = std::max(0.0f, static_cast<float>(width) - x * 2.0f);
     const auto h = std::max(0.0f, static_cast<float>(height) - y - indent);
@@ -171,7 +175,7 @@ void LookAndFeel::drawGroupComponentOutline(Graphics& g,
 
     const auto alpha = group.isEnabled() ? 1.0f : 0.5f;
     g.setColour(group.findColour(GroupComponent::outlineColourId).withMultipliedAlpha(alpha));
-    g.strokePath(p, PathStrokeType(2.0f));
+    g.strokePath(p, PathStrokeType(currentMetrics().stroke(Metrics::kGroupStroke)));
 
     g.setColour(group.findColour(GroupComponent::textColourId).withMultipliedAlpha(alpha));
     g.setFont(font);
@@ -205,11 +209,16 @@ void LookAndFeel::drawLabel(Graphics& g, Label& label)
 
 void LookAndFeel::drawPopupMenuBackground(Graphics& g, const int width, const int height)
 {
+    const auto m = currentMetrics();
+    const float corner = m.pxf(Metrics::kCornerSmall);
+    const float sw = m.stroke(Metrics::kHairline);
+    const float half = sw / 2;
+
     g.setColour(Colours::panelBackground);
-    g.fillRoundedRectangle(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height), 4.0f);
+    g.fillRoundedRectangle(Rectangle<float>(static_cast<float>(width), static_cast<float>(height)), corner);
 
     g.setColour(Colours::panelBorder);
-    g.drawRoundedRectangle(0.5f, 0.5f, static_cast<float>(width) - 1.0f, static_cast<float>(height) - 1.0f, 4.0f, 1.0f);
+    g.drawRoundedRectangle(half, half, static_cast<float>(width) - sw, static_cast<float>(height) - sw, corner, sw);
 }
 
 void LookAndFeel::drawPopupMenuItem(Graphics& g,
@@ -226,9 +235,11 @@ void LookAndFeel::drawPopupMenuItem(Graphics& g,
 {
     ignoreUnused(shortcutKeyText, icon, textColour, isTicked);
 
+    const auto m = currentMetrics();
+
     if (isSeparator)
     {
-        auto r = area.reduced(14, 0);
+        auto r = area.reduced(m.px(Metrics::kMenuSeparatorInset), 0);
         r.removeFromTop(roundToInt(static_cast<float>(r.getHeight()) * 0.5f) - 1);
         g.setColour(Colours::panelBorder);
         g.fillRect(r.removeFromTop(1));
@@ -236,10 +247,11 @@ void LookAndFeel::drawPopupMenuItem(Graphics& g,
     }
 
     auto r = area.reduced(2);
+    const float highlightCorner = m.pxf(3.0f);
     if (isHighlighted && isActive)
     {
         g.setColour(Colours::headerBackground);
-        g.fillRoundedRectangle(r.toFloat(), 3.0f);
+        g.fillRoundedRectangle(r.toFloat(), highlightCorner);
         g.setColour(Colours::textBright);
     }
     else
@@ -247,14 +259,14 @@ void LookAndFeel::drawPopupMenuItem(Graphics& g,
         g.setColour(isActive ? Colours::textBright : Colours::textDim);
     }
 
-    r.removeFromLeft(12);
+    r.removeFromLeft(m.px(Metrics::kMenuItemInset));
     g.setFont(getPopupMenuFont());
     g.drawFittedText(text, r, Justification::centredLeft, 1);
 
     if (hasSubMenu)
     {
         Path arrow;
-        const auto arrowArea = r.removeFromRight(16).withSizeKeepingCentre(4, 7).toFloat();
+        const auto arrowArea = r.removeFromRight(m.px(Metrics::kMenuArrowBox)).withSizeKeepingCentre(4, 7).toFloat();
         arrow.addTriangle(arrowArea.getTopLeft(),
                           arrowArea.getBottomLeft(),
                           Point<float>(arrowArea.getRight(), arrowArea.getCentreY()));

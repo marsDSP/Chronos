@@ -79,7 +79,7 @@ void SegmentButtons::resized()
         return;
 
     const int n = static_cast<int>(buttons_.size());
-    constexpr int gap = 4;
+    const int gap = currentMetrics().px(Metrics::kSegmentGap);
     const int bw = (getWidth() - gap * (n - 1)) / n;
     int x = 0;
     for (auto& btn : buttons_)

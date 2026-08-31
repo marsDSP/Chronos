@@ -34,16 +34,19 @@ public:
 
     void paint(Graphics& g) override
     {
+        const auto m = currentMetrics();
         const auto bounds = getLocalBounds().toFloat();
+        const float corner = m.pxf(Metrics::kCornerSmall);
+        const float sw = m.stroke(Metrics::kHairline);
 
         g.setColour(tintInk(accentColour_, kTintGridMinor));
-        g.fillRoundedRectangle(bounds, 4.0f);
+        g.fillRoundedRectangle(bounds, corner);
 
         g.setColour(accentColour_.withAlpha(0.2f));
-        g.drawRoundedRectangle(bounds.reduced(0.5f), 4.0f, 1.0f);
+        g.drawRoundedRectangle(bounds.reduced(sw / 2), corner, sw);
 
         const String text = (slider_ != nullptr) ? slider_->getTextFromValue(slider_->getValue()) : "---";
-        const Font f = Fonts::font(Fonts::Weight::Semibold, currentMetrics().font(13.0f));
+        const Font f = Fonts::font(Fonts::Weight::Semibold, m.font(13.0f));
         Fonts::drawFixedAdvanceText(g, f, text, bounds, accentColour_);
     }
 

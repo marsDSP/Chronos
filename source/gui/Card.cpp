@@ -76,7 +76,7 @@ void Card::paint(Graphics& g)
     g.fillRoundedRectangle(bounds, r);
 
     g.setColour(tint(Colours::panelBackground, accent_, kTintCardBorder));
-    g.drawRoundedRectangle(bounds.reduced(sw * 0.5f), r, sw);
+    g.drawRoundedRectangle(bounds.reduced(sw / 2), r, sw);
 }
 
 void Card::resized()

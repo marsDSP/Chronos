@@ -145,7 +145,7 @@ namespace MarsDSP::GUI::Knobs {
 
             if (slider.getProperties().getWithDefault("drawFromMiddle", false))
             {
-                constexpr float middlePos = 0.5f;
+                const float middlePos = 0.5f;
                 const auto middleAngle = rotaryStartAngle + middlePos * (rotaryEndAngle - rotaryStartAngle);
                 return {std::min(angle, middleAngle), std::max(angle, middleAngle)};
             }

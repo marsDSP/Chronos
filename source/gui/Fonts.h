@@ -11,7 +11,7 @@ namespace MarsDSP::GUI::Fonts {
 enum class Weight { Regular, Medium, Semibold };
 
 // Clash Grotesk cap height as a fraction of the em height.
-constexpr float kCapHeightRatio = 0.71f;
+const float kCapHeightRatio = 0.71f;
 
 // Return the typeface for a weight. Return the default face when the font resource is absent.
 Typeface::Ptr typefaceFor(Weight weight);

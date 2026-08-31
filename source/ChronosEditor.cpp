@@ -10,8 +10,6 @@ using GUIColours = MarsDSP::GUI::Colours;
 using MarsDSP::GUI::Metrics;
 using MarsDSP::GUI::AccentConsumer;
 // Uniform grid constants (design units, section 4.4).
-constexpr float kSelectorHDU = 24.0f;
-constexpr float kEnableRowDU = 22.0f;
 
 // Derive the knob diameter in pixels for n knobs in a content area.
 // rowH is the pixel height available for the row (including label and readout space).
@@ -102,7 +100,7 @@ public:
         const auto h = static_cast<float>(getHeight());
 
         const float g = m.pxf(static_cast<float>(Metrics::kKnobGutter));
-        const int selH = m.px(kSelectorHDU);
+        const int selH = m.px(Metrics::kSelectorRowH);
         const int rowGap = m.px(static_cast<float>(Metrics::kInterRowGap));
         const int readoutH = m.px(static_cast<float>(Metrics::kReadoutBandH));
         const int labelReadoutGap = m.px(static_cast<float>(Metrics::kLabelReadoutGap));
@@ -220,7 +218,7 @@ public:
         const auto h = static_cast<float>(getHeight());
 
         const float g = m.pxf(static_cast<float>(Metrics::kKnobGutter));
-        const int selH = m.px(kSelectorHDU);
+        const int selH = m.px(Metrics::kSelectorRowH);
         const int rowGap = m.px(static_cast<float>(Metrics::kInterRowGap));
 
         // Row 1: the delay-mode segment. Row 2: three knobs. Row 3: the loop-sat segment.
@@ -317,7 +315,7 @@ public:
         const auto w = static_cast<float>(getWidth());
         const auto h = static_cast<float>(getHeight());
 
-        const int selH = m.px(kSelectorHDU);
+        const int selH = m.px(Metrics::kSelectorRowH);
         const int rowGap = m.px(static_cast<float>(Metrics::kInterRowGap));
         const float g = m.pxf(static_cast<float>(Metrics::kKnobGutter));
 
@@ -382,7 +380,7 @@ public:
 
         const float g = m.pxf(static_cast<float>(Metrics::kKnobGutter));
         const int rowGap = m.px(static_cast<float>(Metrics::kInterRowGap));
-        const int enableH = m.px(kEnableRowDU);
+        const int enableH = m.px(Metrics::kEnableRowH);
         const int enableGap = m.px(8.0f);
 
         // Row 0: the enable button. Rows 1 and 2: the two knob rows.
@@ -447,7 +445,7 @@ public:
         const auto h = static_cast<float>(getHeight());
 
         const float g = m.pxf(static_cast<float>(Metrics::kKnobGutter));
-        const int selH = m.px(kSelectorHDU);
+        const int selH = m.px(Metrics::kSelectorRowH);
         const int rowGap = m.px(static_cast<float>(Metrics::kInterRowGap));
 
         // Row 1: the filter-mode segment. Row 2: two knobs.

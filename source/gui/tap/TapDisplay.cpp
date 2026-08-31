@@ -11,25 +11,14 @@
 namespace MarsDSP::GUI {
 namespace {
 
-constexpr int kDisplayTimerHz = 60;
-
 // Ease time constants in seconds.
-constexpr float kTauMove = 0.060f;
-constexpr float kTauGain = 0.050f;
-constexpr float kTauDie  = 0.080f;
-constexpr float kTauSpan = 0.120f;
+const float kTauMove = 0.060f;
+const float kTauGain = 0.050f;
+const float kTauDie  = 0.080f;
+const float kTauSpan = 0.120f;
 
 // A dying tap below this gain is removed.
-constexpr float kCullGain = 0.005f;
-
-// Ruler lane geometry, design units.
-constexpr float kRulerLaneHeightDU = 28.0f;
-constexpr float kRulerLabelGapDU  = 7.0f;
-constexpr float kMajorTickDU       = 6.0f;
-constexpr float kMinorTickDU       = 4.0f;
-constexpr float kRulerFontDU       = 9.0f;
-// The snap radius in pixels for a tap head under the cursor.
-constexpr float kSnapPx = 6.0f;
+const float kCullGain = 0.005f;
 
 const String kMidDot = String::charToString(static_cast<juce_wchar>(0x00B7));
 
@@ -199,7 +188,7 @@ RulerTicks computeSyncTicks(const float span, const float secondsPerBeat, const 
 TapDisplay::TapDisplay(ChronosProcessor& processor)
     : processorRef_(processor)
 {
-    startTimerHz(kDisplayTimerHz);
+    startTimerHz(60);
 }
 
 TapDisplay::~TapDisplay()
@@ -415,20 +404,23 @@ void TapDisplay::paint(Graphics& g)
     const Colour plotFill    = tintInk(accent, kTintPlotFill);
     const Colour plotFillLit = tintInk(accent, kTintPlotFillLit);
 
+    const float displayCorner = metrics_.pxf(Metrics::kCornerDisplay);
+    const float displayStroke = metrics_.stroke(Metrics::kHairline);
+
     g.setColour(plotFill);
-    g.fillRoundedRectangle(bounds, 5.0f);
+    g.fillRoundedRectangle(bounds, displayCorner);
 
     g.setColour(tintInk(accent, kTintDisplayBorder));
-    g.drawRoundedRectangle(bounds.reduced(0.5f), 5.0f, 1.0f);
-    constexpr float padding = 10.0f;
+    g.drawRoundedRectangle(bounds.reduced(displayStroke / 2), displayCorner, displayStroke);
+    const float padding = metrics_.pxf(Metrics::kPlotPad);
     const auto displayBounds = bounds.reduced(padding);
 
-    const float rulerLaneH = metrics_.pxf(kRulerLaneHeightDU);
+    const float rulerLaneH = metrics_.pxf(Metrics::kRulerLaneHeight);
     const auto plotBounds = displayBounds.withTrimmedBottom(rulerLaneH);
     const auto rulerBounds = displayBounds.withTrimmedTop(displayBounds.getHeight() - rulerLaneH);
 
     const float centerY = plotBounds.getCentreY();
-    const float maxLaneHeight = plotBounds.getHeight() * 0.5f - 8.0f;
+    const float maxLaneHeight = plotBounds.getHeight() * 0.5f - metrics_.pxf(Metrics::kLaneHeadroom);
     if (maxLaneHeight <= 0.0f)
         return;
 
@@ -502,14 +494,15 @@ void TapDisplay::paint(Graphics& g)
 
             const float baseAlpha = tap.dry ? 0.45f : 0.85f;
             g.setColour(tapCol.withAlpha(baseAlpha));
-            g.strokePath(barPath, PathStrokeType(2.5f, PathStrokeType::curved, PathStrokeType::rounded));
+            g.strokePath(barPath, PathStrokeType(metrics_.pxf(Metrics::kTapBarStroke), PathStrokeType::curved, PathStrokeType::rounded));
 
             // Head dot with envelope brightness modulation
             const float headY = isTopLane ? (centerY - barHeight) : (centerY + barHeight);
-            const float headRadius = tap.dry ? 2.5f : (2.5f + envIntensity * 2.0f);
+            const float baseHead = metrics_.pxf(Metrics::kTapHeadRadius);
+            const float headRadius = tap.dry ? baseHead : (baseHead + envIntensity * metrics_.pxf(Metrics::kTapHeadGrow));
             const float glowAlpha = tap.dry ? 1.0f : std::clamp(0.8f + envIntensity * 0.2f, 0.0f, 1.0f);
             g.setColour(tapCol.withAlpha(glowAlpha));
-            g.fillEllipse(x - headRadius, headY - headRadius, headRadius * 2.0f, headRadius * 2.0f);
+            g.fillEllipse(x - headRadius, headY - headRadius, headRadius * 2, headRadius * 2);
         }
     };
 
@@ -550,8 +543,8 @@ void TapDisplay::paint(Graphics& g)
 
     // Ruler tick marks
     const float tickTop = plotBounds.getBottom();
-    const float majorTickLen = metrics_.pxf(kMajorTickDU);
-    const float minorTickLen = metrics_.pxf(kMinorTickDU);
+    const float majorTickLen = metrics_.pxf(Metrics::kMajorTick);
+    const float minorTickLen = metrics_.pxf(Metrics::kMinorTick);
     g.setColour(tintInk(accent, kTintGridMajor));
     for (const float t : ticks.minors)
         g.drawVerticalLine(static_cast<int>(timeToX(t)), tickTop, tickTop + minorTickLen);
@@ -560,9 +553,9 @@ void TapDisplay::paint(Graphics& g)
         g.drawVerticalLine(static_cast<int>(timeToX(t)), tickTop, tickTop + majorTickLen);
 
     // Ruler labels
-    const Font rulerFont = Fonts::font(Fonts::Weight::Regular, metrics_.font(kRulerFontDU));
-    const float baselineY = tickTop + majorTickLen + metrics_.pxf(kRulerLabelGapDU)
-                        + Fonts::kCapHeightRatio * metrics_.font(kRulerFontDU);
+    const Font rulerFont = Fonts::font(Fonts::Weight::Regular, metrics_.font(Metrics::kRulerFont));
+    const float baselineY = tickTop + majorTickLen + metrics_.pxf(Metrics::kRulerLabelGap)
+                        + Fonts::kCapHeightRatio * metrics_.font(Metrics::kRulerFont);
     const int baselineYi = roundToInt(baselineY);
     const float minLabelGap = metrics_.pxf(8.0f);
     g.setFont(rulerFont);
@@ -619,7 +612,7 @@ void TapDisplay::paint(Graphics& g)
             if (tap.dry)
                 continue;
             const float tx = timeToX(tap.displayedTime);
-            if (std::fabs(tx - hoverPos_.x) <= kSnapPx)
+            if (std::fabs(tx - hoverPos_.x) <= metrics_.pxf(Metrics::kSnapRadius))
             {
                 snapKey = tap.key;
                 snapTime = tap.targetTime;
@@ -643,11 +636,11 @@ void TapDisplay::paint(Graphics& g)
 
         g.setColour(accent);
         g.setFont(Fonts::font(Fonts::Weight::Medium, metrics_.font(10.0f)));
-        const float readoutW = 160.0f;
+        const float readoutW = metrics_.pxf(Metrics::kHoverReadoutW);
         float rx = cursorX + 6.0f;
         if (rx + readoutW > displayBounds.getRight())
             rx = cursorX - readoutW - 6.0f;
-        const auto readoutRect = Rectangle<float>(rx, plotBounds.getY() + 2.0f, readoutW, 14.0f).toNearestInt();
+        const auto readoutRect = Rectangle<float>(rx, plotBounds.getY() + 2.0f, readoutW, metrics_.pxf(Metrics::kHoverReadoutH)).toNearestInt();
         g.drawText(readout, readoutRect, Justification::centredLeft, true);
     }
 }
@@ -722,7 +715,7 @@ void TapDisplay::mouseDrag(const MouseEvent& e)
     {
         if (pDiv)
         {
-            constexpr float pixelsPerDiv = 25.0f;
+            const float pixelsPerDiv = 25.0f;
             const int step = static_cast<int>(std::round(dx / pixelsPerDiv));
             const int newDiv = std::clamp(startDiv_ + step, 0, 19);
             pDiv->setValueNotifyingHost(pDiv->getNormalisableRange().convertTo0to1(static_cast<float>(newDiv)));
@@ -867,8 +860,8 @@ void TapDisplay::mouseWheelMove(const MouseEvent& e, const MouseWheelDetails& wh
             return;
 
         // Nudge the normalized value. Shift makes the step fine.
-        constexpr float kCoarse = 0.02f;
-        constexpr float kFine = 0.004f;
+        const float kCoarse = 0.02f;
+        const float kFine = 0.004f;
         const float step = fine ? kFine : kCoarse;
         const float cur = p->getValue();
         const float next = std::clamp(cur + wheel.deltaY * step, 0.0f, 1.0f);
