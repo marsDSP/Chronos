@@ -548,7 +548,6 @@ void ChronosEditor::updateCoreAccentColour_(const float delayModeVal)
                                  : MarsDSP::GUI::Colours::accentDelayDigital;
     timeCard_.setAccentColour(col);
     repeatsCard_.setAccentColour(col);
-    header_.setCoreMode(mode, col);
 }
 
 void ChronosEditor::paint(Graphics& g)
