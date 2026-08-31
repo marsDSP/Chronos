@@ -16,7 +16,6 @@
 #include "gui/controls/ConsoleButton.h"
 #include "gui/controls/TimeLockButton.h"
 #include "gui/controls/TimeDisplay.h"
-#include "gui/controls/DotMatrixDisplay.h"
 #include "gui/tap/TapDisplay.h"
 
 // The main plugin editor component.

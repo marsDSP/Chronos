@@ -140,6 +140,8 @@ public:
         timeRDisplay.setAccentColour(c);
         timeLinkButton.setAccentColour(c);
         syncButton.setAccentColour(c);
+        timeLKnob.setAccentColour(c);
+        timeRKnob.setAccentColour(c);
     }
 
 private:
@@ -156,7 +158,7 @@ private:
 };
 
 // 2. TIME card -> MOD sub-panel
-class ModPanel final : public Component {
+class ModPanel final : public Component, public AccentConsumer {
 public:
     explicit ModPanel(ChronosProcessor& proc)
         : depthKnob("MOD DEPTH", proc.getAPVTS(), delayModDepthParamID),
@@ -184,6 +186,12 @@ public:
         int x = 0;
         depthKnob.setBounds(x, y, cellWPx, cellH);
         rateKnob.setBounds(x + cellWPx + gapPx, y, cellWPx, cellH);
+    }
+
+    void setAccentColour(Colour c) override
+    {
+        depthKnob.setAccentColour(c);
+        rateKnob.setAccentColour(c);
     }
 
 private:
@@ -248,6 +256,9 @@ public:
     {
         loopSatSeg_.setAccentColour(c);
         delayModeSeg_.setAccentColour(c);
+        feedbackKnob.setAccentColour(c);
+        crossFeedKnob.setAccentColour(c);
+        loopDriveKnob.setAccentColour(c);
     }
 
 private:
@@ -259,7 +270,7 @@ private:
 };
 
 // 4. REPEATS card -> TONE sub-panel
-class TonePanel final : public Component {
+class TonePanel final : public Component, public AccentConsumer {
 public:
     explicit TonePanel(ChronosProcessor& proc)
         : dampKnob("DAMP", proc.getAPVTS(), dampHzParamID),
@@ -287,6 +298,12 @@ public:
         int x = 0;
         dampKnob.setBounds(x, y, cellWPx, cellH);
         loopCutKnob.setBounds(x + cellWPx + gapPx, y, cellWPx, cellH);
+    }
+
+    void setAccentColour(Colour c) override
+    {
+        dampKnob.setAccentColour(c);
+        loopCutKnob.setAccentColour(c);
     }
 
 private:
@@ -344,6 +361,8 @@ public:
     void setAccentColour(Colour c) override
     {
         adaaSeg_.setAccentColour(c);
+        driveKnob.setAccentColour(c);
+        bitsKnob.setAccentColour(c);
     }
 
 private:
@@ -413,6 +432,10 @@ public:
     void setAccentColour(Colour c) override
     {
         enableButton.setAccentColour(c);
+        diffusionKnob.setAccentColour(c);
+        sizeKnob.setAccentColour(c);
+        modDepthKnob.setAccentColour(c);
+        modRateKnob.setAccentColour(c);
     }
 
 private:
@@ -470,6 +493,8 @@ public:
     void setAccentColour(Colour c) override
     {
         modeSeg_.setAccentColour(c);
+        hpfKnob.setAccentColour(c);
+        lpfKnob.setAccentColour(c);
     }
 
 private:
@@ -479,7 +504,7 @@ private:
 };
 
 // 8. OUTPUT card -> LEVEL sub-panel
-class LevelPanel final : public Component {
+class LevelPanel final : public Component, public AccentConsumer {
 public:
     explicit LevelPanel(ChronosProcessor& proc)
         : mixKnob("MIX", proc.getAPVTS(), mixParamID),
@@ -507,6 +532,12 @@ public:
         int x = 0;
         mixKnob.setBounds(x, y, cellWPx, cellH);   x += cellWPx + gapPx;
         gainKnob.setBounds(x, y, cellWPx, cellH);
+    }
+
+    void setAccentColour(Colour c) override
+    {
+        mixKnob.setAccentColour(c);
+        gainKnob.setAccentColour(c);
     }
 
 private:

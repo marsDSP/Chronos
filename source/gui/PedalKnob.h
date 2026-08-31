@@ -154,7 +154,9 @@ namespace MarsDSP::GUI::Knobs {
         }
     }
 
-    class PDLKnob : public Component
+    class PDLKnob : public Component,
+                    private Slider::Listener,
+            private Timer
     {
     public:
         PDLKnob(const String &labelText,
@@ -169,12 +171,38 @@ namespace MarsDSP::GUI::Knobs {
         void setLabelText(const String &text) { labelText_ = text; repaint(); }
         void setDrawFromMiddle(bool v) { slider.getProperties().set("drawFromMiddle", v); }
 
+        // Store the accent colour for the value text.
+        void setAccentColour(Colour c) { accentColour_ = c; repaint(); }
+
+        // Mouse listener callbacks for the slider.
+        void mouseEnter(const MouseEvent &e) override;
+        void mouseExit(const MouseEvent &e) override;
+        void mouseWheelMove(const MouseEvent &e, const MouseWheelDetails &wheel) override;
+        void mouseDoubleClick(const MouseEvent &e) override;
+
     private:
+        void sliderValueChanged(Slider *) override { repaint(); }
+        void sliderDragStarted(Slider *) override;
+        void sliderDragEnded(Slider *) override;
+        void timerCallback() override;
+
+        void startHoldTimer();
+        void showValueEditor_();
+        void applyEditorText_();
+
         Slider slider;
         String labelText_;
         Colour labelColour_ { Colours::textDim };
+        Colour accentColour_ { Colours::accentDelayDigital };
         PedalKnob lnf;
         std::unique_ptr<AudioProcessorValueTreeState::SliderAttachment> attachment;
+        AudioProcessorValueTreeState &apvtsRef_;
+        String paramID_;
+        Label valueEditor_;
+        bool showValue_ = false;
+        bool hovered_ = false;
+        bool dragging_ = false;
+        Time lastWheelTime_;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PDLKnob)
     };
