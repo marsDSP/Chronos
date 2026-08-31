@@ -32,15 +32,22 @@ namespace MarsDSP::GUI
 
         // Band geometry (section 4.3), design units.
         static constexpr int kTopPad = 2;
-        static constexpr int kHeaderH = 44;
+        static constexpr int kHeaderH = 52;
         static constexpr int kGapHeader = 4;
         static constexpr int kTapH = 250;
         static constexpr int kGapTap = 8;
-        static constexpr int kCardRowH = 292;
+        static constexpr int kCardRowH = 284;
         static constexpr int kGapCards = 4;
         static constexpr int kFooterH = 34;
         static constexpr int kBottomPad = 2;
         static constexpr int kSideMargin = 14;
+
+        // Preset bar geometry (section 4.7), design units.
+        static constexpr int kPresetBarW = 320;
+        static constexpr int kPresetBarH = 26;
+        static constexpr int kPresetBarArrow = 18;
+        static constexpr int kPresetBarMenu = 22;
+        static constexpr float kPresetBarFont = 12.0f;
 
         // Card geometry (section 4.4), design units.
         static constexpr int kCardGutter = 8;

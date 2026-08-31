@@ -7,6 +7,7 @@
 #include "Colours.h"
 #include "Metrics.h"
 #include "controls/PowerButton.h"
+#include "PresetBar.h"
 #include <memory>
 
 class ChronosProcessor;
@@ -32,6 +33,7 @@ private:
     ChronosProcessor& processorRef_;
     Metrics metrics_;
     Label wordmark_;
+    PresetBar presetBar_;
     PowerButton bypassButton_;
     std::unique_ptr<AudioProcessorValueTreeState::ButtonAttachment> bypassAttach_;
 

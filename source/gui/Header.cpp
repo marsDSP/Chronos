@@ -5,13 +5,14 @@
 namespace MarsDSP::GUI {
 
 Header::Header(ChronosProcessor& proc)
-    : processorRef_(proc)
+    : processorRef_(proc), presetBar_(proc.getPresetManager())
 {
     wordmark_.setText("CHRONOS", dontSendNotification);
     wordmark_.setColour(Label::textColourId, Colours::textBright);
     wordmark_.setJustificationType(Justification::centredLeft);
     setTitle("Header");
     addAndMakeVisible(wordmark_);
+    addAndMakeVisible(presetBar_);
 
     bypassButton_.setColours(Colours::accentDelayDigital, Colours::textDim);
     bypassButton_.setTooltip("Bypass the delay processing.");
@@ -25,6 +26,7 @@ Header::Header(ChronosProcessor& proc)
 void Header::setMetrics(const Metrics& m)
 {
     metrics_ = m;
+    presetBar_.setMetrics(m);
     resized();
     repaint();
 }
@@ -32,6 +34,7 @@ void Header::setMetrics(const Metrics& m)
 void Header::setAccentColour(const Colour c)
 {
     bypassButton_.setAccentColour(c);
+    presetBar_.setAccentColour(c);
 }
 
 void Header::paint(Graphics& g)
@@ -48,8 +51,16 @@ void Header::resized()
     const int right = getWidth() - metrics_.px(14.0f);
     const int bypassSize = metrics_.px(20.0f);
 
+    // Centre the preset bar in the band.
+    const int barW = metrics_.px(static_cast<float>(Metrics::kPresetBarW));
+    const int barH = metrics_.px(static_cast<float>(Metrics::kPresetBarH));
+    const int barX = (getWidth() - barW) / 2;
+    const int barY = (h - barH) / 2;
+    presetBar_.setBounds(barX, barY, barW, barH);
+
+    // Wordmark fills the left gap up to the bar.
     wordmark_.setFont(Fonts::font(Fonts::Weight::Semibold, metrics_.font(15.0f)));
-    wordmark_.setBounds(left, 0, right - left - bypassSize - metrics_.px(8.0f), h);
+    wordmark_.setBounds(left, 0, barX - left - metrics_.px(8.0f), h);
 
     bypassButton_.setBounds(right - bypassSize, (h - bypassSize) / 2, bypassSize, bypassSize);
 }
