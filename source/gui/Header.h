@@ -22,6 +22,9 @@ public:
     // Set the scale metrics for the header layout.
     void setMetrics(const Metrics& m);
 
+    // Store the live core accent for the bypass glyph.
+    void setAccentColour(Colour c);
+
     void paint(Graphics& g) override;
     void resized() override;
 

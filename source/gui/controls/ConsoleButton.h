@@ -55,7 +55,7 @@ public:
     }
 
 private:
-    Colour activeBg_ = Colour(0xFF382015);
+    Colour activeBg_ = Colours::panelBackground;
     Colour activeText_ = Colours::accentDelayDigital;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ConsoleButton)

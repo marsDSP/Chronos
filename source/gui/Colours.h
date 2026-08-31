@@ -15,8 +15,6 @@ struct Colours {
     static inline const Colour panelBorder      { 0xFF2A2A2D };
     static inline const Colour headerBackground { 0xFF222225 };
     static inline const Colour footerBackground { 0xFF161618 };
-    static inline const Colour cardBackground   { 0xFF1C1C1F };
-    static inline const Colour cardBorder       { 0xFF333337 };
     static inline const Colour rulerText        { 0xFF9A9A9A };
 
     // Text colours
@@ -24,22 +22,12 @@ struct Colours {
     static inline const Colour textBright  { 0xFFD0D0D0 };
     static inline const Colour textDim     { 0xFF666666 };
 
-    // Accent colours
-    static inline const Colour accentRed    { 0xFFE0115F };
-    static inline const Colour accentGreen  { 0xFF14EEA4 };
-    static inline const Colour accentBlue   { 0xFF4AC6F4 };
-    static inline const Colour accentPurple { 0xFF7E6EFA };
-    static inline const Colour accentPink   { 0xFFFF6B9D };
-    static inline const Colour accentOrange { 0xFFFF8557 };
-    static inline const Colour accentYellow { 0xFFE8D44D };
-
-    // Delay core accent colours (section 3.8 reference values)
+    // Delay core accent colours. One is live at a time, set by delayMode.
     static inline const Colour accentDelayDigital { 0xFFFF8557 };
     static inline const Colour accentDelayBBD     { 0xFF14EEA4 };
 
     // Knob colours
     static inline const Colour knobTrack       { 0x14ABABAB };
-    static inline const Colour knobArc         { 0xFFABABAB };
     static inline const Colour knobFill        { 0xFF303030 };
     static inline const Colour knobGradientTop { 0xFF464646 };
     static inline const Colour knobGradientBot { 0xFF101010 };
@@ -74,6 +62,9 @@ constexpr float kTintReadoutFill    = 0.052f;
 constexpr float kTintReadoutBorder  = 0.242f;
 constexpr float kTintCardBorder     = 0.352f;
 constexpr float kTintCentreLine     = 0.473f;
+
+// The alpha of the bypass scrim drawn over the tap and card bands.
+constexpr float kBypassScrimAlpha   = 0.38f;
 
 } // namespace MarsDSP::GUI
 

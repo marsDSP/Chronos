@@ -28,6 +28,7 @@ public:
     ~ChronosEditor() override;
 
     void paint(Graphics&) override;
+    void paintOverChildren(Graphics&) override;
     void resized() override;
 
     void parameterChanged(const String& parameterID, float newValue) override;

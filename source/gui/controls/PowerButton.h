@@ -24,6 +24,13 @@ public:
         repaint();
     }
 
+    // Store the engaged colour. Keep the off colour.
+    void setAccentColour(Colour c)
+    {
+        onColour_ = c;
+        repaint();
+    }
+
     // Configure the button to draw a musical note icon.
     void setMusicalNote(const bool isNote)
     {

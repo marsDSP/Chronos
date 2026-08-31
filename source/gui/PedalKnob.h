@@ -159,8 +159,7 @@ namespace MarsDSP::GUI::Knobs {
     public:
         PDLKnob(const String &labelText,
                 AudioProcessorValueTreeState &state,
-                const ParameterID &pid,
-                Colour arc = Colours::accentGreen);
+                const ParameterID &pid);
 
         ~PDLKnob() override;
 
@@ -168,14 +167,12 @@ namespace MarsDSP::GUI::Knobs {
         void resized() override;
         Slider &getSlider() { return slider; }
         void setLabelText(const String &text) { labelText_ = text; repaint(); }
-        void setArcColour(Colour c);
         void setDrawFromMiddle(bool v) { slider.getProperties().set("drawFromMiddle", v); }
 
     private:
         Slider slider;
         String labelText_;
         Colour labelColour_ { Colours::textDim };
-        Colour arcColour;
         PedalKnob lnf;
         std::unique_ptr<AudioProcessorValueTreeState::SliderAttachment> attachment;
 

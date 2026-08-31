@@ -4,9 +4,8 @@ namespace MarsDSP::GUI::Knobs {
 
 PDLKnob::PDLKnob(const String &labelText,
                  AudioProcessorValueTreeState &state,
-                 const ParameterID &pid,
-                 const Colour arc)
-    : arcColour(arc), labelText_(labelText)
+                 const ParameterID &pid)
+    : labelText_(labelText)
 {
     slider.setSliderStyle(Slider::RotaryHorizontalVerticalDrag);
     slider.setTextBoxStyle(Slider::NoTextBox, true, 0, 0);
@@ -19,12 +18,6 @@ PDLKnob::PDLKnob(const String &labelText,
 PDLKnob::~PDLKnob()
 {
     slider.setLookAndFeel(nullptr);
-}
-
-void PDLKnob::setArcColour(const Colour c)
-{
-    arcColour = c;
-    repaint();
 }
 
 void PDLKnob::paint(Graphics &g)

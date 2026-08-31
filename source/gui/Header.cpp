@@ -12,7 +12,7 @@ Header::Header(ChronosProcessor& proc)
     wordmark_.setJustificationType(Justification::centredLeft);
     addAndMakeVisible(wordmark_);
 
-    bypassButton_.setColours(Colours::accentRed, Colours::textDim);
+    bypassButton_.setColours(Colours::accentDelayDigital, Colours::textDim);
     bypassAttach_ = std::make_unique<AudioProcessorValueTreeState::ButtonAttachment>(
         processorRef_.getAPVTS(), bypassParamID.getParamID(), bypassButton_);
     addAndMakeVisible(bypassButton_);
@@ -23,6 +23,11 @@ void Header::setMetrics(const Metrics& m)
     metrics_ = m;
     resized();
     repaint();
+}
+
+void Header::setAccentColour(const Colour c)
+{
+    bypassButton_.setAccentColour(c);
 }
 
 void Header::paint(Graphics& g)

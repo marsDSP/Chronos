@@ -62,8 +62,8 @@ Colour coreAccent(const ChronosProcessor& proc)
 class TimePanel final : public Component, public AccentConsumer {
 public:
     explicit TimePanel(ChronosProcessor& proc)
-        : timeLKnob("LEFT TIME", proc.getAPVTS(), delayTimeParamID, coreAccent(proc)),
-          timeRKnob("RIGHT TIME", proc.getAPVTS(), delayTimeRParamID, coreAccent(proc))
+        : timeLKnob("LEFT TIME", proc.getAPVTS(), delayTimeParamID),
+          timeRKnob("RIGHT TIME", proc.getAPVTS(), delayTimeRParamID)
     {
         timeLDisplay.setSlider(&timeLKnob.getSlider());
         timeRDisplay.setSlider(&timeRKnob.getSlider());
@@ -141,6 +141,7 @@ public:
         timeLDisplay.setAccentColour(c);
         timeRDisplay.setAccentColour(c);
         timeLinkButton.setAccentColour(c);
+        syncButton.setAccentColour(c);
     }
 
 private:
@@ -160,8 +161,8 @@ private:
 class ModPanel final : public Component {
 public:
     explicit ModPanel(ChronosProcessor& proc)
-        : depthKnob("MOD DEPTH", proc.getAPVTS(), delayModDepthParamID, GUIColours::accentYellow),
-          rateKnob("MOD RATE", proc.getAPVTS(), delayModRateHzParamID, GUIColours::accentYellow)
+        : depthKnob("MOD DEPTH", proc.getAPVTS(), delayModDepthParamID),
+          rateKnob("MOD RATE", proc.getAPVTS(), delayModRateHzParamID)
     {
         addAndMakeVisible(depthKnob);
         addAndMakeVisible(rateKnob);
@@ -196,9 +197,9 @@ private:
 class LoopPanel final : public Component, public AccentConsumer {
 public:
     explicit LoopPanel(ChronosProcessor& proc)
-        : feedbackKnob("FEEDBACK", proc.getAPVTS(), feedbackParamID, GUIColours::accentOrange),
-          crossFeedKnob("CROSS", proc.getAPVTS(), crossFeedParamID, GUIColours::accentOrange),
-          loopDriveKnob("DRIVE", proc.getAPVTS(), loopDriveParamID, GUIColours::accentOrange),
+        : feedbackKnob("FEEDBACK", proc.getAPVTS(), feedbackParamID),
+          crossFeedKnob("CROSS", proc.getAPVTS(), crossFeedParamID),
+          loopDriveKnob("DRIVE", proc.getAPVTS(), loopDriveParamID),
           loopSatSeg_(proc.getAPVTS(), loopSatOrderParamID.getParamID(),
                       StringArray{"Off", "1st", "2nd"}, coreAccent(proc), true,
                       MarsDSP::GUI::kAntiAliasLabels, MarsDSP::GUI::kAntiAliasTooltips),
@@ -263,8 +264,8 @@ private:
 class TonePanel final : public Component {
 public:
     explicit TonePanel(ChronosProcessor& proc)
-        : dampKnob("DAMP", proc.getAPVTS(), dampHzParamID, GUIColours::accentOrange),
-          loopCutKnob("CUT", proc.getAPVTS(), loopCutHzParamID, GUIColours::accentOrange)
+        : dampKnob("DAMP", proc.getAPVTS(), dampHzParamID),
+          loopCutKnob("CUT", proc.getAPVTS(), loopCutHzParamID)
     {
         addAndMakeVisible(dampKnob);
         addAndMakeVisible(loopCutKnob);
@@ -299,10 +300,10 @@ private:
 class DrivePanel final : public Component, public AccentConsumer {
 public:
     explicit DrivePanel(ChronosProcessor& proc)
-        : driveKnob("DRIVE", proc.getAPVTS(), driveParamID, GUIColours::accentRed),
-          bitsKnob("BIT DEPTH", proc.getAPVTS(), bitsParamID, GUIColours::accentPurple),
+        : driveKnob("DRIVE", proc.getAPVTS(), driveParamID),
+          bitsKnob("BIT DEPTH", proc.getAPVTS(), bitsParamID),
           adaaSeg_(proc.getAPVTS(), adaaOrderParamID.getParamID(),
-                   StringArray{"Off", "1st", "2nd"}, GUIColours::accentPurple, false,
+                   StringArray{"Off", "1st", "2nd"}, coreAccent(proc), false,
                    MarsDSP::GUI::kAntiAliasLabels, MarsDSP::GUI::kAntiAliasTooltips)
     {
         addAndMakeVisible(driveKnob);
@@ -354,15 +355,15 @@ private:
 };
 
 // 6. CHARACTER card -> DIFFUSE sub-panel
-class DiffusePanel final : public Component {
+class DiffusePanel final : public Component, public AccentConsumer {
 public:
     explicit DiffusePanel(ChronosProcessor& proc)
-        : diffusionKnob("DIFFUSION", proc.getAPVTS(), diffusionParamID, GUIColours::accentPurple),
-          sizeKnob("SIZE", proc.getAPVTS(), diffuserSizeParamID, GUIColours::accentPurple),
-          modDepthKnob("DIFF MOD", proc.getAPVTS(), diffModDepthParamID, GUIColours::accentPurple),
-          modRateKnob("DIFF RATE", proc.getAPVTS(), diffModRateHzParamID, GUIColours::accentPurple)
+        : diffusionKnob("DIFFUSION", proc.getAPVTS(), diffusionParamID),
+          sizeKnob("SIZE", proc.getAPVTS(), diffuserSizeParamID),
+          modDepthKnob("DIFF MOD", proc.getAPVTS(), diffModDepthParamID),
+          modRateKnob("DIFF RATE", proc.getAPVTS(), diffModRateHzParamID)
     {
-        enableButton.setColours(GUIColours::accentPurple, GUIColours::textDim);
+        enableButton.setColours(coreAccent(proc), GUIColours::textDim);
         enableAttach = std::make_unique<AudioProcessorValueTreeState::ButtonAttachment>(
             proc.getAPVTS(), enableDiffuserParamID.getParamID(), enableButton);
         addAndMakeVisible(enableButton);
@@ -411,6 +412,11 @@ public:
         modRateKnob.setBounds(x, y, cellWPx, cellH);
     }
 
+    void setAccentColour(Colour c) override
+    {
+        enableButton.setAccentColour(c);
+    }
+
 private:
     MarsDSP::GUI::PowerButton enableButton;
     PDLKnob diffusionKnob;
@@ -424,10 +430,10 @@ private:
 class FilterPanel final : public Component, public AccentConsumer {
 public:
     explicit FilterPanel(ChronosProcessor& proc)
-        : hpfKnob("OUTPUT HPF", proc.getAPVTS(), hpfFreqParamID, GUIColours::accentBlue),
-          lpfKnob("OUTPUT LPF", proc.getAPVTS(), lpfFreqParamID, GUIColours::accentBlue),
+        : hpfKnob("OUTPUT HPF", proc.getAPVTS(), hpfFreqParamID),
+          lpfKnob("OUTPUT LPF", proc.getAPVTS(), lpfFreqParamID),
           modeSeg_(proc.getAPVTS(), filterModeParamID.getParamID(),
-                   StringArray{"Digital", "Analog"}, GUIColours::accentBlue, false)
+                   StringArray{"Digital", "Analog"}, coreAccent(proc), false)
     {
         addAndMakeVisible(modeSeg_);
         addAndMakeVisible(hpfKnob);
@@ -478,8 +484,8 @@ private:
 class LevelPanel final : public Component {
 public:
     explicit LevelPanel(ChronosProcessor& proc)
-        : mixKnob("MIX", proc.getAPVTS(), mixParamID, GUIColours::accentBlue),
-          gainKnob("GAIN", proc.getAPVTS(), gainParamID, GUIColours::accentBlue)
+        : mixKnob("MIX", proc.getAPVTS(), mixParamID),
+          gainKnob("GAIN", proc.getAPVTS(), gainParamID)
     {
         addAndMakeVisible(mixKnob);
         addAndMakeVisible(gainKnob);
@@ -537,13 +543,11 @@ ChronosEditor::ChronosEditor(ChronosProcessor& p)
     outputCard_.addContent("LEVEL", std::make_unique<LevelPanel>(processorRef));
     addAndMakeVisible(outputCard_);
 
-    characterCard_.setAccentColour(MarsDSP::GUI::Colours::accentPurple);
-    outputCard_.setAccentColour(MarsDSP::GUI::Colours::accentBlue);
-
     const auto rawMode = processorRef.getParameters().getRawDelayMode();
     updateCoreAccentColour_(static_cast<float>(rawMode));
 
     processorRef.getAPVTS().addParameterListener("delayMode", this);
+    processorRef.getAPVTS().addParameterListener(bypassParamID.getParamID(), this);
 
     setResizable(true, true);
     setResizeLimits(Metrics::kMinWidth, Metrics::kMinHeight,
@@ -555,18 +559,28 @@ ChronosEditor::ChronosEditor(ChronosProcessor& p)
 ChronosEditor::~ChronosEditor()
 {
     processorRef.getAPVTS().removeParameterListener("delayMode", this);
+    processorRef.getAPVTS().removeParameterListener(bypassParamID.getParamID(), this);
     setLookAndFeel(nullptr);
 }
 
 void ChronosEditor::parameterChanged(const String& parameterID, const float newValue)
 {
+    const auto safe = SafePointer(this);
+
     if (parameterID == "delayMode")
     {
-        const auto safe = SafePointer(this);
         MessageManager::callAsync([safe, newValue]
         {
             if (safe != nullptr)
                 safe->updateCoreAccentColour_(newValue);
+        });
+    }
+    else if (parameterID == bypassParamID.getParamID())
+    {
+        MessageManager::callAsync([safe]
+        {
+            if (safe != nullptr)
+                safe->repaint();
         });
     }
 }
@@ -577,13 +591,31 @@ void ChronosEditor::updateCoreAccentColour_(const float delayModeVal)
     const auto col = (mode == 1) ? MarsDSP::GUI::Colours::accentDelayBBD
                                  : MarsDSP::GUI::Colours::accentDelayDigital;
     tapDisplay_.setAccentColour(col);
+    header_.setAccentColour(col);
     timeCard_.setAccentColour(col);
     repeatsCard_.setAccentColour(col);
+    characterCard_.setAccentColour(col);
+    outputCard_.setAccentColour(col);
 }
 
 void ChronosEditor::paint(Graphics& g)
 {
     g.fillAll(MarsDSP::GUI::Colours::background);
+}
+
+void ChronosEditor::paintOverChildren(Graphics& g)
+{
+    if (! processorRef.getParameters().getBypass())
+        return;
+
+    g.setColour(MarsDSP::GUI::Colours::background.withAlpha(MarsDSP::GUI::kBypassScrimAlpha));
+    g.fillRect(tapDisplay_.getBounds());
+
+    const auto cardRow = Rectangle<int>(timeCard_.getX(),
+                                        timeCard_.getY(),
+                                        outputCard_.getRight() - timeCard_.getX(),
+                                        timeCard_.getHeight());
+    g.fillRect(cardRow);
 }
 
 void ChronosEditor::resized()
