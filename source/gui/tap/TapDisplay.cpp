@@ -22,8 +22,12 @@ constexpr float kTauSpan = 0.120f;
 // A dying tap below this gain is removed.
 constexpr float kCullGain = 0.005f;
 
-// The reserved ruler lane height at the bottom of the display.
-constexpr float kRulerLaneHeight = 18.0f;
+// Ruler lane geometry, design units.
+constexpr float kRulerLaneHeightDU = 28.0f;
+constexpr float kRulerLabelGapDU  = 7.0f;
+constexpr float kMajorTickDU       = 6.0f;
+constexpr float kMinorTickDU       = 4.0f;
+constexpr float kRulerFontDU       = 9.0f;
 // The snap radius in pixels for a tap head under the cursor.
 constexpr float kSnapPx = 6.0f;
 
@@ -45,13 +49,13 @@ String divisionName(const int index)
     return String(kDivisionNames[static_cast<std::size_t>(index)]);
 }
 
-// Format a time the same way as the time display in free mode.
-String formatRulerLabel(const float seconds)
+// Format a ruler label.
+String formatRulerLabel(const float seconds, const float step = 0.0f)
 {
-    const float ms = seconds * 1000.0f;
-    if (ms < 1000.0f)
-        return String(roundToInt(ms)) + " ms";
-    return String(roundToInt(seconds * 100.0f) / 100.0) + " s";
+    if (seconds < 1.0f)
+        return String(roundToInt(seconds * 1000.0f)) + " ms";
+    const int decimals = (step >= 1.0f) ? 0 : 1;
+    return String(seconds, decimals) + " s";
 }
 
 // Format the cursor time: milliseconds, plus beats when synced.
@@ -80,65 +84,82 @@ String formatDb(float gain)
 struct RulerTicks {
     std::vector<float> majors;
     std::vector<float> minors;
+    float majorStep = 0.0f;
 };
 
-// Free-mode 1-2-5 major step: keep 4 to 8 majors over the span.
-float chooseMajorStep(const float span)
-{
-    if (span <= 0.0f)
-        return 1.0f;
-
-    float bestStep = span;
-    int bestDist = 1000;
-    for (int e = -4; e <= 4; ++e)
-    {
-        const float p = std::pow(10.0f, static_cast<float>(e));
-        const float steps[3] = { p, 2.0f * p, 5.0f * p };
-        for (const float step : steps)
-        {
-            const int count = static_cast<int>(std::lround(span / step));
-            if (count >= 4 && count <= 8)
-            {
-                const int dist = std::abs(count - 6);
-                if (dist < bestDist)
-                {
-                    bestDist = dist;
-                    bestStep = step;
-                }
-            }
-        }
-    }
-    return bestStep;
-}
-
-// Minor subdivisions per major, chosen for a neat minor step.
-int minorPerMajor(const float step)
-{
-    const float p = std::pow(10.0f, std::floor(std::log10(step)));
-    const float f = step / p;
-    if (f < 1.5f)
-        return 5;
-    if (f < 3.5f)
-        return 4;
-    return 5;
-}
-
-RulerTicks computeFreeTicks(const float span)
+// Free-mode tick generator.
+// T is the eased visible span in seconds, W is the plot width in pixels, s is the scale.
+RulerTicks computeFreeTicks(const float T, const float W, const float s)
 {
     RulerTicks t;
-    const float major = chooseMajorStep(span);
-    const float minor = major / static_cast<float>(minorPerMajor(major));
+    if (T <= 0.0f || W <= 0.0f || s <= 0.0f)
+        return t;
+
+    const int N = std::clamp(static_cast<int>(std::floor(W / (108.0f * s))), 5, 10);
+    const float q = T / static_cast<float>(N);
+    const float d = std::pow(10.0f, std::floor(std::log10(q)));
+    const float u = q / d;
+
+    static constexpr float kMantissas[] = { 1.0f, 2.0f, 5.0f, 10.0f };
+    float m = 10.0f;
+    for (const float cand : kMantissas)
+        if (cand >= u) { m = cand; break; }
+
+    const float step = m * d;
+    const int k = (m == 2.0f) ? 4 : 5;
+    const float minor = step / static_cast<float>(k);
     const float eps = minor * 1e-4f;
 
-    for (float s = 0.0f; s <= span + eps; s += minor)
+    t.majorStep = step;
+
+    for (int i = 0; ; ++i)
     {
-        const float m = std::round(s / major) * major;
-        if (std::fabs(s - m) < minor * 0.25f)
-            t.majors.push_back(s);
-        else
-            t.minors.push_back(s);
+        const float mt = static_cast<float>(i) * step;
+        if (mt > T + eps) break;
+        t.majors.push_back(mt);
     }
+
+    for (int j = 0; ; ++j)
+    {
+        const float nt = static_cast<float>(j) * minor;
+        if (nt > T + eps) break;
+        if (j % k != 0)
+            t.minors.push_back(nt);
+    }
+
     return t;
+}
+
+// Collision rule: drop labels that would overlap.
+std::vector<int> collisionFilteredIndices(const std::vector<float>& xs,
+                                           const std::vector<String>& labels,
+                                           const Font& font,
+                                           const float minGap)
+{
+    std::vector<int> idx;
+    for (int i = 0; i < static_cast<int>(xs.size()); ++i)
+        idx.push_back(i);
+
+    for (int pass = 0; pass < 2 && idx.size() > 1; ++pass)
+    {
+        bool collision = false;
+        for (std::size_t i = 1; i < idx.size(); ++i)
+        {
+            const float halfW0 = font.getStringWidthFloat(labels[static_cast<std::size_t>(idx[i - 1])]) * 0.5f;
+            const float halfW1 = font.getStringWidthFloat(labels[static_cast<std::size_t>(idx[i])]) * 0.5f;
+            const float gap = xs[static_cast<std::size_t>(idx[i])] - xs[static_cast<std::size_t>(idx[i - 1])] - halfW0 - halfW1;
+            if (gap < minGap)
+                collision = true;
+        }
+        if (! collision)
+            break;
+        std::vector<int> kept;
+        for (std::size_t i = 0; i < idx.size(); ++i)
+            if (i % 2 == 0)
+                kept.push_back(idx[i]);
+        idx = std::move(kept);
+    }
+    return idx;
 }
 
 // Sync-mode ticks: majors per beat, minors per current division.
@@ -402,8 +423,9 @@ void TapDisplay::paint(Graphics& g)
     constexpr float padding = 10.0f;
     const auto displayBounds = bounds.reduced(padding);
 
-    const auto plotBounds = displayBounds.withTrimmedBottom(kRulerLaneHeight);
-    const auto rulerBounds = displayBounds.withTrimmedTop(displayBounds.getHeight() - kRulerLaneHeight);
+    const float rulerLaneH = metrics_.pxf(kRulerLaneHeightDU);
+    const auto plotBounds = displayBounds.withTrimmedBottom(rulerLaneH);
+    const auto rulerBounds = displayBounds.withTrimmedTop(displayBounds.getHeight() - rulerLaneH);
 
     const float centerY = plotBounds.getCentreY();
     const float maxLaneHeight = plotBounds.getHeight() * 0.5f - 8.0f;
@@ -426,7 +448,7 @@ void TapDisplay::paint(Graphics& g)
     }
     else
     {
-        ticks = computeFreeTicks(totalTime);
+        ticks = computeFreeTicks(totalTime, plotBounds.getWidth(), metrics_.s);
     }
 
     const auto timeToX = [&](const float t) -> float
@@ -528,38 +550,57 @@ void TapDisplay::paint(Graphics& g)
 
     // Ruler tick marks
     const float tickTop = plotBounds.getBottom();
+    const float majorTickLen = metrics_.pxf(kMajorTickDU);
+    const float minorTickLen = metrics_.pxf(kMinorTickDU);
     g.setColour(tintInk(accent, kTintGridMajor));
     for (const float t : ticks.minors)
-        g.drawVerticalLine(static_cast<int>(timeToX(t)), tickTop, tickTop + 4.0f);
-
+        g.drawVerticalLine(static_cast<int>(timeToX(t)), tickTop, tickTop + minorTickLen);
     g.setColour(tintInk(accent, kTintGridMajor));
     for (const float t : ticks.majors)
-        g.drawVerticalLine(static_cast<int>(timeToX(t)), tickTop, tickTop + 6.0f);
+        g.drawVerticalLine(static_cast<int>(timeToX(t)), tickTop, tickTop + majorTickLen);
 
     // Ruler labels
+    const Font rulerFont = Fonts::font(Fonts::Weight::Regular, metrics_.font(kRulerFontDU));
+    const float baselineY = tickTop + majorTickLen + metrics_.pxf(kRulerLabelGapDU)
+                        + Fonts::kCapHeightRatio * metrics_.font(kRulerFontDU);
+    const int baselineYi = roundToInt(baselineY);
+    const float minLabelGap = metrics_.pxf(8.0f);
+    g.setFont(rulerFont);
     g.setColour(Colours::rulerText);
-    g.setFont(Fonts::font(Fonts::Weight::Regular, metrics_.font(9.0f)));
+
     if (synced)
     {
         const int div = processorRef_.getParameters().getRawDelayDivision();
         g.drawText(divisionName(div), rulerBounds.reduced(2.0f, 0.0f).toNearestInt(), Justification::centredLeft, true);
 
+        std::vector<float> majorXs;
+        std::vector<String> majorLabels;
         for (const float t : ticks.majors)
         {
             const int beat = static_cast<int>(std::round(t / secondsPerBeat)) + 1;
-            const float x = timeToX(t);
-            const auto r = Rectangle<float>(x - 12.0f, rulerBounds.getY(), 24.0f, rulerBounds.getHeight()).toNearestInt();
-            g.drawText(String(beat), r, Justification::centred, true);
+            majorXs.push_back(timeToX(t));
+            majorLabels.push_back(String(beat));
         }
+        const auto drawIdx = collisionFilteredIndices(majorXs, majorLabels, rulerFont, minLabelGap);
+        for (const int i : drawIdx)
+            g.drawSingleLineText(majorLabels[static_cast<std::size_t>(i)],
+                                   roundToInt(majorXs[static_cast<std::size_t>(i)]), baselineYi,
+                                   Justification::horizontallyCentred);
     }
     else
     {
+        std::vector<float> majorXs;
+        std::vector<String> majorLabels;
         for (const float t : ticks.majors)
         {
-            const float x = timeToX(t);
-            const auto r = Rectangle<float>(x - 24.0f, rulerBounds.getY(), 48.0f, rulerBounds.getHeight()).toNearestInt();
-            g.drawText(formatRulerLabel(t), r, Justification::centred, true);
+            majorXs.push_back(timeToX(t));
+            majorLabels.push_back(formatRulerLabel(t, ticks.majorStep));
         }
+        const auto drawIdx = collisionFilteredIndices(majorXs, majorLabels, rulerFont, minLabelGap);
+        for (const int i : drawIdx)
+            g.drawSingleLineText(majorLabels[static_cast<std::size_t>(i)],
+                                   roundToInt(majorXs[static_cast<std::size_t>(i)]), baselineYi,
+                                   Justification::horizontallyCentred);
     }
 
     // Hover cursor and measurement readout
