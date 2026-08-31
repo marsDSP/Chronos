@@ -8,17 +8,46 @@ namespace {
 using namespace MarsDSP::GUI::Knobs;
 using GUIColours = MarsDSP::GUI::Colours;
 
-// Uniform grid constants.
-constexpr int kPad = 12;
-constexpr int kKnobGap = 10;
-constexpr int kSelectorH = 22;
-constexpr int kDisplayH = 18;
+// Uniform grid constants (design units, section 4.4).
+constexpr float kSelectorHDU = 24.0f;
+constexpr float kEnableRowDU = 22.0f;
 
-// Scale one knob cell width to fit the panel. Keep it inside a safe band.
-int knobCellWidth(const int panelWidth, const int cols)
+// Derive the knob diameter in pixels for n knobs in a content area.
+// rowH is the pixel height available for the row (including label and readout space).
+// hasReadout accounts for a value readout below the label.
+// dMaxDU is the design-unit maximum diameter (58 for standard knobs, 72 for the hero).
+float knobDiameterPx(const Metrics& m, const float contentW, const float rowH, const int n,
+                    const bool hasReadout,
+                    const float dMaxDU = static_cast<float>(Metrics::kKnobMax))
 {
-    const int w = (panelWidth - 2 * kPad - (cols - 1) * kKnobGap) / cols;
-    return std::clamp(w, 40, 80);
+    const float g = m.pxf(static_cast<float>(Metrics::kKnobGutter));
+    const float cellW = (contentW - static_cast<float>(n - 1) * g) / static_cast<float>(n);
+    const float cellH = rowH
+        - static_cast<float>(m.px(static_cast<float>(Metrics::kLabelBandH)))
+        - static_cast<float>(m.px(static_cast<float>(Metrics::kKnobLabelGap)))
+        - (hasReadout
+               ? static_cast<float>(m.px(static_cast<float>(Metrics::kReadoutBandH)))
+                 + static_cast<float>(m.px(static_cast<float>(Metrics::kLabelReadoutGap)))
+               : 0.0f);
+    return std::clamp(std::min(cellW, cellH),
+                      m.pxf(static_cast<float>(Metrics::kKnobMin)),
+                      m.pxf(dMaxDU));
+}
+
+// Return the PDLKnob cell height in pixels: knob + label band + knob-to-label gap.
+int knobCellHeightPx(const Metrics& m, const int dPx)
+{
+    return m.px(static_cast<float>(Metrics::kLabelBandH))
+         + m.px(static_cast<float>(Metrics::kKnobLabelGap))
+         + dPx;
+}
+
+// Return the x position of the first knob in a row of n knobs.
+float knobRowStartX(const Metrics& m, const float contentW, const int n, const float dPx)
+{
+    const float g = m.pxf(static_cast<float>(Metrics::kKnobGutter));
+    const float totalW = static_cast<float>(n) * dPx + static_cast<float>(n - 1) * g;
+    return (contentW - totalW) * 0.5f;
 }
 
 // Return the core accent for the current delay mode.
@@ -67,22 +96,43 @@ public:
 
     void resized() override
     {
-        const int w = getWidth();
-        const int kw = knobCellWidth(w, 2);
-        const int kh = kw + 14;
-        int x = kPad;
-        const int y = kPad;
+        const auto m = MarsDSP::GUI::currentMetrics();
+        const auto w = static_cast<float>(getWidth());
+        const auto h = static_cast<float>(getHeight());
 
-        timeLKnob.setBounds(x, y, kw, kh);
-        timeRKnob.setBounds(x + kw + kKnobGap, y, kw, kh);
+        const float g = m.pxf(static_cast<float>(Metrics::kKnobGutter));
+        const int selH = m.px(kSelectorHDU);
+        const int rowGap = m.px(static_cast<float>(Metrics::kInterRowGap));
+        const int readoutH = m.px(static_cast<float>(Metrics::kReadoutBandH));
+        const int labelReadoutGap = m.px(static_cast<float>(Metrics::kLabelReadoutGap));
 
-        timeLDisplay.setBounds(x, y + kh + 2, kw, kDisplayH);
-        timeRDisplay.setBounds(x + kw + kKnobGap, y + kh + 2, kw, kDisplayH);
+        // Row 1: two knobs with readouts. Row 2: the selector row.
+        const float row1H = h - static_cast<float>(selH) - static_cast<float>(rowGap);
+        const float d = knobDiameterPx(m, w, row1H, 2, true);
+        const int dPx = roundToInt(d);
+        const int cellH = knobCellHeightPx(m, dPx);
+        const int cellWPx = roundToInt((w - g) / 2.0f);
+        const int gapPx = roundToInt(g);
 
-        const int yc = y + kh + kDisplayH + 14;
-        timeLinkButton.setBounds(x, yc, 24, 24);
-        syncButton.setBounds(x + 28, yc, 24, 24);
-        divisionBox.setBounds(x + 56, yc + 1, w - 2 * kPad - 56, kSelectorH);
+        // Centre the content block vertically.
+        const int blockH = cellH + labelReadoutGap + readoutH + rowGap + selH;
+        int y = roundToInt((h - static_cast<float>(blockH)) * 0.5f);
+
+        int x = 0;
+        timeLKnob.setBounds(x, y, cellWPx, cellH);
+        timeRKnob.setBounds(x + cellWPx + gapPx, y, cellWPx, cellH);
+
+        y += cellH + labelReadoutGap;
+        timeLDisplay.setBounds(x, y, cellWPx, readoutH);
+        timeRDisplay.setBounds(x + cellWPx + gapPx, y, cellWPx, readoutH);
+
+        y += readoutH + rowGap;
+        const int btnSize = m.px(24.0f);
+        const int btnGap = m.px(4.0f);
+        int sx = 0;
+        timeLinkButton.setBounds(sx, y, btnSize, btnSize);  sx += btnSize + btnGap;
+        syncButton.setBounds(sx, y, btnSize, btnSize);       sx += btnSize + btnGap;
+        divisionBox.setBounds(sx, y + m.px(1.0f), getWidth() - sx, selH);
     }
 
 private:
@@ -111,15 +161,22 @@ public:
 
     void resized() override
     {
-        const int w = getWidth();
-        const int kw = knobCellWidth(w, 2);
-        const int kh = kw + 14;
-        const int totalW = 2 * kw + kKnobGap;
-        const int x0 = (w - totalW) / 2;
-        const int y = kPad + 12;
+        const auto m = MarsDSP::GUI::currentMetrics();
+        const auto w = static_cast<float>(getWidth());
+        const auto h = static_cast<float>(getHeight());
 
-        depthKnob.setBounds(x0, y, kw, kh);
-        rateKnob.setBounds(x0 + kw + kKnobGap, y, kw, kh);
+        const float g = m.pxf(static_cast<float>(Metrics::kKnobGutter));
+        const float d = knobDiameterPx(m, w, h, 2, false);
+        const int dPx = roundToInt(d);
+        const int cellH = knobCellHeightPx(m, dPx);
+        const int cellWPx = roundToInt((w - g) / 2.0f);
+        const int gapPx = roundToInt(g);
+
+        const int y = roundToInt((h - static_cast<float>(cellH)) * 0.5f);
+
+        int x = 0;
+        depthKnob.setBounds(x, y, cellWPx, cellH);
+        rateKnob.setBounds(x + cellWPx + gapPx, y, cellWPx, cellH);
     }
 
 private:
@@ -148,19 +205,36 @@ public:
 
     void resized() override
     {
-        const int w = getWidth();
-        const int kw = knobCellWidth(w, 3);
-        const int kh = kw + 14;
-        int x = kPad;
-        const int y = kPad;
+        const auto m = MarsDSP::GUI::currentMetrics();
+        const auto w = static_cast<float>(getWidth());
+        const auto h = static_cast<float>(getHeight());
 
-        feedbackKnob.setBounds(x, y, kw, kh);   x += kw + kKnobGap;
-        crossFeedKnob.setBounds(x, y, kw, kh);  x += kw + kKnobGap;
-        loopDriveKnob.setBounds(x, y, kw, kh);
+        const float g = m.pxf(static_cast<float>(Metrics::kKnobGutter));
+        const int selH = m.px(kSelectorHDU);
+        const int rowGap = m.px(static_cast<float>(Metrics::kInterRowGap));
+        const int segGap = m.px(6.0f);
 
-        const int y1 = y + kh + 12;
-        loopSatSeg_.setBounds(kPad, y1, w - 2 * kPad, kSelectorH);
-        delayModeSeg_.setBounds(kPad, y1 + kSelectorH + 6, w - 2 * kPad, kSelectorH);
+        // Row 1: three knobs. Rows 2 and 3: the two segment controls.
+        const float row1H = h - 2.0f * static_cast<float>(selH) - 2.0f * static_cast<float>(rowGap)
+                           - static_cast<float>(segGap);
+        const float d = knobDiameterPx(m, w, row1H, 3, false);
+        const int dPx = roundToInt(d);
+        const int cellH = knobCellHeightPx(m, dPx);
+        const int cellWPx = roundToInt((w - 2.0f * g) / 3.0f);
+        const int gapPx = roundToInt(g);
+
+        const int blockH = cellH + rowGap + selH + segGap + selH;
+        int y = roundToInt((h - static_cast<float>(blockH)) * 0.5f);
+
+        int x = 0;
+        feedbackKnob.setBounds(x, y, cellWPx, cellH);   x += cellWPx + gapPx;
+        crossFeedKnob.setBounds(x, y, cellWPx, cellH);   x += cellWPx + gapPx;
+        loopDriveKnob.setBounds(x, y, cellWPx, cellH);
+
+        y += cellH + rowGap;
+        loopSatSeg_.setBounds(0, y, getWidth(), selH);
+        y += selH + segGap;
+        delayModeSeg_.setBounds(0, y, getWidth(), selH);
     }
 
 private:
@@ -184,15 +258,22 @@ public:
 
     void resized() override
     {
-        const int w = getWidth();
-        const int kw = knobCellWidth(w, 2);
-        const int kh = kw + 14;
-        const int totalW = 2 * kw + kKnobGap;
-        const int x0 = (w - totalW) / 2;
-        const int y = kPad + 12;
+        const auto m = MarsDSP::GUI::currentMetrics();
+        const auto w = static_cast<float>(getWidth());
+        const auto h = static_cast<float>(getHeight());
 
-        dampKnob.setBounds(x0, y, kw, kh);
-        loopCutKnob.setBounds(x0 + kw + kKnobGap, y, kw, kh);
+        const float g = m.pxf(static_cast<float>(Metrics::kKnobGutter));
+        const float d = knobDiameterPx(m, w, h, 2, false);
+        const int dPx = roundToInt(d);
+        const int cellH = knobCellHeightPx(m, dPx);
+        const int cellWPx = roundToInt((w - g) / 2.0f);
+        const int gapPx = roundToInt(g);
+
+        const int y = roundToInt((h - static_cast<float>(cellH)) * 0.5f);
+
+        int x = 0;
+        dampKnob.setBounds(x, y, cellWPx, cellH);
+        loopCutKnob.setBounds(x + cellWPx + gapPx, y, cellWPx, cellH);
     }
 
 private:
@@ -214,14 +295,28 @@ public:
 
     void resized() override
     {
-        const int w = getWidth();
-        const int kw = knobCellWidth(w, 1);
-        const int kh = kw + 14;
-        const int x0 = (w - kw) / 2;
-        const int y = kPad + 8;
+        const auto m = MarsDSP::GUI::currentMetrics();
+        const auto w = static_cast<float>(getWidth());
+        const auto h = static_cast<float>(getHeight());
 
-        driveKnob.setBounds(x0, y, kw, kh);
-        adaaSeg_.setBounds(kPad, y + kh + 12, w - 2 * kPad, kSelectorH);
+        const int selH = m.px(kSelectorHDU);
+        const int rowGap = m.px(static_cast<float>(Metrics::kInterRowGap));
+
+        // Row 1: the hero knob. Row 2: the anti-alias segment.
+        const float row1H = h - static_cast<float>(selH) - static_cast<float>(rowGap);
+        const float d = knobDiameterPx(m, w, row1H, 1, false,
+                                      static_cast<float>(Metrics::kHeroKnobMax));
+        const int dPx = roundToInt(d);
+        const int cellH = knobCellHeightPx(m, dPx);
+        const int cellWPx = getWidth();
+
+        const int blockH = cellH + rowGap + selH;
+        int y = roundToInt((h - static_cast<float>(blockH)) * 0.5f);
+
+        driveKnob.setBounds(0, y, cellWPx, cellH);
+
+        y += cellH + rowGap;
+        adaaSeg_.setBounds(0, y, getWidth(), selH);
     }
 
 private:
@@ -251,20 +346,40 @@ public:
 
     void resized() override
     {
-        const int w = getWidth();
-        const int kw = knobCellWidth(w, 2);
-        const int kh = kw + 14;
-        int x = kPad;
+        const auto m = MarsDSP::GUI::currentMetrics();
+        const auto w = static_cast<float>(getWidth());
+        const auto h = static_cast<float>(getHeight());
 
-        enableButton.setBounds((w - 24) / 2, 4, 24, 24);
+        const float g = m.pxf(static_cast<float>(Metrics::kKnobGutter));
+        const int rowGap = m.px(static_cast<float>(Metrics::kInterRowGap));
+        const int enableH = m.px(kEnableRowDU);
+        const int enableGap = m.px(8.0f);
 
-        const int y1 = kPad + 30;
-        diffusionKnob.setBounds(x, y1, kw, kh);
-        sizeKnob.setBounds(x + kw + kKnobGap, y1, kw, kh);
+        // Row 0: the enable button. Rows 1 and 2: the two knob rows.
+        const float knobH = h - static_cast<float>(enableH) - static_cast<float>(enableGap)
+                           - 2.0f * static_cast<float>(rowGap);
+        const float rowH = (knobH - static_cast<float>(rowGap)) * 0.5f;
+        const float d = knobDiameterPx(m, w, rowH, 2, false);
+        const int dPx = roundToInt(d);
+        const int cellH = knobCellHeightPx(m, dPx);
+        const int cellWPx = roundToInt((w - g) / 2.0f);
+        const int gapPx = roundToInt(g);
 
-        const int y2 = y1 + kh + 8;
-        modDepthKnob.setBounds(x, y2, kw, kh);
-        modRateKnob.setBounds(x + kw + kKnobGap, y2, kw, kh);
+        const int blockH = enableH + enableGap + cellH + rowGap + cellH;
+        int y = roundToInt((h - static_cast<float>(blockH)) * 0.5f);
+
+        const int btnSize = m.px(24.0f);
+        enableButton.setBounds((getWidth() - btnSize) / 2, y, btnSize, btnSize);
+        y += enableH + enableGap;
+
+        int x = 0;
+        diffusionKnob.setBounds(x, y, cellWPx, cellH);  x += cellWPx + gapPx;
+        sizeKnob.setBounds(x, y, cellWPx, cellH);
+
+        y += cellH + rowGap;
+        x = 0;
+        modDepthKnob.setBounds(x, y, cellWPx, cellH);  x += cellWPx + gapPx;
+        modRateKnob.setBounds(x, y, cellWPx, cellH);
     }
 
 private:
@@ -292,17 +407,31 @@ public:
 
     void resized() override
     {
-        const int w = getWidth();
-        const int kw = knobCellWidth(w, 2);
-        const int kh = kw + 14;
-        const int totalW = 2 * kw + kKnobGap;
-        const int x0 = (w - totalW) / 2;
+        const auto m = MarsDSP::GUI::currentMetrics();
+        const auto w = static_cast<float>(getWidth());
+        const auto h = static_cast<float>(getHeight());
 
-        modeSeg_.setBounds(kPad, kPad, w - 2 * kPad, kSelectorH);
+        const float g = m.pxf(static_cast<float>(Metrics::kKnobGutter));
+        const int selH = m.px(kSelectorHDU);
+        const int rowGap = m.px(static_cast<float>(Metrics::kInterRowGap));
 
-        const int y = kPad + kSelectorH + 14;
-        hpfKnob.setBounds(x0, y, kw, kh);
-        lpfKnob.setBounds(x0 + kw + kKnobGap, y, kw, kh);
+        // Row 1: the filter-mode segment. Row 2: two knobs.
+        const float row2H = h - static_cast<float>(selH) - static_cast<float>(rowGap);
+        const float d = knobDiameterPx(m, w, row2H, 2, false);
+        const int dPx = roundToInt(d);
+        const int cellH = knobCellHeightPx(m, dPx);
+        const int cellWPx = roundToInt((w - g) / 2.0f);
+        const int gapPx = roundToInt(g);
+
+        const int blockH = selH + rowGap + cellH;
+        int y = roundToInt((h - static_cast<float>(blockH)) * 0.5f);
+
+        modeSeg_.setBounds(0, y, getWidth(), selH);
+
+        y += selH + rowGap;
+        int x = 0;
+        hpfKnob.setBounds(x, y, cellWPx, cellH);  x += cellWPx + gapPx;
+        lpfKnob.setBounds(x, y, cellWPx, cellH);
     }
 
 private:
@@ -326,15 +455,23 @@ public:
 
     void resized() override
     {
-        const int w = getWidth();
-        const int kw = knobCellWidth(w, 3);
-        const int kh = kw + 14;
-        int x = kPad;
-        const int y = kPad + 16;
+        const auto m = MarsDSP::GUI::currentMetrics();
+        const auto w = static_cast<float>(getWidth());
+        const auto h = static_cast<float>(getHeight());
 
-        mixKnob.setBounds(x, y, kw, kh);   x += kw + kKnobGap;
-        gainKnob.setBounds(x, y, kw, kh);  x += kw + kKnobGap;
-        bitsKnob.setBounds(x, y, kw, kh);
+        const float g = m.pxf(static_cast<float>(Metrics::kKnobGutter));
+        const float d = knobDiameterPx(m, w, h, 3, false);
+        const int dPx = roundToInt(d);
+        const int cellH = knobCellHeightPx(m, dPx);
+        const int cellWPx = roundToInt((w - 2.0f * g) / 3.0f);
+        const int gapPx = roundToInt(g);
+
+        const int y = roundToInt((h - static_cast<float>(cellH)) * 0.5f);
+
+        int x = 0;
+        mixKnob.setBounds(x, y, cellWPx, cellH);   x += cellWPx + gapPx;
+        gainKnob.setBounds(x, y, cellWPx, cellH);   x += cellWPx + gapPx;
+        bitsKnob.setBounds(x, y, cellWPx, cellH);
     }
 
 private:
@@ -395,7 +532,7 @@ void ChronosEditor::parameterChanged(const String& parameterID, const float newV
 {
     if (parameterID == "delayMode")
     {
-        const auto safe = Component::SafePointer<ChronosEditor>(this);
+        const auto safe = SafePointer(this);
         MessageManager::callAsync([safe, newValue]
         {
             if (safe != nullptr)

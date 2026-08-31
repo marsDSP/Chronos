@@ -95,10 +95,12 @@ void PDLKnob::paint(Graphics &g)
 void PDLKnob::resized()
 {
     auto bounds = getLocalBounds();
-    const int labelHeight = currentMetrics().px(Metrics::kLabelBandH);
-
+    const auto m = currentMetrics();
+    const int labelHeight = m.px(static_cast<float>(Metrics::kLabelBandH));
+    const int knobLabelGap = m.px(static_cast<float>(Metrics::kKnobLabelGap));
 
     bounds.removeFromTop(labelHeight);
+    bounds.removeFromTop(knobLabelGap);
 
     const auto size = std::min(bounds.getWidth(), bounds.getHeight());
     slider.setBounds(bounds.withSizeKeepingCentre(size, size));
