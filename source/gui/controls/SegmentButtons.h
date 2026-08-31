@@ -27,6 +27,9 @@ public:
     // Set the active segment fill and text colours.
     void setAccentColours(Colour activeBg, Colour activeText);
 
+    // Set the same tooltip on every button.
+    void setTooltip(const String& text);
+
     // Store the accent colour and repaint (AccentConsumer).
     void setAccentColour(Colour c) override;
 

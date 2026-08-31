@@ -56,6 +56,12 @@ void SegmentButtons::setAccentColour(const Colour c)
     setAccentColours(c, Colours::background);
 }
 
+void SegmentButtons::setTooltip(const String& text)
+{
+    for (auto& btn : buttons_)
+        btn->setTooltip(text);
+}
+
 void SegmentButtons::syncButtons()
 {
     const int idx = combo_.getSelectedId() - 1;

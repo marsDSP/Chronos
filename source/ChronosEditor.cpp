@@ -10,6 +10,8 @@ using GUIColours = MarsDSP::GUI::Colours;
 using MarsDSP::GUI::Metrics;
 using MarsDSP::GUI::AccentConsumer;
 // Uniform grid constants (design units, section 4.4).
+// Tooltip delay in milliseconds (section 4.5).
+constexpr int kTooltipDelayMs = 700;
 
 // Derive the knob diameter in pixels for n knobs in a content area.
 // rowH is the pixel height available for the row (including label and readout space).
@@ -63,20 +65,35 @@ public:
         : timeLKnob("LEFT TIME", proc.getAPVTS(), delayTimeParamID),
           timeRKnob("RIGHT TIME", proc.getAPVTS(), delayTimeRParamID)
     {
-        timeLDisplay.setSlider(&timeLKnob.getSlider());
-        timeRDisplay.setSlider(&timeRKnob.getSlider());
-        addAndMakeVisible(timeLDisplay);
-        addAndMakeVisible(timeRDisplay);
-        addAndMakeVisible(timeLKnob);
-        addAndMakeVisible(timeRKnob);
+    timeLDisplay.setSlider(&timeLKnob.getSlider());
+    timeRDisplay.setSlider(&timeRKnob.getSlider());
+    addAndMakeVisible(timeLDisplay);
+    addAndMakeVisible(timeRDisplay);
+    addAndMakeVisible(timeLKnob);
+    addAndMakeVisible(timeRKnob);
 
-        timeLinkButton.setColours(coreAccent(proc), GUIColours::textDim);
+    timeLKnob.setTooltip("Set the left channel delay time. Range 1 to 5000 milliseconds.");
+    timeRKnob.setTooltip("Set the right channel delay time. Range 1 to 5000 milliseconds.");
+    timeLDisplay.setTooltip("Drag to adjust the left delay time.");
+    timeRDisplay.setTooltip("Drag to adjust the right delay time.");
+    timeLDisplay.setTitle("Left Delay Time");
+    timeRDisplay.setTitle("Right Delay Time");
+    timeLDisplay.setHelpText("Drag to adjust the left delay time.");
+    timeRDisplay.setHelpText("Drag to adjust the right delay time.");
+
+    timeLinkButton.setColours(coreAccent(proc), GUIColours::textDim);
+    timeLinkButton.setTooltip("Link the left and right delay times.");
+    timeLinkButton.setTitle("Time Link");
+    timeLinkButton.setHelpText("Link the left and right delay times.");
         timeLinkAttach = std::make_unique<AudioProcessorValueTreeState::ButtonAttachment>(
             proc.getAPVTS(), timeLinkParamID.getParamID(), timeLinkButton);
         addAndMakeVisible(timeLinkButton);
 
-        syncButton.setMusicalNote(true);
-        syncButton.setColours(coreAccent(proc), GUIColours::textDim);
+    syncButton.setMusicalNote(true);
+    syncButton.setColours(coreAccent(proc), GUIColours::textDim);
+    syncButton.setTooltip("Sync the delay time to the host tempo.");
+    syncButton.setTitle("Tempo Sync");
+    syncButton.setHelpText("Sync the delay time to the host tempo.");
         syncAttach = std::make_unique<AudioProcessorValueTreeState::ButtonAttachment>(
             proc.getAPVTS(), delaySyncParamID.getParamID(), syncButton);
         addAndMakeVisible(syncButton);
@@ -88,6 +105,9 @@ public:
             "2/1", "4/1"
         };
         divisionBox.addItemList(divisions, 1);
+    divisionBox.setTooltip("Select the tempo-sync division.");
+    divisionBox.setTitle("Delay Division");
+    divisionBox.setHelpText("Select the tempo-sync division.");
         divisionAttach = std::make_unique<AudioProcessorValueTreeState::ComboBoxAttachment>(
             proc.getAPVTS(), delayDivisionParamID.getParamID(), divisionBox);
         addAndMakeVisible(divisionBox);
@@ -166,6 +186,8 @@ public:
     {
         addAndMakeVisible(depthKnob);
         addAndMakeVisible(rateKnob);
+        depthKnob.setTooltip("Set the delay pitch modulation depth. Range 0 to 50 cents.");
+        rateKnob.setTooltip("Set the delay modulation rate. Range 0.01 to 10 hertz.");
     }
 
     void resized() override
@@ -217,6 +239,10 @@ public:
         addAndMakeVisible(loopDriveKnob);
         addAndMakeVisible(loopSatSeg_);
         addAndMakeVisible(delayModeSeg_);
+        feedbackKnob.setTooltip("Set the level of the repeats fed back into the loop. Range 0 to 115 percent.");
+        crossFeedKnob.setTooltip("Set the cross-channel feedback level. Range 0 to 100 percent.");
+        loopDriveKnob.setTooltip("Set the repeat loop input drive. Range minus 6 to 24 decibels.");
+        delayModeSeg_.setTooltip("Select the delay core type.");
     }
 
     void resized() override
@@ -278,6 +304,8 @@ public:
     {
         addAndMakeVisible(dampKnob);
         addAndMakeVisible(loopCutKnob);
+        dampKnob.setTooltip("Set the repeat damping cutoff. Range 200 to 20000 hertz.");
+        loopCutKnob.setTooltip("Set the repeat loop low cut. Range 20 to 2000 hertz.");
     }
 
     void resized() override
@@ -324,6 +352,8 @@ public:
         addAndMakeVisible(driveKnob);
         addAndMakeVisible(bitsKnob);
         addAndMakeVisible(adaaSeg_);
+        driveKnob.setTooltip("Set the output saturator drive. Range 0 to 24 decibels.");
+        bitsKnob.setTooltip("Set the output bit depth. Range 4 to 32 bits.");
     }
 
     void resized() override
@@ -381,6 +411,9 @@ public:
           modRateKnob("DIFF RATE", proc.getAPVTS(), diffModRateHzParamID)
     {
         enableButton.setColours(coreAccent(proc), GUIColours::textDim);
+        enableButton.setTooltip("Enable the diffuser section.");
+        enableButton.setTitle("Diffuser Enable");
+        enableButton.setHelpText("Enable the diffuser section.");
         enableAttach = std::make_unique<AudioProcessorValueTreeState::ButtonAttachment>(
             proc.getAPVTS(), enableDiffuserParamID.getParamID(), enableButton);
         addAndMakeVisible(enableButton);
@@ -389,6 +422,10 @@ public:
         addAndMakeVisible(sizeKnob);
         addAndMakeVisible(modDepthKnob);
         addAndMakeVisible(modRateKnob);
+        diffusionKnob.setTooltip("Set the diffuser intensity. Range 0 to 100 percent.");
+        sizeKnob.setTooltip("Set the diffuser size. Range 0 to 100 percent.");
+        modDepthKnob.setTooltip("Set the diffuser modulation depth. Range 0 to 1.5 milliseconds.");
+        modRateKnob.setTooltip("Set the diffuser modulation rate. Range 0.01 to 8 hertz.");
     }
 
     void resized() override
@@ -459,6 +496,9 @@ public:
         addAndMakeVisible(modeSeg_);
         addAndMakeVisible(hpfKnob);
         addAndMakeVisible(lpfKnob);
+        hpfKnob.setTooltip("Set the output high-pass cutoff. Range 20 to 2000 hertz.");
+        lpfKnob.setTooltip("Set the output low-pass cutoff. Range 200 to 20000 hertz.");
+        modeSeg_.setTooltip("Select the output filter type.");
     }
 
     void resized() override
@@ -512,6 +552,8 @@ public:
     {
         addAndMakeVisible(mixKnob);
         addAndMakeVisible(gainKnob);
+        mixKnob.setTooltip("Set the dry to wet blend. Range 0 to 100 percent.");
+        gainKnob.setTooltip("Set the output gain. Range minus 24 to 12 decibels.");
     }
 
     void resized() override
@@ -548,7 +590,8 @@ private:
 } // namespace
 
 ChronosEditor::ChronosEditor(ChronosProcessor& p)
-    : AudioProcessorEditor(&p), processorRef(p), tapDisplay_(p), header_(p), footer_(p)
+    : AudioProcessorEditor(&p), processorRef(p), tapDisplay_(p), header_(p), footer_(p),
+      tooltipWindow_(this, kTooltipDelayMs)
 {
     setLookAndFeel(&lnf_);
 
@@ -583,6 +626,23 @@ ChronosEditor::ChronosEditor(ChronosProcessor& p)
                     Metrics::kMaxWidth, Metrics::kMaxHeight);
     getConstrainer()->setFixedAspectRatio(Metrics::kDesignAspect);
     setSize(Metrics::kDefaultWidth, Metrics::kDefaultHeight);
+
+    header_.setExplicitFocusOrder(1);
+    tapDisplay_.setExplicitFocusOrder(2);
+    timeCard_.setExplicitFocusOrder(3);
+    repeatsCard_.setExplicitFocusOrder(4);
+    characterCard_.setExplicitFocusOrder(5);
+    outputCard_.setExplicitFocusOrder(6);
+    footer_.setExplicitFocusOrder(7);
+
+    tapDisplay_.setTitle("Tap Display");
+    tapDisplay_.setTooltip("Drag the plot to set the delay time. Double-click to reset.");
+    tapDisplay_.setHelpText("Drag the plot to set the delay time. Double-click to reset.");
+    timeCard_.setTitle("Time");
+    repeatsCard_.setTitle("Repeats");
+    characterCard_.setTitle("Character");
+    outputCard_.setTitle("Output");
+    footer_.setTitle("Footer");
 }
 
 ChronosEditor::~ChronosEditor()

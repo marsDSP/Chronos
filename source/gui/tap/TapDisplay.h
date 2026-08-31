@@ -17,6 +17,7 @@ namespace MarsDSP::GUI {
 // Dragging the upper half adjusts the left delay time.
 // Dragging the lower half adjusts the right delay time.
 class TapDisplay : public Component,
+                   public SettableTooltipClient,
                    private Timer {
 public:
     explicit TapDisplay(ChronosProcessor& processor);

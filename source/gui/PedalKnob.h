@@ -174,6 +174,14 @@ namespace MarsDSP::GUI::Knobs {
         // Store the accent colour for the value text.
         void setAccentColour(Colour c) { accentColour_ = c; repaint(); }
 
+        // Set the tooltip, title, and help text on the slider.
+        void setTooltip(const String &text)
+        {
+            slider.setTooltip(text);
+            slider.setTitle(labelText_);
+            slider.setHelpText(text);
+        }
+
         // Mouse listener callbacks for the slider.
         void mouseEnter(const MouseEvent &e) override;
         void mouseExit(const MouseEvent &e) override;

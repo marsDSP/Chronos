@@ -10,9 +10,13 @@ Header::Header(ChronosProcessor& proc)
     wordmark_.setText("CHRONOS", dontSendNotification);
     wordmark_.setColour(Label::textColourId, Colours::textBright);
     wordmark_.setJustificationType(Justification::centredLeft);
+    setTitle("Header");
     addAndMakeVisible(wordmark_);
 
     bypassButton_.setColours(Colours::accentDelayDigital, Colours::textDim);
+    bypassButton_.setTooltip("Bypass the delay processing.");
+    bypassButton_.setTitle("Bypass");
+    bypassButton_.setHelpText("Bypass the delay processing.");
     bypassAttach_ = std::make_unique<AudioProcessorValueTreeState::ButtonAttachment>(
         processorRef_.getAPVTS(), bypassParamID.getParamID(), bypassButton_);
     addAndMakeVisible(bypassButton_);

@@ -47,6 +47,8 @@ private:
     MarsDSP::GUI::Card characterCard_;
     MarsDSP::GUI::Card outputCard_;
 
+    TooltipWindow tooltipWindow_;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChronosEditor)
 };
 

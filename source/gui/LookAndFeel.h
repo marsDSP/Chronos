@@ -72,6 +72,9 @@ public:
                            const Drawable* icon,
                            const Colour* textColour) override;
 
+    // Draw the tooltip background and text.
+    void drawTooltip(Graphics& g, const String& text, int width, int height) override;
+
     bool shouldPopupMenuScaleWithTargetComponent(const PopupMenu::Options&) override
     {
         return false;

@@ -12,7 +12,7 @@
 namespace MarsDSP::GUI {
 
 // A readout component that displays and edits delay time.
-class TimeDisplay : public Component {
+class TimeDisplay : public Component, public SettableTooltipClient {
 public:
     TimeDisplay() = default;
     ~TimeDisplay() override = default;

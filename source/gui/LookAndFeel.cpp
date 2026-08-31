@@ -19,6 +19,9 @@ LookAndFeel::LookAndFeel()
     setColour(PopupMenu::textColourId, Colours::textPrimary);
     setColour(PopupMenu::highlightedBackgroundColourId, Colours::headerBackground);
     setColour(PopupMenu::highlightedTextColourId, Colours::textBright);
+    setColour(TooltipWindow::backgroundColourId, Colours::panelBackground);
+    setColour(TooltipWindow::textColourId, Colours::textBright);
+    setColour(TooltipWindow::outlineColourId, Colours::panelBorder);
 }
 
 Font LookAndFeel::getLabelFont(Label&)
@@ -219,6 +222,22 @@ void LookAndFeel::drawPopupMenuBackground(Graphics& g, const int width, const in
 
     g.setColour(Colours::panelBorder);
     g.drawRoundedRectangle(half, half, static_cast<float>(width) - sw, static_cast<float>(height) - sw, corner, sw);
+}
+
+void LookAndFeel::drawTooltip(Graphics& g, const String& text, int width, int height)
+{
+    const Font f = Fonts::font(Fonts::Weight::Regular, currentMetrics().font(11.0f));
+
+    g.fillAll(findColour(TooltipWindow::backgroundColourId));
+
+   #if ! JUCE_MAC
+    g.setColour(findColour(TooltipWindow::outlineColourId));
+    g.drawRect(0, 0, width, height, 1);
+   #endif
+
+    g.setColour(findColour(TooltipWindow::textColourId));
+    g.setFont(f);
+    g.drawText(text, 4, 0, width - 8, height, Justification::centredLeft, true);
 }
 
 void LookAndFeel::drawPopupMenuItem(Graphics& g,
