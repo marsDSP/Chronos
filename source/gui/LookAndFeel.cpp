@@ -137,63 +137,6 @@ void LookAndFeel::drawComboBox(Graphics& g,
     g.fillPath(arrow);
 }
 
-void LookAndFeel::drawGroupComponentOutline(Graphics& g,
-                                            const int width,
-                                            const int height,
-                                            const String& text,
-                                            const Justification& position,
-                                            GroupComponent& group)
-{
-    const float textH = 15.0f;
-    const float indent = 3.0f;
-    const float textEdgeGap = 4.0f;
-    auto cornerSize = 5.0f;
-
-    const Font font = Fonts::font(Fonts::Weight::Semibold, metrics_.font(textH));
-    const auto x = indent;
-    const auto y = font.getAscent() - 3.0f;
-    const auto w = std::max(0.0f, static_cast<float>(width) - x * 2.0f);
-    const auto h = std::max(0.0f, static_cast<float>(height) - y - indent);
-
-    cornerSize = jmin(cornerSize, w * 0.5f, h * 0.5f);
-    const auto cs2 = 2.0f * cornerSize;
-
-    const auto textW = text.isEmpty() ? 0.0f
-                                      : std::clamp(font.getStringWidthFloat(text) + textEdgeGap * 2.0f,
-                                                   0.0f,
-                                                   std::max(0.0f, w - cs2 - textEdgeGap * 2.0f));
-
-    auto textX = cornerSize + textEdgeGap;
-    if (position.testFlags(Justification::horizontallyCentred))
-        textX = cornerSize + (w - cs2 - textW) * 0.5f;
-    else if (position.testFlags(Justification::right))
-        textX = w - cornerSize - textW - textEdgeGap;
-
-    Path p;
-    p.startNewSubPath(x + textX + textW, y);
-    p.lineTo(x + w - cornerSize, y);
-    p.addArc(x + w - cs2, y, cs2, cs2, 0.0f, MathConstants<float>::pi * 0.5f);
-    p.lineTo(x + w, y + h - cornerSize);
-    p.addArc(x + w - cs2, y + h - cs2, cs2, cs2, MathConstants<float>::pi * 0.5f, MathConstants<float>::pi);
-    p.lineTo(x + cornerSize, y + h);
-    p.addArc(x, y + h - cs2, cs2, cs2, MathConstants<float>::pi, MathConstants<float>::pi * 1.5f);
-    p.lineTo(x, y + cornerSize);
-    p.addArc(x, y, cs2, cs2, MathConstants<float>::pi * 1.5f, MathConstants<float>::twoPi);
-    p.lineTo(x + textX, y);
-
-    const auto alpha = group.isEnabled() ? 1.0f : 0.5f;
-    g.setColour(group.findColour(GroupComponent::outlineColourId).withMultipliedAlpha(alpha));
-    g.strokePath(p, PathStrokeType(metrics_.stroke(Metrics::kGroupStroke)));
-
-    g.setColour(group.findColour(GroupComponent::textColourId).withMultipliedAlpha(alpha));
-    g.setFont(font);
-    g.drawText(text,
-               roundToInt(x + textX), 0,
-               roundToInt(textW),
-               roundToInt(textH),
-               Justification::centred, true);
-}
-
 void LookAndFeel::drawLabel(Graphics& g, Label& label)
 {
     g.fillAll(label.findColour(Label::backgroundColourId));

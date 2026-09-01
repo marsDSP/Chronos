@@ -306,11 +306,10 @@ namespace MarsDSP::GUI::Knobs {
         // Store the scale metrics and relayout.
         void setMetrics(const Metrics& m) { metrics_ = m; resized(); repaint(); }
 
-        // Set the tooltip, title, and help text on the slider.
+        // Set the tooltip and help text on the slider.
         void setTooltip(const String &text)
         {
             slider.setTooltip(text);
-            slider.setTitle(labelText_);
             slider.setHelpText(text);
         }
 
@@ -343,7 +342,6 @@ namespace MarsDSP::GUI::Knobs {
         bool showValue_ = false;
         bool hovered_ = false;
         bool dragging_ = false;
-        Time lastWheelTime_;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PDLKnob)
     };

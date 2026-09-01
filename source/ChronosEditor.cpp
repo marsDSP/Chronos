@@ -704,7 +704,7 @@ ChronosEditor::ChronosEditor(ChronosProcessor& p)
     const auto rawMode = processorRef.getParameters().getRawDelayMode();
     updateCoreAccentColour_(static_cast<float>(rawMode));
 
-    processorRef.getAPVTS().addParameterListener("delayMode", this);
+    processorRef.getAPVTS().addParameterListener(delayModeParamID.getParamID(), this);
     processorRef.getAPVTS().addParameterListener(bypassParamID.getParamID(), this);
 
     setResizable(true, true);
@@ -739,7 +739,7 @@ ChronosEditor::ChronosEditor(ChronosProcessor& p)
 ChronosEditor::~ChronosEditor()
 {
     stopTimer();
-    processorRef.getAPVTS().removeParameterListener("delayMode", this);
+    processorRef.getAPVTS().removeParameterListener(delayModeParamID.getParamID(), this);
     processorRef.getAPVTS().removeParameterListener(bypassParamID.getParamID(), this);
     setLookAndFeel(nullptr);
 }
@@ -748,7 +748,7 @@ void ChronosEditor::parameterChanged(const String& parameterID, const float newV
 {
     const auto safe = SafePointer(this);
 
-    if (parameterID == "delayMode")
+    if (parameterID == delayModeParamID.getParamID())
     {
         MessageManager::callAsync([safe, newValue]
         {

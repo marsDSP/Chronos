@@ -86,8 +86,8 @@ std::vector<int> collisionFilteredIndices(const std::vector<float>& xs,
         bool collision = false;
         for (std::size_t i = 1; i < idx.size(); ++i)
         {
-            const float halfW0 = font.getStringWidthFloat(labels[static_cast<std::size_t>(idx[i - 1])]) * 0.5f;
-            const float halfW1 = font.getStringWidthFloat(labels[static_cast<std::size_t>(idx[i])]) * 0.5f;
+            const float halfW0 = Fonts::textWidth(font, labels[static_cast<std::size_t>(idx[i - 1])]) * 0.5f;
+            const float halfW1 = Fonts::textWidth(font, labels[static_cast<std::size_t>(idx[i])]) * 0.5f;
             const float gap = xs[static_cast<std::size_t>(idx[i])] - xs[static_cast<std::size_t>(idx[i - 1])] - halfW0 - halfW1;
             if (gap < minGap)
                 collision = true;
@@ -408,12 +408,12 @@ void TapDisplay::paint(Graphics& g)
     // Minor grid lines
     g.setColour(tintInk(accent, kTintGridMinor));
     for (const float t : ticks.minors)
-        g.drawVerticalLine(static_cast<int>(timeToX(t)), plotBounds.getY(), plotBounds.getBottom());
+        g.drawVerticalLine(roundToInt(timeToX(t)), plotBounds.getY(), plotBounds.getBottom());
 
     // Major grid lines
     g.setColour(tintInk(accent, kTintGridMajor));
     for (const float t : ticks.majors)
-        g.drawVerticalLine(static_cast<int>(timeToX(t)), plotBounds.getY(), plotBounds.getBottom());
+        g.drawVerticalLine(roundToInt(timeToX(t)), plotBounds.getY(), plotBounds.getBottom());
 
     // Center divider
     g.setColour(tint(plotFillLit, accent, kTintCentreLine));
@@ -504,10 +504,10 @@ void TapDisplay::paint(Graphics& g)
     const float minorTickLen = metrics_.pxf(Metrics::kMinorTick);
     g.setColour(tintInk(accent, kTintGridMajor));
     for (const float t : ticks.minors)
-        g.drawVerticalLine(static_cast<int>(timeToX(t)), tickTop, tickTop + minorTickLen);
+        g.drawVerticalLine(roundToInt(timeToX(t)), tickTop, tickTop + minorTickLen);
     g.setColour(tintInk(accent, kTintGridMajor));
     for (const float t : ticks.majors)
-        g.drawVerticalLine(static_cast<int>(timeToX(t)), tickTop, tickTop + majorTickLen);
+        g.drawVerticalLine(roundToInt(timeToX(t)), tickTop, tickTop + majorTickLen);
 
     // Ruler labels
     const Font rulerFont = Fonts::font(Fonts::Weight::Regular, metrics_.font(Metrics::kRulerFont));
@@ -609,10 +609,10 @@ void TapDisplay::mouseDown(const MouseEvent& e)
     dragging_ = true;
 
     auto& apvts = processorRef_.getAPVTS();
-    auto* pDelayL = apvts.getParameter("delayTime");
-    auto* pDelayR = apvts.getParameter("delayTimeR");
-    auto* pFb = apvts.getParameter("feedback");
-    auto* pDiv = apvts.getParameter("delayDivision");
+    auto* pDelayL = apvts.getParameter(delayTimeParamID.getParamID());
+    auto* pDelayR = apvts.getParameter(delayTimeRParamID.getParamID());
+    auto* pFb = apvts.getParameter(feedbackParamID.getParamID());
+    auto* pDiv = apvts.getParameter(delayDivisionParamID.getParamID());
 
     startNormL_ = pDelayL ? pDelayL->getValue() : 0.0f;
     startNormR_ = pDelayR ? pDelayR->getValue() : 0.0f;
@@ -677,7 +677,7 @@ void TapDisplay::mouseDrag(const MouseEvent& e)
 
     if (dragSynced_)
     {
-        auto* pDiv = apvts.getParameter("delayDivision");
+        auto* pDiv = apvts.getParameter(delayDivisionParamID.getParamID());
         if (pDiv != nullptr && inDragSet(pDiv))
         {
             const float pixelsPerDiv = 25.0f;
@@ -689,8 +689,8 @@ void TapDisplay::mouseDrag(const MouseEvent& e)
     else
     {
         const float dNorm = (dx / w) * 1.2f;
-        auto* pDelayL = apvts.getParameter("delayTime");
-        auto* pDelayR = apvts.getParameter("delayTimeR");
+        auto* pDelayL = apvts.getParameter(delayTimeParamID.getParamID());
+        auto* pDelayR = apvts.getParameter(delayTimeRParamID.getParamID());
 
         if (dragLinked_ || dragIsUpper_)
         {
@@ -704,7 +704,7 @@ void TapDisplay::mouseDrag(const MouseEvent& e)
     }
 
     // Vertical drag modulates feedback.
-    auto* pFb = apvts.getParameter("feedback");
+    auto* pFb = apvts.getParameter(feedbackParamID.getParamID());
     if (pFb != nullptr && inDragSet(pFb))
     {
         const float dNormFb = -dy / h;
@@ -752,8 +752,8 @@ void TapDisplay::mouseDoubleClick(const MouseEvent& e)
 
     // When linked, the left time drives both channels.
     auto& apvts = processorRef_.getAPVTS();
-    auto* p = (timeLinked || isUpper) ? apvts.getParameter("delayTime")
-                                      : apvts.getParameter("delayTimeR");
+    auto* p = (timeLinked || isUpper) ? apvts.getParameter(delayTimeParamID.getParamID())
+                                      : apvts.getParameter(delayTimeRParamID.getParamID());
     if (p == nullptr)
         return;
 
@@ -773,7 +773,7 @@ void TapDisplay::mouseWheelMove(const MouseEvent& e, const MouseWheelDetails& wh
 
     if (synced)
     {
-        auto* pDiv = apvts.getParameter("delayDivision");
+        auto* pDiv = apvts.getParameter(delayDivisionParamID.getParamID());
         if (pDiv == nullptr)
             return;
 
@@ -789,8 +789,8 @@ void TapDisplay::mouseWheelMove(const MouseEvent& e, const MouseWheelDetails& wh
     }
     else
     {
-        auto* p = (timeLinked || isUpper) ? apvts.getParameter("delayTime")
-                                          : apvts.getParameter("delayTimeR");
+        auto* p = (timeLinked || isUpper) ? apvts.getParameter(delayTimeParamID.getParamID())
+                                          : apvts.getParameter(delayTimeRParamID.getParamID());
         if (p == nullptr)
             return;
 

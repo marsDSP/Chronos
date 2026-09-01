@@ -21,6 +21,9 @@ struct TypefaceCache {
     Typeface::Ptr medium;
     Typeface::Ptr semibold;
 
+    struct DigitEntry { String typefaceName; float height; float advance; };
+    mutable std::vector<DigitEntry> digitAdvances;
+
     TypefaceCache()
     {
 #if CHRONOS_HAS_FONT_RESOURCE
@@ -51,7 +54,7 @@ const TypefaceCache& cache()
 // The default system face. Use it when the resource is absent or a weight fails to load.
 Typeface::Ptr fallbackTypeface()
 {
-    return Font{}.getTypefacePtr();
+    return Font::getDefaultTypefaceForFont(Font { FontOptions{} });
 }
 
 } // namespace
@@ -99,25 +102,32 @@ String shortLabel(const String& full)
     return full;
 }
 
+float textWidth(const Font& font, const String& text)
+{
+    GlyphArrangement ga;
+    ga.addLineOfText(font, text, 0.0f, 0.0f);
+    return ga.getBoundingBox(0, -1, true).getWidth();
+}
+
 float digitAdvance(const Font& font)
 {
-    // Cache one advance per font height. The widest digit sets the advance.
-    struct Entry { float height; float advance; };
-    static std::vector<Entry> entries;
+    JUCE_ASSERT_MESSAGE_THREAD
 
+    const auto& c = cache();
+    const String tfName = font.getTypefaceName();
     const float h = font.getHeight();
 
-    for (const auto& e : entries)
-        if (std::fabs(e.height - h) < 0.01f)
+    for (const auto& e : c.digitAdvances)
+        if (e.typefaceName == tfName && std::fabs(e.height - h) < 0.01f)
             return e.advance;
 
     float widest = 0.0f;
     for (char d = '0'; d <= '9'; ++d)
-        widest = std::max(widest, font.getStringWidthFloat(String::charToString(static_cast<juce_wchar>(d))));
+        widest = std::max(widest, textWidth(font, String::charToString(static_cast<juce_wchar>(d))));
 
     // Hold a positive advance so an empty metric never yields zero.
     widest = std::max(widest, 1.0f);
-    entries.push_back({ h, widest });
+    c.digitAdvances.push_back({ tfName, h, widest });
     return widest;
 }
 
@@ -129,7 +139,7 @@ void drawFixedAdvanceText(Graphics& g, const Font& font, const String& text,
 
     float totalW = 0.0f;
     for (const auto c : text)
-        totalW += (c >= '0' && c <= '9') ? adv : font.getStringWidthFloat(String::charToString(c));
+        totalW += (c >= '0' && c <= '9') ? adv : textWidth(font, String::charToString(c));
 
     float x = area.getCentreX() - totalW * 0.5f;
     g.setFont(font);
@@ -148,7 +158,7 @@ void drawFixedAdvanceText(Graphics& g, const Font& font, const String& text,
         else
         {
             g.drawSingleLineText(ch, roundToInt(x), roundToInt(baselineY), Justification::left);
-            x += font.getStringWidthFloat(ch);
+            x += textWidth(font, ch);
         }
     }
 }

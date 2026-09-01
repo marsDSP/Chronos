@@ -38,6 +38,9 @@ PDLKnob::PDLKnob(const String &labelText,
     // Catch enter and exit on the slider through a mouse listener.
     slider.addMouseListener(this, true);
 
+    // Set the accessible title so a knob without a tooltip still announces.
+    slider.setTitle(labelText_);
+
     // The value editor is a transient label over the label band.
     valueEditor_.setJustificationType(Justification::centred);
     valueEditor_.setColour(Label::backgroundColourId, Colours::panelBackground);
@@ -92,10 +95,9 @@ void PDLKnob::mouseExit(const MouseEvent &)
 
 void PDLKnob::mouseWheelMove(const MouseEvent &e, const MouseWheelDetails &wheel)
 {
-    // The slider listener and the parent bubble both call this. Drop the duplicate.
-    if (e.eventTime == lastWheelTime_)
+    // Handle only events that come from the slider.
+    if (e.eventComponent != &slider)
         return;
-    lastWheelTime_ = e.eventTime;
 
     const bool fine = e.mods.isShiftDown();
     const double range = slider.getMaximum() - slider.getMinimum();
@@ -215,7 +217,7 @@ void PDLKnob::paint(Graphics &g)
     String text = labelText_;
 
     // Step 1: full label.
-    if (f.getStringWidthFloat(text) <= availW)
+    if (Fonts::textWidth(f, text) <= availW)
     {
         drawCentered(text, f);
         return;
@@ -223,7 +225,7 @@ void PDLKnob::paint(Graphics &g)
 
     // Step 2: short form.
     text = Fonts::shortLabel(labelText_);
-    if (f.getStringWidthFloat(text) <= availW)
+    if (Fonts::textWidth(f, text) <= availW)
     {
         drawCentered(text, f);
         return;
@@ -231,7 +233,7 @@ void PDLKnob::paint(Graphics &g)
 
     // Step 3: reduce the font height by up to 15%.
     f = Fonts::font(Fonts::Weight::Medium, baseH * 0.85f);
-    if (f.getStringWidthFloat(text) <= availW)
+    if (Fonts::textWidth(f, text) <= availW)
     {
         drawCentered(text, f);
         return;

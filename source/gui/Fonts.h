@@ -23,6 +23,9 @@ Font font(Weight weight, float height);
 // Return the short form of a label, or the input when no short form exists.
 String shortLabel(const String& full);
 
+// Measure the width of a text string with a font. Use GlyphArrangement.
+float textWidth(const Font& font, const String& text);
+
 // Return the fixed advance width for digit glyphs at this font height.
 // Cache the result so a changing value does not shift the string.
 float digitAdvance(const Font& font);

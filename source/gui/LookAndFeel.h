@@ -49,14 +49,6 @@ public:
                       int buttonH,
                       ComboBox& box) override;
 
-    // Draw the group component outline.
-    void drawGroupComponentOutline(Graphics& g,
-                                   int width,
-                                   int height,
-                                   const String& text,
-                                   const Justification& position,
-                                   GroupComponent& group) override;
-
     // Draw the label text.
     void drawLabel(Graphics& g, Label& label) override;
 
