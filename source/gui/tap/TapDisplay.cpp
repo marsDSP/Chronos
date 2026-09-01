@@ -116,10 +116,24 @@ TapDisplay::~TapDisplay()
 
 void TapDisplay::visibilityChanged()
 {
+    updateTimerState_();
+}
+
+void TapDisplay::parentHierarchyChanged()
+{
+    updateTimerState_();
+}
+
+// Run the timer only while the component is on a visible peer.
+void TapDisplay::updateTimerState_()
+{
     if (isShowing())
     {
-        lastTimeSecs_ = 0.0;
-        startTimerHz(60);
+        if (! isTimerRunning())
+        {
+            lastTimeSecs_ = 0.0;
+            startTimerHz(60);
+        }
     }
     else
     {

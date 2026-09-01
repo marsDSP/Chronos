@@ -27,6 +27,7 @@ public:
     void paint(Graphics& g) override;
     void resized() override;
     void visibilityChanged() override;
+    void parentHierarchyChanged() override;
 
     void mouseDown(const MouseEvent& e) override;
     void mouseDrag(const MouseEvent& e) override;
@@ -45,6 +46,7 @@ public:
 
 private:
     void timerCallback() override;
+    void updateTimerState_();
 
     // One tap tracked by identity across frames.
     struct TrackedTap {
