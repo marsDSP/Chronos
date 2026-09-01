@@ -63,9 +63,9 @@ Colour coreAccent(const ChronosProcessor& proc)
 // 1. TIME card -> TIME sub-panel
 class TimePanel final : public Component, public AccentConsumer, public MetricsConsumer {
 public:
-    explicit TimePanel(ChronosProcessor& proc)
-        : timeLKnob("LEFT TIME", proc.getAPVTS(), delayTimeParamID),
-          timeRKnob("RIGHT TIME", proc.getAPVTS(), delayTimeRParamID)
+    explicit TimePanel(ChronosProcessor& proc, PedalKnob& knobLnf)
+        : timeLKnob("LEFT TIME", proc.getAPVTS(), delayTimeParamID, knobLnf),
+          timeRKnob("RIGHT TIME", proc.getAPVTS(), delayTimeRParamID, knobLnf)
     {
     timeLDisplay.setSlider(&timeLKnob.getSlider());
     timeRDisplay.setSlider(&timeRKnob.getSlider());
@@ -195,9 +195,9 @@ private:
 // 2. TIME card -> MOD sub-panel
 class ModPanel final : public Component, public AccentConsumer, public MetricsConsumer {
 public:
-    explicit ModPanel(ChronosProcessor& proc)
-        : depthKnob("MOD DEPTH", proc.getAPVTS(), delayModDepthParamID),
-          rateKnob("MOD RATE", proc.getAPVTS(), delayModRateHzParamID)
+    explicit ModPanel(ChronosProcessor& proc, PedalKnob& knobLnf)
+        : depthKnob("MOD DEPTH", proc.getAPVTS(), delayModDepthParamID, knobLnf),
+          rateKnob("MOD RATE", proc.getAPVTS(), delayModRateHzParamID, knobLnf)
     {
         addAndMakeVisible(depthKnob);
         addAndMakeVisible(rateKnob);
@@ -248,10 +248,10 @@ private:
 // 3. REPEATS card -> LOOP sub-panel
 class LoopPanel final : public Component, public AccentConsumer, public MetricsConsumer {
 public:
-    explicit LoopPanel(ChronosProcessor& proc)
-        : feedbackKnob("FEEDBACK", proc.getAPVTS(), feedbackParamID),
-          crossFeedKnob("CROSS", proc.getAPVTS(), crossFeedParamID),
-          loopDriveKnob("DRIVE", proc.getAPVTS(), loopDriveParamID),
+    explicit LoopPanel(ChronosProcessor& proc, PedalKnob& knobLnf)
+        : feedbackKnob("FEEDBACK", proc.getAPVTS(), feedbackParamID, knobLnf),
+          crossFeedKnob("CROSS", proc.getAPVTS(), crossFeedParamID, knobLnf),
+          loopDriveKnob("DRIVE", proc.getAPVTS(), loopDriveParamID, knobLnf),
           loopSatSeg_(proc.getAPVTS(), loopSatOrderParamID.getParamID(),
                       StringArray{"Off", "1st", "2nd"}, coreAccent(proc), true,
                       MarsDSP::GUI::kAntiAliasLabels, MarsDSP::GUI::kAntiAliasTooltips),
@@ -334,9 +334,9 @@ private:
 // 4. REPEATS card -> TONE sub-panel
 class TonePanel final : public Component, public AccentConsumer, public MetricsConsumer {
 public:
-    explicit TonePanel(ChronosProcessor& proc)
-        : dampKnob("DAMP", proc.getAPVTS(), dampHzParamID),
-          loopCutKnob("CUT", proc.getAPVTS(), loopCutHzParamID)
+    explicit TonePanel(ChronosProcessor& proc, PedalKnob& knobLnf)
+        : dampKnob("DAMP", proc.getAPVTS(), dampHzParamID, knobLnf),
+          loopCutKnob("CUT", proc.getAPVTS(), loopCutHzParamID, knobLnf)
     {
         addAndMakeVisible(dampKnob);
         addAndMakeVisible(loopCutKnob);
@@ -387,9 +387,9 @@ private:
 // 5. CHARACTER card -> DRIVE sub-panel
 class DrivePanel final : public Component, public AccentConsumer, public MetricsConsumer {
 public:
-    explicit DrivePanel(ChronosProcessor& proc)
-        : driveKnob("DRIVE", proc.getAPVTS(), driveParamID),
-          bitsKnob("BIT DEPTH", proc.getAPVTS(), bitsParamID),
+    explicit DrivePanel(ChronosProcessor& proc, PedalKnob& knobLnf)
+        : driveKnob("DRIVE", proc.getAPVTS(), driveParamID, knobLnf),
+          bitsKnob("BIT DEPTH", proc.getAPVTS(), bitsParamID, knobLnf),
           adaaSeg_(proc.getAPVTS(), adaaOrderParamID.getParamID(),
                    StringArray{"Off", "1st", "2nd"}, coreAccent(proc), false,
                    MarsDSP::GUI::kAntiAliasLabels, MarsDSP::GUI::kAntiAliasTooltips)
@@ -459,11 +459,11 @@ private:
 // 6. CHARACTER card -> DIFFUSE sub-panel
 class DiffusePanel final : public Component, public AccentConsumer, public MetricsConsumer {
 public:
-    explicit DiffusePanel(ChronosProcessor& proc)
-        : diffusionKnob("DIFFUSION", proc.getAPVTS(), diffusionParamID),
-          sizeKnob("SIZE", proc.getAPVTS(), diffuserSizeParamID),
-          modDepthKnob("DIFF MOD", proc.getAPVTS(), diffModDepthParamID),
-          modRateKnob("DIFF RATE", proc.getAPVTS(), diffModRateHzParamID)
+    explicit DiffusePanel(ChronosProcessor& proc, PedalKnob& knobLnf)
+        : diffusionKnob("DIFFUSION", proc.getAPVTS(), diffusionParamID, knobLnf),
+          sizeKnob("SIZE", proc.getAPVTS(), diffuserSizeParamID, knobLnf),
+          modDepthKnob("DIFF MOD", proc.getAPVTS(), diffModDepthParamID, knobLnf),
+          modRateKnob("DIFF RATE", proc.getAPVTS(), diffModRateHzParamID, knobLnf)
     {
         enableButton.setColours(coreAccent(proc), GUIColours::textDim);
         enableButton.setTooltip("Enable the diffuser section.");
@@ -554,9 +554,9 @@ private:
 // 7. OUTPUT card -> FILTER sub-panel
 class FilterPanel final : public Component, public AccentConsumer, public MetricsConsumer {
 public:
-    explicit FilterPanel(ChronosProcessor& proc)
-        : hpfKnob("OUTPUT HPF", proc.getAPVTS(), hpfFreqParamID),
-          lpfKnob("OUTPUT LPF", proc.getAPVTS(), lpfFreqParamID),
+    explicit FilterPanel(ChronosProcessor& proc, PedalKnob& knobLnf)
+        : hpfKnob("OUTPUT HPF", proc.getAPVTS(), hpfFreqParamID, knobLnf),
+          lpfKnob("OUTPUT LPF", proc.getAPVTS(), lpfFreqParamID, knobLnf),
           modeSeg_(proc.getAPVTS(), filterModeParamID.getParamID(),
                    StringArray{"Digital", "Analog"}, coreAccent(proc), false)
     {
@@ -623,9 +623,9 @@ private:
 // 8. OUTPUT card -> LEVEL sub-panel
 class LevelPanel final : public Component, public AccentConsumer, public MetricsConsumer {
 public:
-    explicit LevelPanel(ChronosProcessor& proc)
-        : mixKnob("MIX", proc.getAPVTS(), mixParamID),
-          gainKnob("GAIN", proc.getAPVTS(), gainParamID)
+    explicit LevelPanel(ChronosProcessor& proc, PedalKnob& knobLnf)
+        : mixKnob("MIX", proc.getAPVTS(), mixParamID, knobLnf),
+          gainKnob("GAIN", proc.getAPVTS(), gainParamID, knobLnf)
     {
         addAndMakeVisible(mixKnob);
         addAndMakeVisible(gainKnob);
@@ -685,20 +685,20 @@ ChronosEditor::ChronosEditor(ChronosProcessor& p)
     addAndMakeVisible(footer_);
     addAndMakeVisible(tapDisplay_);
 
-    timeCard_.addContent("TIME", std::make_unique<TimePanel>(processorRef));
-    timeCard_.addContent("MOD", std::make_unique<ModPanel>(processorRef));
+    timeCard_.addContent("TIME", std::make_unique<TimePanel>(processorRef, knobLnf_));
+    timeCard_.addContent("MOD", std::make_unique<ModPanel>(processorRef, knobLnf_));
     addAndMakeVisible(timeCard_);
 
-    repeatsCard_.addContent("LOOP", std::make_unique<LoopPanel>(processorRef));
-    repeatsCard_.addContent("TONE", std::make_unique<TonePanel>(processorRef));
+    repeatsCard_.addContent("LOOP", std::make_unique<LoopPanel>(processorRef, knobLnf_));
+    repeatsCard_.addContent("TONE", std::make_unique<TonePanel>(processorRef, knobLnf_));
     addAndMakeVisible(repeatsCard_);
 
-    characterCard_.addContent("DRIVE", std::make_unique<DrivePanel>(processorRef));
-    characterCard_.addContent("DIFFUSE", std::make_unique<DiffusePanel>(processorRef));
+    characterCard_.addContent("DRIVE", std::make_unique<DrivePanel>(processorRef, knobLnf_));
+    characterCard_.addContent("DIFFUSE", std::make_unique<DiffusePanel>(processorRef, knobLnf_));
     addAndMakeVisible(characterCard_);
 
-    outputCard_.addContent("FILTER", std::make_unique<FilterPanel>(processorRef));
-    outputCard_.addContent("LEVEL", std::make_unique<LevelPanel>(processorRef));
+    outputCard_.addContent("FILTER", std::make_unique<FilterPanel>(processorRef, knobLnf_));
+    outputCard_.addContent("LEVEL", std::make_unique<LevelPanel>(processorRef, knobLnf_));
     addAndMakeVisible(outputCard_);
 
     const auto rawMode = processorRef.getParameters().getRawDelayMode();
@@ -738,6 +738,7 @@ ChronosEditor::ChronosEditor(ChronosProcessor& p)
 
 ChronosEditor::~ChronosEditor()
 {
+    stopTimer();
     processorRef.getAPVTS().removeParameterListener("delayMode", this);
     processorRef.getAPVTS().removeParameterListener(bypassParamID.getParamID(), this);
     setLookAndFeel(nullptr);
@@ -837,6 +838,12 @@ void ChronosEditor::resized()
     const int footerH = m.px(Metrics::kFooterH);
     footer_.setBounds(0, y, w, footerH);
 
-    // Persist the editor width on the message thread. Height is derived.
+    // Debounce the width write. The timer callback writes once after settle.
+    startTimer(250);
+}
+
+void ChronosEditor::timerCallback()
+{
+    stopTimer();
     processorRef.getAPVTS().state.setProperty("editorWidth", getWidth(), nullptr);
 }

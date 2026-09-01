@@ -7,6 +7,9 @@
 #include "Colours.h"
 #include "Fonts.h"
 #include "Metrics.h"
+#include <array>
+#include <vector>
+#include <limits>
 
 namespace MarsDSP::GUI::Knobs {
     // Resample a source image to a target pixel size with high quality.
@@ -21,7 +24,12 @@ namespace MarsDSP::GUI::Knobs {
         return dst;
     }
 
-    class PedalKnob : public LookAndFeel_V4 {
+    // The shared knob look and feel. One instance per editor serves every PDLKnob.
+    // The frame cache holds up to kCacheCap entries keyed by physical diameter.
+    // drawRotarySlider never resamples. On a miss it draws the nearest cached
+    // entry under an adjusted transform and requests a rebuild. The rebuild
+    // runs on a debounce timer and resamples the missing sizes once.
+    class PedalKnob : public LookAndFeel_V4, private Timer {
     public:
         PedalKnob()
         {
@@ -29,6 +37,17 @@ namespace MarsDSP::GUI::Knobs {
             srcEllipse3 = ImageCache::getFromMemory(BinaryData::Ellipse_3_png, BinaryData::Ellipse_3_pngSize);
             srcEllipse4 = ImageCache::getFromMemory(BinaryData::Ellipse_4_png, BinaryData::Ellipse_4_pngSize);
             srcRectangle2 = ImageCache::getFromMemory(BinaryData::Rectangle_2_png, BinaryData::Rectangle_2_pngSize);
+        }
+
+        ~PedalKnob() override
+        {
+            stopTimer();
+        }
+
+        // Register a slider for repaint after a cache rebuild.
+        void registerSlider(Slider* s)
+        {
+            sliders_.push_back(s);
         }
 
         void drawRotarySlider(Graphics &g,
@@ -56,13 +75,43 @@ namespace MarsDSP::GUI::Knobs {
         // The cache key is the physical diameter.
         const int d = juce::roundToInt(rw);
         const int physicalD = juce::roundToInt(static_cast<double>(d) * scaleFactor);
-        rebuildCache(physicalD);
         const float scale = static_cast<float>(d) / 431.0f;
+
+        // Find the exact or nearest cache entry.
+        const CachedFrames* exact = nullptr;
+        const CachedFrames* nearest = nullptr;
+        int nearestDiff = std::numeric_limits<int>::max();
+
+        for (const auto& entry : cache_)
+        {
+            if (entry.diameter == physicalD)
+            {
+                exact = &entry;
+                break;
+            }
+            const int diff = std::abs(entry.diameter - physicalD);
+            if (diff < nearestDiff)
+            {
+                nearestDiff = diff;
+                nearest = &entry;
+            }
+        }
+
+        // Fall back to the source images when the cache is empty.
+        const int entryDiameter = exact ? exact->diameter
+                              : (nearest ? nearest->diameter : 431);
+
+        // Request a rebuild on a miss. Never resample in paint.
+        if (exact == nullptr)
+            requestRebuild_(physicalD);
+
+        // The draw scale maps the drawn image pixels to logical pixels.
+        const float drawScale = static_cast<float>(d) / static_cast<float>(entryDiameter);
 
         g.setImageResamplingQuality(Graphics::highResamplingQuality);
 
-        // Draw a cached layer. The image is at the physical size,
-        // so the transform scales down to the logical size and carries
+        // Draw a cached layer. The image is at the entry diameter,
+        // so the draw transform scales to the logical size and carries
         // rotation and translation.
         auto drawLayer = [&](const Image &img,
                                  const float cxSrc,
@@ -74,37 +123,43 @@ namespace MarsDSP::GUI::Knobs {
             const float cx = cxSrc * scale;
             const float cy = cySrc * scale;
 
-            const float invScale = static_cast<float>(1.0 / scaleFactor);
-
             AffineTransform t;
-            t = t.scaled(invScale);
+            t = t.scaled(drawScale);
             t = t.translated(-cx, -cy);
             if (rotationAngle != 0.0f) t = t.rotated(rotationAngle);
             t = t.translated(centreX, centreY);
             g.drawImageTransformed(img, t);
         };
 
-        drawLayer(cache_.ellipse2, 215.0f, 157.5f, 0.0f);
-        drawLayer(cache_.ellipse3,
+        const Image& imgEllipse2 = exact ? exact->ellipse2
+                               : (nearest ? nearest->ellipse2 : srcEllipse2);
+        const Image& imgEllipse3 = exact ? exact->ellipse3
+                               : (nearest ? nearest->ellipse3 : srcEllipse3);
+        const Image& imgEllipse4 = exact ? exact->ellipse4
+                               : (nearest ? nearest->ellipse4 : srcEllipse4);
+        const Image& imgRectangle2 = exact ? exact->rectangle2
+                                : (nearest ? nearest->rectangle2 : srcRectangle2);
+
+        drawLayer(imgEllipse2, 215.0f, 157.5f, 0.0f);
+        drawLayer(imgEllipse3,
                   static_cast<float>(srcEllipse3.getWidth()) * 0.5f,
                   static_cast<float>(srcEllipse3.getHeight()) * 0.5f, 0.0f);
-        drawLayer(cache_.ellipse4,
+        drawLayer(imgEllipse4,
                   static_cast<float>(srcEllipse4.getWidth()) * 0.5f,
                   static_cast<float>(srcEllipse4.getHeight()) * 0.5f, angle);
 
-        if (cache_.rectangle2.isValid())
+        if (imgRectangle2.isValid())
         {
             const float rcx = static_cast<float>(srcRectangle2.getWidth()) * 0.5f * scale;
             const float rcy = static_cast<float>(srcRectangle2.getHeight()) * 0.5f * scale;
-            const float invScale = static_cast<float>(1.0 / scaleFactor);
 
             AffineTransform t;
-            t = t.scaled(invScale);
+            t = t.scaled(drawScale);
             t = t.translated(-rcx, -rcy);
             t = t.translated(0.0f, -80.0f * scale);
             t = t.rotated(angle);
             t = t.translated(centreX, centreY);
-            g.drawImageTransformed(cache_.rectangle2, t);
+            g.drawImageTransformed(imgRectangle2, t);
         }
     }
 
@@ -117,34 +172,94 @@ namespace MarsDSP::GUI::Knobs {
             Image rectangle2;
         };
 
-        void rebuildCache(const int diameter)
+        static constexpr int kCacheCap = 6;
+        static constexpr int kRebuildMs = 150;
+
+        // Pending diameters to rebuild. Fixed-size: no allocation in paint.
+        std::array<int, kCacheCap> pending_ {};
+        int pendingCount_ = 0;
+
+        std::vector<CachedFrames> cache_;
+        std::vector<Component::SafePointer<Slider>> sliders_;
+
+        void timerCallback() override
         {
-            if (diameter == cache_.diameter)
-                return;
+            stopTimer();
+            rebuildPending_();
+        }
 
-            cache_.diameter = diameter;
-            const float scale = static_cast<float>(diameter) / 431.0f;
+        // Add a diameter to the pending set and restart the debounce timer.
+        void requestRebuild_(const int diameter)
+        {
+            for (int i = 0; i < pendingCount_; ++i)
+                if (pending_[static_cast<std::size_t>(i)] == diameter)
+                    return;
 
-            auto rescale = [&](const Image& src) -> Image
+            if (pendingCount_ < kCacheCap)
             {
-                if (! src.isValid())
-                    return {};
-                return resampleTo(src,
-                                   juce::roundToInt(static_cast<float>(src.getWidth()) * scale),
-                                   juce::roundToInt(static_cast<float>(src.getHeight()) * scale));
-            };
+                pending_[static_cast<std::size_t>(pendingCount_)] = diameter;
+                ++pendingCount_;
+            }
 
-            cache_.ellipse2 = rescale(srcEllipse2);
-            cache_.ellipse3 = rescale(srcEllipse3);
-            cache_.ellipse4 = rescale(srcEllipse4);
-            cache_.rectangle2 = rescale(srcRectangle2);
+            stopTimer();
+            startTimer(kRebuildMs);
+        }
+
+        // Resample every pending diameter into the cache. Evict the least
+        // recently used entry when the cache exceeds the cap. Repaint
+        // every registered slider.
+        void rebuildPending_()
+        {
+            for (int i = 0; i < pendingCount_; ++i)
+            {
+                const int diameter = pending_[static_cast<std::size_t>(i)];
+
+                bool exists = false;
+                for (const auto& entry : cache_)
+                    if (entry.diameter == diameter) { exists = true; break; }
+                if (exists) continue;
+
+                CachedFrames entry;
+                entry.diameter = diameter;
+                const float s = static_cast<float>(diameter) / 431.0f;
+
+                auto rescale = [&](const Image& src) -> Image
+                {
+                    if (! src.isValid())
+                        return {};
+                    return resampleTo(src,
+                                       juce::roundToInt(static_cast<float>(src.getWidth()) * s),
+                                       juce::roundToInt(static_cast<float>(src.getHeight()) * s));
+                };
+
+                entry.ellipse2 = rescale(srcEllipse2);
+                entry.ellipse3 = rescale(srcEllipse3);
+                entry.ellipse4 = rescale(srcEllipse4);
+                entry.rectangle2 = rescale(srcRectangle2);
+
+                cache_.insert(cache_.begin(), std::move(entry));
+
+                while (static_cast<int>(cache_.size()) > kCacheCap)
+                    cache_.pop_back();
+            }
+
+            pendingCount_ = 0;
+
+            // Repaint all registered sliders. Drop dead pointers.
+            for (auto& sp : sliders_)
+                if (sp != nullptr)
+                    sp->repaint();
+
+            sliders_.erase(
+                std::remove_if(sliders_.begin(), sliders_.end(),
+                               [](const Component::SafePointer<Slider>& p) { return p == nullptr; }),
+                sliders_.end());
         }
 
         Image srcEllipse2;
         Image srcEllipse3;
         Image srcEllipse4;
         Image srcRectangle2;
-        CachedFrames cache_;
     };
 
     namespace KnobHelpers
@@ -174,7 +289,8 @@ namespace MarsDSP::GUI::Knobs {
     public:
         PDLKnob(const String &labelText,
                 AudioProcessorValueTreeState &state,
-                const ParameterID &pid);
+                const ParameterID &pid,
+                PedalKnob& knobLnf);
 
         ~PDLKnob() override;
 
@@ -219,7 +335,7 @@ namespace MarsDSP::GUI::Knobs {
         Colour labelColour_ { Colours::textDim };
         Colour accentColour_ { Colours::accentDelayDigital };
         Metrics metrics_;
-        PedalKnob lnf;
+        PedalKnob& lnfRef_;
         std::unique_ptr<AudioProcessorValueTreeState::SliderAttachment> attachment;
         AudioProcessorValueTreeState &apvtsRef_;
         String paramID_;

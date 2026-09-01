@@ -21,7 +21,8 @@
 // The main plugin editor component.
 // The editor shows one window with a tap display and a row of cards.
 class ChronosEditor final : public AudioProcessorEditor,
-                            public AudioProcessorValueTreeState::Listener {
+                            public AudioProcessorValueTreeState::Listener,
+                            private Timer {
 public:
     explicit ChronosEditor(ChronosProcessor&);
     ~ChronosEditor() override;
@@ -33,11 +34,13 @@ public:
     void parameterChanged(const String& parameterID, float newValue) override;
 
 private:
+    void timerCallback() override;
     void updateCoreAccentColour_(float delayModeVal);
 
     ChronosProcessor& processorRef;
     MarsDSP::GUI::Metrics metrics_;
     MarsDSP::GUI::LookAndFeel lnf_;
+    MarsDSP::GUI::Knobs::PedalKnob knobLnf_;
 
     MarsDSP::GUI::TapDisplay tapDisplay_;
     MarsDSP::GUI::Header header_;

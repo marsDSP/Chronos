@@ -107,12 +107,24 @@ std::vector<int> collisionFilteredIndices(const std::vector<float>& xs,
 TapDisplay::TapDisplay(ChronosProcessor& processor)
     : processorRef_(processor)
 {
-    startTimerHz(60);
 }
 
 TapDisplay::~TapDisplay()
 {
     stopTimer();
+}
+
+void TapDisplay::visibilityChanged()
+{
+    if (isShowing())
+    {
+        lastTimeSecs_ = 0.0;
+        startTimerHz(60);
+    }
+    else
+    {
+        stopTimer();
+    }
 }
 
 void TapDisplay::setMetrics(const Metrics& m)

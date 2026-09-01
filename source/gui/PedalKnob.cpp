@@ -7,12 +7,14 @@ static constexpr int kValueHoldMs = 900;
 
 PDLKnob::PDLKnob(const String &labelText,
                  AudioProcessorValueTreeState &state,
-                 const ParameterID &pid)
-    : labelText_(labelText), apvtsRef_(state), paramID_(pid.getParamID())
+                 const ParameterID &pid,
+                 PedalKnob& knobLnf)
+    : labelText_(labelText), apvtsRef_(state), paramID_(pid.getParamID()), lnfRef_(knobLnf)
 {
     slider.setSliderStyle(Slider::RotaryHorizontalVerticalDrag);
     slider.setTextBoxStyle(Slider::NoTextBox, true, 0, 0);
-    slider.setLookAndFeel(&lnf);
+    slider.setLookAndFeel(&lnfRef_);
+    lnfRef_.registerSlider(&slider);
     addAndMakeVisible(slider);
 
     attachment = std::make_unique<AudioProcessorValueTreeState::SliderAttachment>(state, paramID_, slider);
