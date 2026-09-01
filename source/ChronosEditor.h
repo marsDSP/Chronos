@@ -4,6 +4,7 @@
 #define CHRONOS_EDITOR_H
 
 #include <JuceHeader.h>
+#include <atomic>
 #include "ChronosProcessor.h"
 #include "gui/Colours.h"
 #include "gui/Metrics.h"
@@ -36,6 +37,7 @@ public:
 private:
     void timerCallback() override;
     void updateCoreAccentColour_(float delayModeVal);
+    void pollParameterChanges_();
 
     ChronosProcessor& processorRef;
     MarsDSP::GUI::Metrics metrics_;
@@ -49,6 +51,14 @@ private:
     MarsDSP::GUI::Card repeatsCard_;
     MarsDSP::GUI::Card characterCard_;
     MarsDSP::GUI::Card outputCard_;
+
+    // The audio thread stores delay-mode and bypass here. A timer polls
+    // these values on the message thread and applies the visual update.
+    std::atomic<int> pendingDelayMode_ { -1 };
+    std::atomic<int> pendingBypass_ { -1 };
+    int lastDelayMode_ { -1 };
+    bool lastBypass_ { false };
+    std::unique_ptr<juce::Timer> paramPoll_;
 
     TooltipWindow tooltipWindow_;
 

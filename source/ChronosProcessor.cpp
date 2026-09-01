@@ -165,7 +165,8 @@ std::pair<float, float> ChronosProcessor::computeDelaySamples_() const
 
 void ChronosProcessor::releaseResources()
 {
-    /* let the OS handle this for now */
+    // The engine owns the arena memory. The public interface has no
+    // release path. The memory stays resident until the plugin unloads.
 }
 
 void ChronosProcessor::reset()
@@ -209,9 +210,10 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
     engine.setBypass(parameters.getBypass());
 
     // Read the host tempo. Hold the last known BPM when the host gives none.
-    if (const auto pos = getPlayHead()->getPosition())
-        if (const auto bpm = pos->getBpm())
-            cachedBpm_.store(*bpm, std::memory_order_relaxed);
+    if (auto* playHead = getPlayHead())
+        if (const auto pos = playHead->getPosition())
+            if (const auto bpm = pos->getBpm())
+                cachedBpm_.store(*bpm, std::memory_order_relaxed);
 
     const int numSamples = buffer.getNumSamples();
     if (numSamples <= 0) return;
@@ -251,45 +253,54 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
         totalNumInputChannels > 1 ? buffer.getWritePointer(1) : nullptr
     };
 
-    float sumInL = 0.0f;
-    float sumInR = 0.0f;
-    for (int i = 0; i < numSamples; ++i)
+    const bool editorOpen = editorOpen_.load(std::memory_order_relaxed);
+
+    float rmsL = 0.0f;
+    float rmsR = 0.0f;
+    if (editorOpen)
     {
-        const float l = buffer.getSample(0, i);
-        sumInL += l * l;
-        if (totalNumInputChannels > 1)
+        const float* inL = buffer.getReadPointer(0);
+        const float* inR = (totalNumInputChannels > 1) ? buffer.getReadPointer(1) : nullptr;
+        float sumInL = 0.0f;
+        float sumInR = 0.0f;
+        for (int i = 0; i < numSamples; ++i)
         {
-            const float r = buffer.getSample(1, i);
-            sumInR += r * r;
+            sumInL += inL[i] * inL[i];
+            if (inR != nullptr)
+                sumInR += inR[i] * inR[i];
         }
+        rmsL = std::sqrt(sumInL / static_cast<float>(numSamples));
+        rmsR = (inR != nullptr) ? std::sqrt(sumInR / static_cast<float>(numSamples)) : rmsL;
     }
-    const float rmsL = std::sqrt(sumInL / static_cast<float>(numSamples));
-    const float rmsR = (totalNumInputChannels > 1) ? std::sqrt(sumInR / static_cast<float>(numSamples)) : rmsL;
 
     engine.process(io.data(), totalNumInputChannels, numSamples);
 
-    float sumOutL = 0.0f;
-    float sumOutR = 0.0f;
-    for (int i = 0; i < numSamples; ++i)
+    if (editorOpen)
     {
-        const float l = buffer.getSample(0, i);
-        sumOutL += l * l;
-        if (totalNumInputChannels > 1)
+        const float* outL = buffer.getReadPointer(0);
+        const float* outR = (totalNumInputChannels > 1) ? buffer.getReadPointer(1) : nullptr;
+        float sumOutL = 0.0f;
+        float sumOutR = 0.0f;
+        for (int i = 0; i < numSamples; ++i)
         {
-            const float r = buffer.getSample(1, i);
-            sumOutR += r * r;
+            sumOutL += outL[i] * outL[i];
+            if (outR != nullptr)
+                sumOutR += outR[i] * outR[i];
+        }
+        const float wetRmsL = std::sqrt(sumOutL / static_cast<float>(numSamples));
+        const float wetRmsR = (outR != nullptr) ? std::sqrt(sumOutR / static_cast<float>(numSamples)) : wetRmsL;
+
+        const MarsDSP::GUI::TapFeedFrame frame{
+            .rmsL = rmsL,
+            .rmsR = rmsR,
+            .wetRmsL = wetRmsL,
+            .wetRmsR = wetRmsR
+        };
+        if (! tapFifo_.push(frame))
+        {
+            // The feed is best effort. Drop the frame when the FIFO is full.
         }
     }
-    const float wetRmsL = std::sqrt(sumOutL / static_cast<float>(numSamples));
-    const float wetRmsR = (totalNumInputChannels > 1) ? std::sqrt(sumOutR / static_cast<float>(numSamples)) : wetRmsL;
-
-    const MarsDSP::GUI::TapFeedFrame frame{
-        .rmsL = rmsL,
-        .rmsR = rmsR,
-        .wetRmsL = wetRmsL,
-        .wetRmsR = wetRmsR
-    };
-    tapFifo_.push(frame);
 }
 
 //==============================================================================
@@ -300,6 +311,7 @@ bool ChronosProcessor::hasEditor() const
 
 AudioProcessorEditor *ChronosProcessor::createEditor()
 {
+    editorOpen_.store(true, std::memory_order_relaxed);
     return new ChronosEditor(*this);
 }
 

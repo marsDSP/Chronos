@@ -15,6 +15,17 @@ using MarsDSP::GUI::MetricsConsumer;
 // Tooltip delay in milliseconds (section 4.5).
 constexpr int kTooltipDelayMs = 700;
 
+// A timer that calls a function on the message thread at a fixed rate.
+class LambdaTimer : public juce::Timer {
+public:
+    explicit LambdaTimer(std::function<void()> cb, int hz)
+        : cb_(std::move(cb)) { startTimerHz(hz); }
+    ~LambdaTimer() override { stopTimer(); }
+    void timerCallback() override { cb_(); }
+private:
+    std::function<void()> cb_;
+};
+
 // Derive the knob diameter in pixels for n knobs in a content area.
 // rowH is the pixel height available for the row (including label and readout space).
 // hasReadout accounts for a value readout below the label.
@@ -703,9 +714,16 @@ ChronosEditor::ChronosEditor(ChronosProcessor& p)
 
     const auto rawMode = processorRef.getParameters().getRawDelayMode();
     updateCoreAccentColour_(static_cast<float>(rawMode));
+    pendingDelayMode_.store(rawMode, std::memory_order_relaxed);
+    lastDelayMode_ = rawMode;
+    const bool rawBypass = processorRef.getParameters().getBypass();
+    pendingBypass_.store(rawBypass ? 1 : 0, std::memory_order_relaxed);
+    lastBypass_ = rawBypass;
 
     processorRef.getAPVTS().addParameterListener(delayModeParamID.getParamID(), this);
     processorRef.getAPVTS().addParameterListener(bypassParamID.getParamID(), this);
+
+    paramPoll_ = std::make_unique<LambdaTimer>([this] { pollParameterChanges_(); }, 10);
 
     setResizable(true, true);
     setResizeLimits(Metrics::kMinWidth, Metrics::kMinHeight,
@@ -738,6 +756,8 @@ ChronosEditor::ChronosEditor(ChronosProcessor& p)
 
 ChronosEditor::~ChronosEditor()
 {
+    processorRef.setEditorOpen(false);
+    paramPoll_.reset();
     stopTimer();
     processorRef.getAPVTS().removeParameterListener(delayModeParamID.getParamID(), this);
     processorRef.getAPVTS().removeParameterListener(bypassParamID.getParamID(), this);
@@ -746,24 +766,10 @@ ChronosEditor::~ChronosEditor()
 
 void ChronosEditor::parameterChanged(const String& parameterID, const float newValue)
 {
-    const auto safe = SafePointer(this);
-
     if (parameterID == delayModeParamID.getParamID())
-    {
-        MessageManager::callAsync([safe, newValue]
-        {
-            if (safe != nullptr)
-                safe->updateCoreAccentColour_(newValue);
-        });
-    }
+        pendingDelayMode_.store(juce::roundToInt(newValue), std::memory_order_relaxed);
     else if (parameterID == bypassParamID.getParamID())
-    {
-        MessageManager::callAsync([safe]
-        {
-            if (safe != nullptr)
-                safe->repaint();
-        });
-    }
+        pendingBypass_.store((juce::roundToInt(newValue) != 0) ? 1 : 0, std::memory_order_relaxed);
 }
 
 void ChronosEditor::updateCoreAccentColour_(const float delayModeVal)
@@ -777,6 +783,23 @@ void ChronosEditor::updateCoreAccentColour_(const float delayModeVal)
     repeatsCard_.setAccentColour(col);
     characterCard_.setAccentColour(col);
     outputCard_.setAccentColour(col);
+}
+
+void ChronosEditor::pollParameterChanges_()
+{
+    const int mode = pendingDelayMode_.load(std::memory_order_relaxed);
+    if (mode != lastDelayMode_)
+    {
+        lastDelayMode_ = mode;
+        updateCoreAccentColour_(static_cast<float>(mode));
+    }
+
+    const bool bp = (pendingBypass_.load(std::memory_order_relaxed) != 0);
+    if (bp != lastBypass_)
+    {
+        lastBypass_ = bp;
+        repaint();
+    }
 }
 
 void ChronosEditor::paint(Graphics& g)

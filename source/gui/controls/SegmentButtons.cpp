@@ -35,11 +35,17 @@ SegmentButtons::SegmentButtons(AudioProcessorValueTreeState& apvts, const String
 
     apvts_.addParameterListener(paramID_, this);
 
+    if (auto* raw = apvts_.getRawParameterValue(paramID_))
+        pendingValue_.store(raw->load(std::memory_order_relaxed), std::memory_order_relaxed);
+    lastAppliedValue_ = pendingValue_.load(std::memory_order_relaxed);
     syncButtons();
+
+    startTimerHz(10);
 }
 
 SegmentButtons::~SegmentButtons()
 {
+    stopTimer();
     apvts_.removeParameterListener(paramID_, this);
 }
 
@@ -73,19 +79,25 @@ void SegmentButtons::setTooltip(const String& text)
 
 void SegmentButtons::syncButtons()
 {
-    const int idx = combo_.getSelectedId() - 1;
+    const int idx = juce::roundToInt(pendingValue_.load(std::memory_order_relaxed));
     for (int i = 0; i < static_cast<int>(buttons_.size()); ++i)
         buttons_[static_cast<std::size_t>(i)]->setToggleState(i == idx, dontSendNotification);
 }
 
+void SegmentButtons::timerCallback()
+{
+    const float v = pendingValue_.load(std::memory_order_relaxed);
+    if (v != lastAppliedValue_)
+    {
+        lastAppliedValue_ = v;
+        syncButtons();
+    }
+}
+
 void SegmentButtons::parameterChanged(const String& parameterID, const float newValue)
 {
-    const auto safe = Component::SafePointer<SegmentButtons>(this);
-
     if (parameterID == paramID_)
-    {
-        MessageManager::callAsync([safe] { if (safe != nullptr) safe->syncButtons(); });
-    }
+        pendingValue_.store(newValue, std::memory_order_relaxed);
 }
 
 void SegmentButtons::resized()

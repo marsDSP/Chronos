@@ -7,6 +7,7 @@
 #include "../AccentConsumer.h"
 #include "../Metrics.h"
 #include "ConsoleButton.h"
+#include <atomic>
 #include <memory>
 #include <vector>
 
@@ -15,6 +16,7 @@ namespace MarsDSP::GUI {
 // A mutually exclusive row of segment buttons bound to a choice parameter.
 class SegmentButtons : public Component,
                        private AudioProcessorValueTreeState::Listener,
+                       private Timer,
                        public AccentConsumer {
 public:
     // Bind to a choice parameter. Set coreLinked to follow the delay core accent.
@@ -41,6 +43,7 @@ public:
 
 private:
     void parameterChanged(const String& parameterID, float newValue) override;
+    void timerCallback() override;
     void syncButtons();
 
     ComboBox combo_;
@@ -51,6 +54,11 @@ private:
     String paramID_;
     AudioProcessorValueTreeState& apvts_;
     Metrics metrics_;
+
+    // The audio thread stores the choice index here. A timer polls this
+    // value and syncs the buttons on the message thread.
+    std::atomic<float> pendingValue_ { -1.0f };
+    float lastAppliedValue_ { -2.0f };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SegmentButtons)
 };

@@ -51,6 +51,10 @@ public:
 
     [[nodiscard]] double getCachedBpm() const noexcept { return cachedBpm_.load(std::memory_order_relaxed); }
 
+    // The editor sets this flag on open and clears it on close.
+    // The audio thread skips metering work when no editor is open.
+    void setEditorOpen(bool open) noexcept { editorOpen_.store(open, std::memory_order_relaxed); }
+
     //==============================================================================
     int getNumPrograms() override;
     int getCurrentProgram() override;
@@ -77,6 +81,9 @@ private:
 
     // The last known host BPM. Held when the host gives no tempo.
     std::atomic<double> cachedBpm_{120.0};
+
+    // True while an editor is open. The audio thread reads this to gate metering.
+    std::atomic<bool> editorOpen_ { false };
 
     // Name of the single factory program (returned via getProgramName).
     String programName_ { "Init" };
