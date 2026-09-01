@@ -24,19 +24,24 @@ LookAndFeel::LookAndFeel()
     setColour(TooltipWindow::outlineColourId, Colours::panelBorder);
 }
 
+void LookAndFeel::setMetrics(const Metrics& m)
+{
+    metrics_ = m;
+}
+
 Font LookAndFeel::getLabelFont(Label&)
 {
-    return Fonts::font(Fonts::Weight::Regular, currentMetrics().font(13.0f));
+    return Fonts::font(Fonts::Weight::Regular, metrics_.font(13.0f));
 }
 
 Font LookAndFeel::getComboBoxFont(ComboBox&)
 {
-    return Fonts::font(Fonts::Weight::Regular, currentMetrics().font(12.0f));
+    return Fonts::font(Fonts::Weight::Regular, metrics_.font(12.0f));
 }
 
 Font LookAndFeel::getPopupMenuFont()
 {
-    return Fonts::font(Fonts::Weight::Regular, currentMetrics().font(14.0f));
+    return Fonts::font(Fonts::Weight::Regular, metrics_.font(14.0f));
 }
 
 void LookAndFeel::drawRotarySlider(Graphics& g,
@@ -55,7 +60,7 @@ void LookAndFeel::drawRotarySlider(Graphics& g,
     const auto centreY = bounds.getCentreY();
     const auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
 
-    const float arcThickness = currentMetrics().stroke(Metrics::kGroupStroke);
+    const float arcThickness = metrics_.stroke(Metrics::kGroupStroke);
     Path trackArc;
     trackArc.addCentredArc(centreX, centreY, radius, radius, 0.0f, rotaryStartAngle, rotaryEndAngle, true);
 
@@ -85,7 +90,7 @@ void LookAndFeel::drawRotarySlider(Graphics& g,
     g.fillEllipse(centreX - knobRadius, centreY - knobRadius, knobDiameter, knobDiameter);
 
     g.setColour(Colour(0x08FFFFFF));
-    const float outline = currentMetrics().stroke(Metrics::kIconStroke);
+    const float outline = metrics_.stroke(Metrics::kIconStroke);
     g.drawEllipse(centreX - knobRadius, centreY - knobRadius, knobDiameter, knobDiameter, outline);
 
     Path pointer;
@@ -110,7 +115,7 @@ void LookAndFeel::drawComboBox(Graphics& g,
 {
     ignoreUnused(isButtonDown, buttonX, buttonY, buttonW, buttonH, box);
 
-    const auto m = currentMetrics();
+    const auto m = metrics_;
     const auto bounds = Rectangle<int>(0, 0, width, height).toFloat();
     const float corner = m.pxf(Metrics::kCornerSmall);
     const float sw = m.stroke(Metrics::kHairline);
@@ -144,7 +149,7 @@ void LookAndFeel::drawGroupComponentOutline(Graphics& g,
     const float textEdgeGap = 4.0f;
     auto cornerSize = 5.0f;
 
-    const Font font = Fonts::font(Fonts::Weight::Semibold, currentMetrics().font(textH));
+    const Font font = Fonts::font(Fonts::Weight::Semibold, metrics_.font(textH));
     const auto x = indent;
     const auto y = font.getAscent() - 3.0f;
     const auto w = std::max(0.0f, static_cast<float>(width) - x * 2.0f);
@@ -178,7 +183,7 @@ void LookAndFeel::drawGroupComponentOutline(Graphics& g,
 
     const auto alpha = group.isEnabled() ? 1.0f : 0.5f;
     g.setColour(group.findColour(GroupComponent::outlineColourId).withMultipliedAlpha(alpha));
-    g.strokePath(p, PathStrokeType(currentMetrics().stroke(Metrics::kGroupStroke)));
+    g.strokePath(p, PathStrokeType(metrics_.stroke(Metrics::kGroupStroke)));
 
     g.setColour(group.findColour(GroupComponent::textColourId).withMultipliedAlpha(alpha));
     g.setFont(font);
@@ -212,7 +217,7 @@ void LookAndFeel::drawLabel(Graphics& g, Label& label)
 
 void LookAndFeel::drawPopupMenuBackground(Graphics& g, const int width, const int height)
 {
-    const auto m = currentMetrics();
+    const auto m = metrics_;
     const float corner = m.pxf(Metrics::kCornerSmall);
     const float sw = m.stroke(Metrics::kHairline);
     const float half = sw / 2;
@@ -226,7 +231,7 @@ void LookAndFeel::drawPopupMenuBackground(Graphics& g, const int width, const in
 
 void LookAndFeel::drawTooltip(Graphics& g, const String& text, int width, int height)
 {
-    const Font f = Fonts::font(Fonts::Weight::Regular, currentMetrics().font(11.0f));
+    const Font f = Fonts::font(Fonts::Weight::Regular, metrics_.font(11.0f));
 
     g.fillAll(findColour(TooltipWindow::backgroundColourId));
 
@@ -254,7 +259,7 @@ void LookAndFeel::drawPopupMenuItem(Graphics& g,
 {
     ignoreUnused(shortcutKeyText, icon, textColour, isTicked);
 
-    const auto m = currentMetrics();
+    const auto m = metrics_;
 
     if (isSeparator)
     {

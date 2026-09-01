@@ -122,7 +122,7 @@ void PDLKnob::mouseWheelMove(const MouseEvent &e, const MouseWheelDetails &wheel
 void PDLKnob::mouseDoubleClick(const MouseEvent &e)
 {
     // A double-click on the label band opens inline text entry.
-    const auto m = currentMetrics();
+    const auto m = metrics_;
     const int labelBandH = m.px(Metrics::kLabelBandH);
     if (e.position.y < static_cast<float>(labelBandH))
         showValueEditor_();
@@ -143,7 +143,7 @@ void PDLKnob::startHoldTimer()
 
 void PDLKnob::showValueEditor_()
 {
-    const auto m = currentMetrics();
+    const auto m = metrics_;
     const int labelBandH = m.px(Metrics::kLabelBandH);
     const auto area = getLocalBounds().removeFromTop(labelBandH);
 
@@ -180,7 +180,7 @@ void PDLKnob::applyEditorText_()
 
 void PDLKnob::paint(Graphics &g)
 {
-    const auto m = currentMetrics();
+    const auto m = metrics_;
     const float availW = static_cast<float>(getWidth()) - m.pxf(2.0f);
     const float baseH = m.font(11.0f);
     const int labelBandH = m.px(Metrics::kLabelBandH);
@@ -259,7 +259,7 @@ void PDLKnob::paint(Graphics &g)
 void PDLKnob::resized()
 {
     auto bounds = getLocalBounds();
-    const auto m = currentMetrics();
+    const auto m = metrics_;
     const int labelHeight = m.px(static_cast<float>(Metrics::kLabelBandH));
     const int knobLabelGap = m.px(static_cast<float>(Metrics::kKnobLabelGap));
 

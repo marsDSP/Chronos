@@ -16,6 +16,12 @@ void SubTabStrip::SubTabButton::setAccentColour(const Colour c)
     repaint();
 }
 
+void SubTabStrip::SubTabButton::setMetrics(const Metrics& m)
+{
+    metrics_ = m;
+    repaint();
+}
+
 void SubTabStrip::SubTabButton::paintButton(Graphics& g,
                                             const bool shouldDrawButtonAsHighlighted,
                                             const bool shouldDrawButtonAsDown)
@@ -32,7 +38,7 @@ void SubTabStrip::SubTabButton::paintButton(Graphics& g,
     else
         g.setColour(Colours::textDim);
 
-    g.setFont(Fonts::font(Fonts::Weight::Medium, currentMetrics().font(10.0f)));
+    g.setFont(Fonts::font(Fonts::Weight::Medium, metrics_.font(10.0f)));
     g.drawText(getButtonText().toUpperCase(), bounds, Justification::centred, false);
 }
 
@@ -48,6 +54,8 @@ void SubTabStrip::setAccentColour(const Colour c)
 void SubTabStrip::setMetrics(const Metrics& m)
 {
     metrics_ = m;
+    for (auto& btn : buttons_)
+        btn->setMetrics(m);
     resized();
     repaint();
 }

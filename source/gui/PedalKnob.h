@@ -187,6 +187,9 @@ namespace MarsDSP::GUI::Knobs {
         // Store the accent colour for the value text.
         void setAccentColour(Colour c) { accentColour_ = c; repaint(); }
 
+        // Store the scale metrics and relayout.
+        void setMetrics(const Metrics& m) { metrics_ = m; resized(); repaint(); }
+
         // Set the tooltip, title, and help text on the slider.
         void setTooltip(const String &text)
         {
@@ -215,6 +218,7 @@ namespace MarsDSP::GUI::Knobs {
         String labelText_;
         Colour labelColour_ { Colours::textDim };
         Colour accentColour_ { Colours::accentDelayDigital };
+        Metrics metrics_;
         PedalKnob lnf;
         std::unique_ptr<AudioProcessorValueTreeState::SliderAttachment> attachment;
         AudioProcessorValueTreeState &apvtsRef_;

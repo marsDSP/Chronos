@@ -1,5 +1,6 @@
 #include "Card.h"
 #include "Colours.h"
+#include "MetricsConsumer.h"
 
 namespace MarsDSP::GUI {
 
@@ -28,6 +29,11 @@ void Card::setMetrics(const Metrics& m)
 {
     metrics_ = m;
     subTabs_.setMetrics(m);
+
+    for (auto& panel : contents_)
+        if (auto* mc = dynamic_cast<MetricsConsumer*>(panel.get()))
+            mc->setMetrics(m);
+
     resized();
     repaint();
 }

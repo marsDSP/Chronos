@@ -39,9 +39,16 @@ public:
         repaint();
     }
 
+    // Store the scale metrics and repaint.
+    void setMetrics(const Metrics& m)
+    {
+        metrics_ = m;
+        repaint();
+    }
+
     void paint(Graphics& g) override
     {
-        const auto m = currentMetrics();
+        const auto m = metrics_;
         const auto bounds = getLocalBounds().toFloat();
         const float corner = m.pxf(Metrics::kCornerSmall);
         const float sw = m.stroke(Metrics::kHairline);
@@ -95,6 +102,7 @@ private:
     double dragStartValue_ = 0.0;
     bool syncActive_ = false;
     Colour accentColour_ = Colours::accentDelayDigital;
+    Metrics metrics_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TimeDisplay)
 };

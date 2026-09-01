@@ -56,6 +56,15 @@ void SegmentButtons::setAccentColour(const Colour c)
     setAccentColours(c, Colours::background);
 }
 
+void SegmentButtons::setMetrics(const Metrics& m)
+{
+    metrics_ = m;
+    for (auto& btn : buttons_)
+        btn->setMetrics(m);
+    resized();
+    repaint();
+}
+
 void SegmentButtons::setTooltip(const String& text)
 {
     for (auto& btn : buttons_)
@@ -85,7 +94,7 @@ void SegmentButtons::resized()
         return;
 
     const int n = static_cast<int>(buttons_.size());
-    const int gap = currentMetrics().px(Metrics::kSegmentGap);
+    const int gap = metrics_.px(Metrics::kSegmentGap);
     const int bw = (getWidth() - gap * (n - 1)) / n;
     int x = 0;
     for (auto& btn : buttons_)

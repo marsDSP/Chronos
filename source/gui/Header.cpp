@@ -27,6 +27,7 @@ void Header::setMetrics(const Metrics& m)
 {
     metrics_ = m;
     presetBar_.setMetrics(m);
+    bypassButton_.setMetrics(m);
     resized();
     repaint();
 }

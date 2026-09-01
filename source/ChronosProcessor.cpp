@@ -7,7 +7,8 @@
 #include <cmath>
 #include <random>
 
-namespace {
+namespace
+{
     // State schema version written into every saved state tree.
     constexpr int kStateVersion = 5;
     // Cap on the repeat count for the tail length above self-oscillation.
@@ -17,6 +18,7 @@ namespace {
     // Constant latency budget of the saturator stage.
     constexpr int kAlignBudget = MarsDSP::Align::SaturatorAlign::kBudget;
 }
+
 //==============================================================================
 ChronosProcessor::ChronosProcessor() : AudioProcessor(BusesProperties()
     .withInput("Input", AudioChannelSet::stereo(), true)
@@ -74,8 +76,8 @@ double ChronosProcessor::getTailLengthSeconds() const
     // Clamp the feedback before the logarithm to stay finite at zero.
     const double g = std::max(static_cast<double>(parameters.getRawFeedback()), 1e-4);
     const double n = (g >= 1.0)
-        ? static_cast<double>(kMaxTailRepeats)
-        : std::ceil(-3.0 / std::log10(g));
+                         ? static_cast<double>(kMaxTailRepeats)
+                         : std::ceil(-3.0 / std::log10(g));
     const double repeatTail = std::min(delaySeconds * n, 60.0);
     return repeatTail + static_cast<double>(kAlignBudget + kMargin) / sr;
 }
@@ -117,7 +119,7 @@ void ChronosProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     engine.prepare(sampleRate, samplesPerBlock, numChannels);
     engine.reset();
 
-    MarsDSP::ChronosEngine::Params p {};
+    MarsDSP::ChronosEngine::Params p{};
     const auto [delL, delR] = computeDelaySamples_();
     p.delaySamplesL = delL;
     p.delaySamplesR = delR;
@@ -152,13 +154,13 @@ void ChronosProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 
 std::pair<float, float> ChronosProcessor::computeDelaySamples_() const
 {
-    if (! parameters.getRawDelaySync())
-        return { parameters.getDelaySamplesL(), parameters.getDelaySamplesR() };
+    if (!parameters.getRawDelaySync())
+        return {parameters.getDelaySamplesL(), parameters.getDelaySamplesR()};
     const double ms = MarsDSP::Utils::Helpers::TempoSync::convertChoiceIndexToMilliseconds(
-                        parameters.getRawDelayDivision(), cachedBpm_.load(std::memory_order_relaxed));
+        parameters.getRawDelayDivision(), cachedBpm_.load(std::memory_order_relaxed));
     const double clamped = std::clamp(ms, 1.0, 5000.0);
-    const float s = static_cast<float>(clamped * 0.001 * getSampleRate());
-    return { s, s };
+    const auto s = static_cast<float>(clamped * 0.001 * getSampleRate());
+    return {s, s};
 }
 
 void ChronosProcessor::releaseResources()
@@ -214,7 +216,7 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
     const int numSamples = buffer.getNumSamples();
     if (numSamples <= 0) return;
 
-    MarsDSP::ChronosEngine::Params p {};
+    MarsDSP::ChronosEngine::Params p{};
     const auto [delL, delR] = computeDelaySamples_();
     p.delaySamplesL = delL;
     p.delaySamplesR = delR;
@@ -320,7 +322,7 @@ void ChronosProcessor::setStateInformation(const void *data, int sizeInBytes)
     apvts.replaceState(state);
 }
 
-void ChronosProcessor::migrateState_(ValueTree& state, int fromVersion)
+void ChronosProcessor::migrateState_(ValueTree &state, int fromVersion)
 {
     // Schema version 5 added delayTimeR and timeLink parameters.
     // Schema version 4 added the delay mode parameter.
@@ -373,13 +375,11 @@ void ChronosProcessor::migrateState_(ValueTree& state, int fromVersion)
             {
                 const float v = child.getProperty("value");
                 child.setProperty("value", std::clamp(v, 0.0f, 1.15f), nullptr);
-            }
-            else if (id == "drive")
+            } else if (id == "drive")
             {
                 const float v = child.getProperty("value");
                 child.setProperty("value", std::clamp(v, 0.0f, 24.0f), nullptr);
-            }
-            else if (id == "diffModDepth")
+            } else if (id == "diffModDepth")
             {
                 // The host can load the state before prepare. Use a safe rate then.
                 const double sr = getSampleRate();
@@ -387,8 +387,7 @@ void ChronosProcessor::migrateState_(ValueTree& state, int fromVersion)
                 const float samples = child.getProperty("value");
                 const float ms = samples / safeSr * 1000.0f;
                 child.setProperty("value", std::clamp(ms, 0.0f, 1.5f), nullptr);
-            }
-            else if (id == "interpolation")
+            } else if (id == "interpolation")
             {
                 state.removeChild(i, nullptr);
             }

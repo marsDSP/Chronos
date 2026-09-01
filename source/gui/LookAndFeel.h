@@ -5,6 +5,7 @@
 
 #include <JuceHeader.h>
 #include "Colours.h"
+#include "Metrics.h"
 
 namespace MarsDSP::GUI {
 
@@ -13,6 +14,9 @@ class LookAndFeel : public LookAndFeel_V4 {
 public:
     LookAndFeel();
     ~LookAndFeel() override = default;
+
+    // Store the scale metrics for the draw hooks.
+    void setMetrics(const Metrics& m);
 
     // Return the label font.
     Font getLabelFont(Label&) override;
@@ -81,6 +85,8 @@ public:
     }
 
 private:
+    Metrics metrics_;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(LookAndFeel)
 };
 

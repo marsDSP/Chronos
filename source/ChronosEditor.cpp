@@ -1,5 +1,6 @@
 #include "ChronosEditor.h"
 #include "gui/controls/SegmentButtons.h"
+#include "gui/MetricsConsumer.h"
 
 using Metrics = MarsDSP::GUI::Metrics;
 
@@ -9,6 +10,7 @@ using namespace MarsDSP::GUI::Knobs;
 using GUIColours = MarsDSP::GUI::Colours;
 using MarsDSP::GUI::Metrics;
 using MarsDSP::GUI::AccentConsumer;
+using MarsDSP::GUI::MetricsConsumer;
 // Uniform grid constants (design units, section 4.4).
 // Tooltip delay in milliseconds (section 4.5).
 constexpr int kTooltipDelayMs = 700;
@@ -59,7 +61,7 @@ Colour coreAccent(const ChronosProcessor& proc)
 }
 
 // 1. TIME card -> TIME sub-panel
-class TimePanel final : public Component, public AccentConsumer {
+class TimePanel final : public Component, public AccentConsumer, public MetricsConsumer {
 public:
     explicit TimePanel(ChronosProcessor& proc)
         : timeLKnob("LEFT TIME", proc.getAPVTS(), delayTimeParamID),
@@ -115,7 +117,7 @@ public:
 
     void resized() override
     {
-        const auto m = MarsDSP::GUI::currentMetrics();
+        const auto m = metrics_;
         const auto w = static_cast<float>(getWidth());
         const auto h = static_cast<float>(getHeight());
 
@@ -164,7 +166,20 @@ public:
         timeRKnob.setAccentColour(c);
     }
 
+    void setMetrics(const Metrics& m) override
+    {
+        metrics_ = m;
+        timeLKnob.setMetrics(m);
+        timeRKnob.setMetrics(m);
+        timeLDisplay.setMetrics(m);
+        timeRDisplay.setMetrics(m);
+        timeLinkButton.setMetrics(m);
+        syncButton.setMetrics(m);
+        resized();
+    }
+
 private:
+    Metrics metrics_;
     PDLKnob timeLKnob;
     PDLKnob timeRKnob;
     MarsDSP::GUI::TimeDisplay timeLDisplay;
@@ -178,7 +193,7 @@ private:
 };
 
 // 2. TIME card -> MOD sub-panel
-class ModPanel final : public Component, public AccentConsumer {
+class ModPanel final : public Component, public AccentConsumer, public MetricsConsumer {
 public:
     explicit ModPanel(ChronosProcessor& proc)
         : depthKnob("MOD DEPTH", proc.getAPVTS(), delayModDepthParamID),
@@ -192,7 +207,7 @@ public:
 
     void resized() override
     {
-        const auto m = MarsDSP::GUI::currentMetrics();
+        const auto m = metrics_;
         const auto w = static_cast<float>(getWidth());
         const auto h = static_cast<float>(getHeight());
 
@@ -216,13 +231,22 @@ public:
         rateKnob.setAccentColour(c);
     }
 
+    void setMetrics(const Metrics& m) override
+    {
+        metrics_ = m;
+        depthKnob.setMetrics(m);
+        rateKnob.setMetrics(m);
+        resized();
+    }
+
 private:
+    Metrics metrics_;
     PDLKnob depthKnob;
     PDLKnob rateKnob;
 };
 
 // 3. REPEATS card -> LOOP sub-panel
-class LoopPanel final : public Component, public AccentConsumer {
+class LoopPanel final : public Component, public AccentConsumer, public MetricsConsumer {
 public:
     explicit LoopPanel(ChronosProcessor& proc)
         : feedbackKnob("FEEDBACK", proc.getAPVTS(), feedbackParamID),
@@ -247,7 +271,7 @@ public:
 
     void resized() override
     {
-        const auto m = MarsDSP::GUI::currentMetrics();
+        const auto m = metrics_;
         const auto w = static_cast<float>(getWidth());
         const auto h = static_cast<float>(getHeight());
 
@@ -287,7 +311,19 @@ public:
         loopDriveKnob.setAccentColour(c);
     }
 
+    void setMetrics(const Metrics& m) override
+    {
+        metrics_ = m;
+        feedbackKnob.setMetrics(m);
+        crossFeedKnob.setMetrics(m);
+        loopDriveKnob.setMetrics(m);
+        loopSatSeg_.setMetrics(m);
+        delayModeSeg_.setMetrics(m);
+        resized();
+    }
+
 private:
+    Metrics metrics_;
     PDLKnob feedbackKnob;
     PDLKnob crossFeedKnob;
     PDLKnob loopDriveKnob;
@@ -296,7 +332,7 @@ private:
 };
 
 // 4. REPEATS card -> TONE sub-panel
-class TonePanel final : public Component, public AccentConsumer {
+class TonePanel final : public Component, public AccentConsumer, public MetricsConsumer {
 public:
     explicit TonePanel(ChronosProcessor& proc)
         : dampKnob("DAMP", proc.getAPVTS(), dampHzParamID),
@@ -310,7 +346,7 @@ public:
 
     void resized() override
     {
-        const auto m = MarsDSP::GUI::currentMetrics();
+        const auto m = metrics_;
         const auto w = static_cast<float>(getWidth());
         const auto h = static_cast<float>(getHeight());
 
@@ -334,13 +370,22 @@ public:
         loopCutKnob.setAccentColour(c);
     }
 
+    void setMetrics(const Metrics& m) override
+    {
+        metrics_ = m;
+        dampKnob.setMetrics(m);
+        loopCutKnob.setMetrics(m);
+        resized();
+    }
+
 private:
+    Metrics metrics_;
     PDLKnob dampKnob;
     PDLKnob loopCutKnob;
 };
 
 // 5. CHARACTER card -> DRIVE sub-panel
-class DrivePanel final : public Component, public AccentConsumer {
+class DrivePanel final : public Component, public AccentConsumer, public MetricsConsumer {
 public:
     explicit DrivePanel(ChronosProcessor& proc)
         : driveKnob("DRIVE", proc.getAPVTS(), driveParamID),
@@ -358,7 +403,7 @@ public:
 
     void resized() override
     {
-        const auto m = MarsDSP::GUI::currentMetrics();
+        const auto m = metrics_;
         const auto w = static_cast<float>(getWidth());
         const auto h = static_cast<float>(getHeight());
 
@@ -395,14 +440,24 @@ public:
         bitsKnob.setAccentColour(c);
     }
 
+    void setMetrics(const Metrics& m) override
+    {
+        metrics_ = m;
+        driveKnob.setMetrics(m);
+        bitsKnob.setMetrics(m);
+        adaaSeg_.setMetrics(m);
+        resized();
+    }
+
 private:
+    Metrics metrics_;
     PDLKnob driveKnob;
     PDLKnob bitsKnob;
     MarsDSP::GUI::SegmentButtons adaaSeg_;
 };
 
 // 6. CHARACTER card -> DIFFUSE sub-panel
-class DiffusePanel final : public Component, public AccentConsumer {
+class DiffusePanel final : public Component, public AccentConsumer, public MetricsConsumer {
 public:
     explicit DiffusePanel(ChronosProcessor& proc)
         : diffusionKnob("DIFFUSION", proc.getAPVTS(), diffusionParamID),
@@ -430,7 +485,7 @@ public:
 
     void resized() override
     {
-        const auto m = MarsDSP::GUI::currentMetrics();
+        const auto m = metrics_;
         const auto w = static_cast<float>(getWidth());
         const auto h = static_cast<float>(getHeight());
 
@@ -475,7 +530,19 @@ public:
         modRateKnob.setAccentColour(c);
     }
 
+    void setMetrics(const Metrics& m) override
+    {
+        metrics_ = m;
+        enableButton.setMetrics(m);
+        diffusionKnob.setMetrics(m);
+        sizeKnob.setMetrics(m);
+        modDepthKnob.setMetrics(m);
+        modRateKnob.setMetrics(m);
+        resized();
+    }
+
 private:
+    Metrics metrics_;
     MarsDSP::GUI::PowerButton enableButton;
     PDLKnob diffusionKnob;
     PDLKnob sizeKnob;
@@ -485,7 +552,7 @@ private:
 };
 
 // 7. OUTPUT card -> FILTER sub-panel
-class FilterPanel final : public Component, public AccentConsumer {
+class FilterPanel final : public Component, public AccentConsumer, public MetricsConsumer {
 public:
     explicit FilterPanel(ChronosProcessor& proc)
         : hpfKnob("OUTPUT HPF", proc.getAPVTS(), hpfFreqParamID),
@@ -503,7 +570,7 @@ public:
 
     void resized() override
     {
-        const auto m = MarsDSP::GUI::currentMetrics();
+        const auto m = metrics_;
         const auto w = static_cast<float>(getWidth());
         const auto h = static_cast<float>(getHeight());
 
@@ -537,14 +604,24 @@ public:
         lpfKnob.setAccentColour(c);
     }
 
+    void setMetrics(const Metrics& m) override
+    {
+        metrics_ = m;
+        hpfKnob.setMetrics(m);
+        lpfKnob.setMetrics(m);
+        modeSeg_.setMetrics(m);
+        resized();
+    }
+
 private:
+    Metrics metrics_;
     PDLKnob hpfKnob;
     PDLKnob lpfKnob;
     MarsDSP::GUI::SegmentButtons modeSeg_;
 };
 
 // 8. OUTPUT card -> LEVEL sub-panel
-class LevelPanel final : public Component, public AccentConsumer {
+class LevelPanel final : public Component, public AccentConsumer, public MetricsConsumer {
 public:
     explicit LevelPanel(ChronosProcessor& proc)
         : mixKnob("MIX", proc.getAPVTS(), mixParamID),
@@ -558,7 +635,7 @@ public:
 
     void resized() override
     {
-        const auto m = MarsDSP::GUI::currentMetrics();
+        const auto m = metrics_;
         const auto w = static_cast<float>(getWidth());
         const auto h = static_cast<float>(getHeight());
 
@@ -582,7 +659,16 @@ public:
         gainKnob.setAccentColour(c);
     }
 
+    void setMetrics(const Metrics& m) override
+    {
+        metrics_ = m;
+        mixKnob.setMetrics(m);
+        gainKnob.setMetrics(m);
+        resized();
+    }
+
 private:
+    Metrics metrics_;
     PDLKnob mixKnob;
     PDLKnob gainKnob;
 };
@@ -716,7 +802,7 @@ void ChronosEditor::resized()
 {
     const auto m = Metrics::fromWidth(getWidth());
     metrics_ = m;
-    setCurrentMetrics(m);
+    lnf_.setMetrics(m);
 
     header_.setMetrics(m);
     footer_.setMetrics(m);

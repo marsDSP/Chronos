@@ -32,6 +32,13 @@ public:
         repaint();
     }
 
+    // Store the scale metrics and repaint.
+    void setMetrics(const Metrics& m)
+    {
+        metrics_ = m;
+        repaint();
+    }
+
     // Configure the button to draw a musical note icon.
     void setMusicalNote(const bool isNote)
     {
@@ -59,7 +66,7 @@ public:
         const auto cy = bounds.getCentreY();
         const float unit = 20.0f;
         const float scale = std::min(bounds.getWidth(), bounds.getHeight()) / unit;
-        const float stroke = currentMetrics().stroke(Metrics::kIconStroke);
+        const float stroke = metrics_.stroke(Metrics::kIconStroke);
         const float ox = cx - 10.0f * scale;
         const float oy = cy - 10.0f * scale;
 
@@ -112,6 +119,7 @@ private:
     bool isLock_ = false;
     Colour onColour_ = Colours::textBright;
     Colour offColour_ = Colours::textDim;
+    Metrics metrics_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PowerButton)
 };

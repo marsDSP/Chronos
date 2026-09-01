@@ -43,9 +43,12 @@ private:
         explicit SubTabButton(const String& name);
         // Set the accent colour for the active state.
         void setAccentColour(Colour c);
+        // Set the scale metrics for the button font.
+        void setMetrics(const Metrics& m);
         void paintButton(Graphics& g, bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override;
     private:
         Colour accent_ { Colours::textBright };
+        Metrics metrics_;
     };
 
     std::vector<std::unique_ptr<SubTabButton>> buttons_;

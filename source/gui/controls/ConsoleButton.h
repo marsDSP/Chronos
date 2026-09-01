@@ -25,13 +25,20 @@ public:
         repaint();
     }
 
+    // Store the scale metrics and repaint.
+    void setMetrics(const Metrics& m)
+    {
+        metrics_ = m;
+        repaint();
+    }
+
     void paintButton(Graphics& g,
                      const bool shouldDrawButtonAsHighlighted,
                      const bool shouldDrawButtonAsDown) override
     {
         ignoreUnused(shouldDrawButtonAsDown);
 
-        const auto m = currentMetrics();
+        const auto m = metrics_;
         const auto bounds = getLocalBounds().toFloat();
         const float corner = m.pxf(Metrics::kCornerSmall);
         const float sw = m.stroke(Metrics::kHairline);
@@ -60,6 +67,7 @@ public:
 private:
     Colour activeBg_ = Colours::panelBackground;
     Colour activeText_ = Colours::accentDelayDigital;
+    Metrics metrics_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ConsoleButton)
 };

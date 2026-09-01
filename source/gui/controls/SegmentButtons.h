@@ -5,6 +5,7 @@
 
 #include <JuceHeader.h>
 #include "../AccentConsumer.h"
+#include "../Metrics.h"
 #include "ConsoleButton.h"
 #include <memory>
 #include <vector>
@@ -33,6 +34,9 @@ public:
     // Store the accent colour and repaint (AccentConsumer).
     void setAccentColour(Colour c) override;
 
+    // Store the scale metrics and relayout.
+    void setMetrics(const Metrics& m);
+
     void resized() override;
 
 private:
@@ -46,6 +50,7 @@ private:
     bool coreLinked_ = false;
     String paramID_;
     AudioProcessorValueTreeState& apvts_;
+    Metrics metrics_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SegmentButtons)
 };

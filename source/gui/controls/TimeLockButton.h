@@ -31,6 +31,13 @@ public:
         repaint();
     }
 
+    // Store the scale metrics and repaint.
+    void setMetrics(const Metrics& m)
+    {
+        metrics_ = m;
+        repaint();
+    }
+
     void paintButton(Graphics& g,
                      const bool shouldDrawButtonAsHighlighted,
                      const bool shouldDrawButtonAsDown) override
@@ -79,12 +86,13 @@ public:
         path.applyTransform(AffineTransform::translation(offsetX, offsetY));
 
         g.setColour(colour);
-        g.strokePath(path, PathStrokeType(currentMetrics().stroke(Metrics::kLockStroke), PathStrokeType::curved, PathStrokeType::rounded));
+        g.strokePath(path, PathStrokeType(metrics_.stroke(Metrics::kLockStroke), PathStrokeType::curved, PathStrokeType::rounded));
     }
 
 private:
     Colour onColour_ = Colours::accentDelayDigital;
     Colour offColour_ = Colours::textDim;
+    Metrics metrics_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TimeLockButton)
 };
