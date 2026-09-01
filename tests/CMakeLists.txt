@@ -93,6 +93,12 @@ if(BUILD_TEST_HARNESSES)
     target_link_libraries(preset_store_check PRIVATE SharedCode
         juce::juce_audio_processors juce::juce_dsp juce::juce_gui_basics)
 
+    # Metrics, tint, tick, and band harness (rev G4 appendix B). Host-free:
+    # links Colours.h, Metrics.h, and the tick generator only. No editor.
+    add_executable(gui_metrics_check harnesses/gui/gui_metrics_check.cpp)
+    target_link_libraries(gui_metrics_check PRIVATE SharedCode
+        juce::juce_graphics juce::juce_core)
+
     add_executable(long_run_stability_check harnesses/dsp/long_run_stability_check.cpp)
     target_link_libraries(long_run_stability_check PRIVATE SharedCode)
     if(NOT MSVC)
@@ -549,7 +555,7 @@ if(BUILD_TEST_HARNESSES)
         alias_check simd_delay_parity diffuser_parity nested_allpass_check
         diffuser_lengths_check diffuser_prepare_race_check diffuser_density_check
         feedback_decay_check golden_render_check rt_alloc_check rt_stack_check
-        state_roundtrip_check preset_store_check long_run_stability_check automation_sweep_check
+        state_roundtrip_check preset_store_check gui_metrics_check long_run_stability_check automation_sweep_check
         unity_transparency_check tempo_sync_check glide_rate_check
         delay_mod_check drive_loudness_check loop_dc_check crossfeed_power_check
         rtype_solver_check sallen_key_response_check sallen_key_stability_check
