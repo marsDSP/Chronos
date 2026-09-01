@@ -12,18 +12,22 @@
 namespace MarsDSP::GUI {
 
 // A readout component that displays and edits delay time.
-class TimeDisplay : public Component, public SettableTooltipClient {
+class TimeDisplay : public Component, public SettableTooltipClient, private Slider::Listener {
 public:
     TimeDisplay() = default;
-    ~TimeDisplay() override = default;
+    ~TimeDisplay() override
+    {
+        if (slider_ != nullptr)
+            slider_->removeListener(this);
+    }
 
     void setSlider(Slider* s)
     {
+        if (slider_ != nullptr)
+            slider_->removeListener(this);
         slider_ = s;
         if (slider_ != nullptr)
-        {
-            slider_->onValueChange = [this] { repaint(); };
-        }
+            slider_->addListener(this);
         repaint();
     }
 
@@ -69,6 +73,7 @@ public:
         if (slider_ == nullptr) return;
         dragStartValue_ = slider_->getValue();
         lastDragY_ = e.position.y;
+        slider_->startedDragging();
     }
 
     void mouseDrag(const MouseEvent& e) override
@@ -78,25 +83,35 @@ public:
         const float delta = lastDragY_ - e.position.y;
         lastDragY_ = e.position.y;
 
-        const double range = slider_->getMaximum() - slider_->getMinimum();
-        const double sensitivity = range / 150.0;
-        const double newVal = slider_->getValue() + delta * sensitivity;
-
-        slider_->setValue(std::clamp(newVal, slider_->getMinimum(), slider_->getMaximum()), sendNotificationSync);
+        // Move in proportion space so the skew applies at low values.
+        double prop = slider_->valueToProportionOfLength(slider_->getValue());
+        prop = std::clamp(prop + delta / 150.0, 0.0, 1.0);
+        slider_->setValue(slider_->proportionOfLengthToValue(prop), sendNotificationSync);
     }
 
-    void mouseWheelMove(const MouseEvent&, const MouseWheelDetails& wheel) override
+    void mouseUp(const MouseEvent&) override
+    {
+        if (slider_ == nullptr) return;
+        slider_->stoppedDragging();
+    }
+
+    void mouseWheelMove(const MouseEvent& e, const MouseWheelDetails& wheel) override
     {
         if (slider_ == nullptr) return;
 
-        const double range = slider_->getMaximum() - slider_->getMinimum();
-        const double step = range * 0.01;
-        const double newVal = slider_->getValue() + wheel.deltaY * step * 5.0;
+        const bool fine = e.mods.isShiftDown();
+        const double step = fine ? 0.004 : 0.02;
+        double prop = slider_->valueToProportionOfLength(slider_->getValue());
+        prop = std::clamp(prop + wheel.deltaY * step, 0.0, 1.0);
 
-        slider_->setValue(std::clamp(newVal, slider_->getMinimum(), slider_->getMaximum()), sendNotificationSync);
+        slider_->startedDragging();
+        slider_->setValue(slider_->proportionOfLengthToValue(prop), sendNotificationSync);
+        slider_->stoppedDragging();
     }
 
 private:
+    void sliderValueChanged(Slider*) override { repaint(); }
+
     Slider* slider_ = nullptr;
     float lastDragY_ = 0.0f;
     double dragStartValue_ = 0.0;

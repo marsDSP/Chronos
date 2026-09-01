@@ -608,32 +608,41 @@ void TapDisplay::mouseDown(const MouseEvent& e)
     startDiv_ = processorRef_.getParameters().getRawDelayDivision();
 
     const bool isUpper = (e.position.y <= getHeight() * 0.5f);
-    activeDragTarget_ = isUpper ? DragTarget::LeftTime : DragTarget::RightTime;
 
-    const bool synced = processorRef_.getParameters().getRawDelaySync();
-    const bool timeLinked = processorRef_.getParameters().getRawTimeLink();
+    // Store the mode and link state at mouse-down. The drag reads only this.
+    dragSynced_ = processorRef_.getParameters().getRawDelaySync();
+    dragLinked_ = processorRef_.getParameters().getRawTimeLink();
+    dragIsUpper_ = isUpper;
 
-    if (synced)
+    dragGestures_.clear();
+
+    if (dragSynced_)
     {
-        if (pDiv) pDiv->beginChangeGesture();
-    }
-    else
-    {
-        if (timeLinked)
+        if (pDiv != nullptr)
         {
-            if (pDelayL) pDelayL->beginChangeGesture();
-        }
-        else if (isUpper)
-        {
-            if (pDelayL) pDelayL->beginChangeGesture();
-        }
-        else
-        {
-            if (pDelayR) pDelayR->beginChangeGesture();
+            pDiv->beginChangeGesture();
+            dragGestures_.push_back(pDiv);
         }
     }
+    else if (dragLinked_ || dragIsUpper_)
+    {
+        if (pDelayL != nullptr)
+        {
+            pDelayL->beginChangeGesture();
+            dragGestures_.push_back(pDelayL);
+        }
+    }
+    else if (pDelayR != nullptr)
+    {
+        pDelayR->beginChangeGesture();
+        dragGestures_.push_back(pDelayR);
+    }
 
-    if (pFb) pFb->beginChangeGesture();
+    if (pFb != nullptr)
+    {
+        pFb->beginChangeGesture();
+        dragGestures_.push_back(pFb);
+    }
 }
 
 void TapDisplay::mouseDrag(const MouseEvent& e)
@@ -647,18 +656,17 @@ void TapDisplay::mouseDrag(const MouseEvent& e)
     const float h = static_cast<float>(std::max(1, getHeight()));
 
     auto& apvts = processorRef_.getAPVTS();
-    auto* pDelayL = apvts.getParameter("delayTime");
-    auto* pDelayR = apvts.getParameter("delayTimeR");
-    auto* pFb = apvts.getParameter("feedback");
-    auto* pDiv = apvts.getParameter("delayDivision");
 
-    const bool synced = processorRef_.getParameters().getRawDelaySync();
-    const bool timeLinked = processorRef_.getParameters().getRawTimeLink();
-    const bool isUpper = (activeDragTarget_ == DragTarget::LeftTime);
-
-    if (synced)
+    // Write only to a parameter in the snapshot set.
+    const auto inDragSet = [this](const RangedAudioParameter* p)
     {
-        if (pDiv)
+        return std::find(dragGestures_.begin(), dragGestures_.end(), p) != dragGestures_.end();
+    };
+
+    if (dragSynced_)
+    {
+        auto* pDiv = apvts.getParameter("delayDivision");
+        if (pDiv != nullptr && inDragSet(pDiv))
         {
             const float pixelsPerDiv = 25.0f;
             const int step = static_cast<int>(std::round(dx / pixelsPerDiv));
@@ -669,25 +677,23 @@ void TapDisplay::mouseDrag(const MouseEvent& e)
     else
     {
         const float dNorm = (dx / w) * 1.2f;
-        if (timeLinked)
+        auto* pDelayL = apvts.getParameter("delayTime");
+        auto* pDelayR = apvts.getParameter("delayTimeR");
+
+        if (dragLinked_ || dragIsUpper_)
         {
-            if (pDelayL)
+            if (pDelayL != nullptr && inDragSet(pDelayL))
                 pDelayL->setValueNotifyingHost(std::clamp(startNormL_ + dNorm, 0.0f, 1.0f));
         }
-        else if (isUpper)
+        else if (pDelayR != nullptr && inDragSet(pDelayR))
         {
-            if (pDelayL)
-                pDelayL->setValueNotifyingHost(std::clamp(startNormL_ + dNorm, 0.0f, 1.0f));
-        }
-        else
-        {
-            if (pDelayR)
-                pDelayR->setValueNotifyingHost(std::clamp(startNormR_ + dNorm, 0.0f, 1.0f));
+            pDelayR->setValueNotifyingHost(std::clamp(startNormR_ + dNorm, 0.0f, 1.0f));
         }
     }
 
-    // Vertical drag modulates feedback
-    if (pFb)
+    // Vertical drag modulates feedback.
+    auto* pFb = apvts.getParameter("feedback");
+    if (pFb != nullptr && inDragSet(pFb))
     {
         const float dNormFb = -dy / h;
         pFb->setValueNotifyingHost(std::clamp(startNormFb_ + dNormFb, 0.0f, 1.0f));
@@ -699,40 +705,12 @@ void TapDisplay::mouseUp(const MouseEvent&)
     if (!dragging_)
         return;
 
-    auto& apvts = processorRef_.getAPVTS();
-    auto* pDelayL = apvts.getParameter("delayTime");
-    auto* pDelayR = apvts.getParameter("delayTimeR");
-    auto* pFb = apvts.getParameter("feedback");
-    auto* pDiv = apvts.getParameter("delayDivision");
-
-    const bool synced = processorRef_.getParameters().getRawDelaySync();
-    const bool timeLinked = processorRef_.getParameters().getRawTimeLink();
-    const bool isUpper = (activeDragTarget_ == DragTarget::LeftTime);
-
-    if (synced)
-    {
-        if (pDiv) pDiv->endChangeGesture();
-    }
-    else
-    {
-        if (timeLinked)
-        {
-            if (pDelayL) pDelayL->endChangeGesture();
-        }
-        else if (isUpper)
-        {
-            if (pDelayL) pDelayL->endChangeGesture();
-        }
-        else
-        {
-            if (pDelayR) pDelayR->endChangeGesture();
-        }
-    }
-
-    if (pFb) pFb->endChangeGesture();
+    // Close every gesture from the snapshot. Do not re-read the mode.
+    for (auto* p : dragGestures_)
+        p->endChangeGesture();
+    dragGestures_.clear();
 
     dragging_ = false;
-    activeDragTarget_ = DragTarget::None;
 }
 
 void TapDisplay::mouseMove(const MouseEvent& e)

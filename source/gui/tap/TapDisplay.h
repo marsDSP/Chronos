@@ -8,6 +8,7 @@
 #include "../Fonts.h"
 #include "../Colours.h"
 #include "TapSimulation.h"
+#include <vector>
 
 class ChronosProcessor;
 
@@ -83,8 +84,6 @@ private:
     float prevWetLevelR_ = 0.0f;
 
     // Drag and hover state
-    enum class DragTarget { None, LeftTime, RightTime };
-    DragTarget activeDragTarget_ = DragTarget::None;
     float dragStartX_ = 0.0f;
     float dragStartY_ = 0.0f;
     float startNormL_ = 0.0f;
@@ -92,6 +91,12 @@ private:
     float startNormFb_ = 0.0f;
     int startDiv_ = 11;
     bool dragging_ = false;
+
+    // The drag latch stores the mode and link state at mouse-down.
+    bool dragSynced_ = false;
+    bool dragLinked_ = false;
+    bool dragIsUpper_ = false;
+    std::vector<RangedAudioParameter*> dragGestures_;
 
     Point<float> hoverPos_{};
     bool isHovered_ = false;
