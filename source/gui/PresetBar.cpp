@@ -347,7 +347,7 @@ void PresetBar::handleMenuResult_(int result)
         case kMenuImport:     doImport_(); break;
         case kMenuExport:     doExport_(); break;
         case kMenuShowFolder: pm_.getStore().ensureRootDirectory();
-                              pm_.getStore().getRootDirectory().startAsProcess(); break;
+                              pm_.getStore().getRootDirectory().revealToUser(); break;
         default: break;
     }
 }
@@ -382,7 +382,7 @@ void PresetBar::doSaveAs_()
             const String name = w->getTextEditorContents("name");
             safe->completeSaveAs_(name);
         }
-    }));
+    }), true);
 }
 
 void PresetBar::completeSaveAs_(const String& name)
@@ -436,7 +436,7 @@ void PresetBar::doRename_()
             const String name = w->getTextEditorContents("name");
             safe->completeRename_(name);
         }
-    }));
+    }), true);
 }
 
 void PresetBar::completeRename_(const String& name)
