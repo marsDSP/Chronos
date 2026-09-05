@@ -78,8 +78,10 @@ public:
         : timeLKnob("LEFT TIME", proc.getAPVTS(), delayTimeParamID, knobLnf),
           timeRKnob("RIGHT TIME", proc.getAPVTS(), delayTimeRParamID, knobLnf)
     {
-    timeLDisplay.setSlider(&timeLKnob.getSlider());
-    timeRDisplay.setSlider(&timeRKnob.getSlider());
+    timeLDisplay.setSlider(&timeLKnob.getSlider(),
+                           proc.getAPVTS().getParameter(delayTimeParamID.getParamID()));
+    timeRDisplay.setSlider(&timeRKnob.getSlider(),
+                           proc.getAPVTS().getParameter(delayTimeRParamID.getParamID()));
     addAndMakeVisible(timeLDisplay);
     addAndMakeVisible(timeRDisplay);
     addAndMakeVisible(timeLKnob);

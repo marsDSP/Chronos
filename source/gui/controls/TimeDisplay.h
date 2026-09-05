@@ -21,11 +21,13 @@ public:
             slider_->removeListener(this);
     }
 
-    void setSlider(Slider* s)
+    // Attach the slider and its parameter. The parameter carries the automation bracket.
+    void setSlider(Slider* s, RangedAudioParameter* p)
     {
         if (slider_ != nullptr)
             slider_->removeListener(this);
         slider_ = s;
+        param_ = p;
         if (slider_ != nullptr)
             slider_->addListener(this);
         repaint();
@@ -73,12 +75,16 @@ public:
         if (slider_ == nullptr) return;
         dragStartValue_ = slider_->getValue();
         lastDragY_ = e.position.y;
-        slider_->startedDragging();
+
+        // Open one gesture on the parameter. mouseUp closes it on this pointer.
+        dragParam_ = param_;
+        if (dragParam_ != nullptr)
+            dragParam_->beginChangeGesture();
     }
 
     void mouseDrag(const MouseEvent& e) override
     {
-        if (slider_ == nullptr) return;
+        if (slider_ == nullptr || dragParam_ == nullptr) return;
 
         const float delta = lastDragY_ - e.position.y;
         lastDragY_ = e.position.y;
@@ -86,33 +92,41 @@ public:
         // Move in proportion space so the skew applies at low values.
         double prop = slider_->valueToProportionOfLength(slider_->getValue());
         prop = std::clamp(prop + delta / 150.0, 0.0, 1.0);
-        slider_->setValue(slider_->proportionOfLengthToValue(prop), sendNotificationSync);
+
+        dragParam_->setValueNotifyingHost(static_cast<float>(prop));
     }
 
     void mouseUp(const MouseEvent&) override
     {
-        if (slider_ == nullptr) return;
-        slider_->stoppedDragging();
+        // Close the gesture on the pointer from mouseDown.
+        if (dragParam_ != nullptr)
+            dragParam_->endChangeGesture();
+        dragParam_ = nullptr;
     }
 
     void mouseWheelMove(const MouseEvent& e, const MouseWheelDetails& wheel) override
     {
-        if (slider_ == nullptr) return;
+        if (slider_ == nullptr || param_ == nullptr) return;
 
         const bool fine = e.mods.isShiftDown();
         const double step = fine ? 0.004 : 0.02;
         double prop = slider_->valueToProportionOfLength(slider_->getValue());
         prop = std::clamp(prop + wheel.deltaY * step, 0.0, 1.0);
 
-        slider_->startedDragging();
-        slider_->setValue(slider_->proportionOfLengthToValue(prop), sendNotificationSync);
-        slider_->stoppedDragging();
+        // One gesture pair per event.
+        param_->beginChangeGesture();
+        param_->setValueNotifyingHost(static_cast<float>(prop));
+        param_->endChangeGesture();
     }
 
 private:
     void sliderValueChanged(Slider*) override { repaint(); }
 
     Slider* slider_ = nullptr;
+    // The parameter this readout edits. setSlider sets it with the slider.
+    RangedAudioParameter* param_ = nullptr;
+    // mouseDown stores the gesture target. mouseUp closes the gesture.
+    RangedAudioParameter* dragParam_ = nullptr;
     float lastDragY_ = 0.0f;
     double dragStartValue_ = 0.0;
     bool syncActive_ = false;
