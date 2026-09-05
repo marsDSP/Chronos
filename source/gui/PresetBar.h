@@ -30,6 +30,19 @@ public:
     // Store the live core accent for the border and the modified ink.
     void setAccentColour(Colour c) override;
 
+    // Callbacks the preset bar uses to drive editor resizing from its Zoom
+    // submenu. The editor owns the screen-aware clamping; the bar only emits
+    // the requested width or a fit-to-screen command.
+    struct ResizeControls
+    {
+        std::function<void(int)> resizeToWidth;   // target editor width in px
+        std::function<void()>    fitToScreen;     // grow to the largest size that fits
+        std::function<int()>     currentWidth;    // current editor width, for the active tick
+    };
+
+    // Wire the Zoom submenu to the editor.
+    void setResizeControls(ResizeControls c);
+
     void paint(Graphics& g) override;
     void resized() override;
     void mouseMove(const MouseEvent& e) override;
@@ -72,6 +85,8 @@ private:
     std::vector<MarsDSP::Presets::PresetEntry> menuFactoryPresets_;
     std::unique_ptr<FileChooser> exportChooser_;
     std::unique_ptr<FileChooser> importChooser_;
+
+    ResizeControls resizeControls_;
 
     // Hit regions in pixels, set in resized().
     Rectangle<int> prevArea_, nameArea_, nextArea_, menuArea_;

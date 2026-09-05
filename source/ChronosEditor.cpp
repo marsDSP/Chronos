@@ -62,6 +62,25 @@ Colour coreAccent(const ChronosProcessor& proc)
                                                           : GUIColours::accentDelayDigital;
 }
 
+// Host window chrome (title bar plus OS margins) reserved above the editor
+// when computing how tall the plugin window may grow on a given display.
+constexpr int kHostChromePx = 96;
+
+// The largest editor width that keeps the plugin window inside the given
+// display's usable work area, respecting the fixed design aspect ratio.
+// Clamped to the design scale band so the cap never leaves [kMinWidth,
+// kMaxWidth]. Returns kMaxWidth for an empty area (headless host).
+int screenMaxWidthFor(const Rectangle<int>& workArea)
+{
+    if (workArea.isEmpty()) return Metrics::kMaxWidth;
+    const int availH = std::max(0, workArea.getHeight() - kHostChromePx);
+    const int availW = std::max(0, workArea.getWidth());
+    const int maxByHeight = juce::roundToInt(static_cast<double>(availH)
+                                             * Metrics::kDesignAspect);
+    const int w = std::min(maxByHeight, availW);
+    return std::clamp(w, Metrics::kMinWidth, Metrics::kMaxWidth);
+}
+
 // 1. TIME card. Absorbs the MOD panel.
 class TimePanel final : public Component, public AccentConsumer, public MetricsConsumer,
                         public EnablementConsumer {
@@ -687,17 +706,30 @@ ChronosEditor::ChronosEditor(ChronosProcessor& p)
     paramPoll_ = std::make_unique<LambdaTimer>([this] { pollParameterChanges_(); }, 10);
 
     setResizable(true, true);
-    setResizeLimits(Metrics::kMinWidth, Metrics::kMinHeight,
-                    Metrics::kMaxWidth, Metrics::kMaxHeight);
     getConstrainer()->setFixedAspectRatio(Metrics::kDesignAspect);
+
+    // Clamp the interactive and initial size to the current display so the
+    // window can never grow taller than the screen. Without this, a stored
+    // width from a large monitor can open the editor taller than the screen
+    // and strand the bottom-right resize handle off-screen.
+    const int initMaxW = currentScreenMaxWidth_();
+    const int initMaxH = juce::roundToInt(static_cast<float>(initMaxW)
+                                          / static_cast<float>(Metrics::kDesignAspect));
+    setResizeLimits(Metrics::kMinWidth, Metrics::kMinHeight, initMaxW, initMaxH);
 
     // Read the stored width only when the layout revision matches. A
     // session from an older layout opens at the default width.
     const int layoutRev = processorRef.getEditorLayoutRev();
     const int storedW = (layoutRev == 7) ? processorRef.getEditorWidth() : Metrics::kDefaultWidth;
-    const int w = std::clamp(storedW, Metrics::kMinWidth, Metrics::kMaxWidth);
+    const int w = std::clamp(storedW, Metrics::kMinWidth, initMaxW);
     const int h = juce::roundToInt(static_cast<float>(w) / static_cast<float>(Metrics::kDesignAspect));
     setSize(w, h);
+
+    // Wire the preset bar Zoom submenu to the editor's screen-aware resizer.
+    header_.getPresetBar().setResizeControls(
+        { [this](int targetW) { resizeToWidth_(targetW); },
+          [this] { fitToScreen_(); },
+          [this] { return getWidth(); } });
 
     updateEnablement_();
 
@@ -952,6 +984,14 @@ void ChronosEditor::resized()
     const int footerH = m.px(Metrics::kFooterH);
     footer_.setBounds(0, y, w, footerH);
 
+    // Rebind the interactive size cap to the display the window is on, so
+    // dragging can never push the window larger than the current screen.
+    const int maxW = currentScreenMaxWidth_();
+    const int maxH = juce::roundToInt(static_cast<float>(maxW)
+                                      / static_cast<float>(Metrics::kDesignAspect));
+    getConstrainer()->setMaximumWidth(maxW);
+    getConstrainer()->setMaximumHeight(maxH);
+
     startTimer(250);
 }
 
@@ -963,4 +1003,31 @@ void ChronosEditor::timerCallback()
     // never carries window geometry.
     processorRef.setEditorWidth(getWidth());
     processorRef.setEditorLayoutRev(7);
+}
+
+int ChronosEditor::currentScreenMaxWidth_() const
+{
+    auto& displays = Desktop::getInstance().getDisplays();
+    if (const auto* d = displays.getDisplayForPoint(getScreenBounds().getCentre()))
+        return screenMaxWidthFor(d->userArea);
+    if (const auto* d = displays.getPrimaryDisplay())
+        return screenMaxWidthFor(d->userArea);
+    return Metrics::kMaxWidth;
+}
+
+void ChronosEditor::resizeToWidth_(int targetW)
+{
+    const int maxW = currentScreenMaxWidth_();
+    const int w = std::clamp(targetW, Metrics::kMinWidth, maxW);
+    const int h = juce::roundToInt(static_cast<float>(w)
+                                   / static_cast<float>(Metrics::kDesignAspect));
+    setSize(w, h);
+}
+
+void ChronosEditor::fitToScreen_()
+{
+    const int w = currentScreenMaxWidth_();
+    const int h = juce::roundToInt(static_cast<float>(w)
+                                   / static_cast<float>(Metrics::kDesignAspect));
+    setSize(w, h);
 }

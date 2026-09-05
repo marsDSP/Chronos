@@ -31,6 +31,9 @@ public:
     HistoryButton& getUndoButton() noexcept { return undoButton_; }
     HistoryButton& getRedoButton() noexcept { return redoButton_; }
 
+    // The preset bar (owned by the header).
+    PresetBar& getPresetBar() noexcept { return presetBar_; }
+
     void paint(Graphics& g) override;
     void resized() override;
 

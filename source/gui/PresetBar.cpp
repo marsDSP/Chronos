@@ -18,6 +18,11 @@ enum MenuCommand {
     kMenuImport,
     kMenuExport,
     kMenuShowFolder,
+    kMenuZoom80 = 100,
+    kMenuZoom100,
+    kMenuZoom125,
+    kMenuZoom160,
+    kMenuZoomFit,
     kMenuFactoryPresetStart = 500,
     kMenuUserPresetStart = 1000
 };
@@ -48,6 +53,11 @@ void PresetBar::setAccentColour(Colour c)
 {
     accent_ = c;
     repaint();
+}
+
+void PresetBar::setResizeControls(ResizeControls c)
+{
+    resizeControls_ = std::move(c);
 }
 
 void PresetBar::refreshName_()
@@ -274,6 +284,27 @@ void PresetBar::showMenu_()
 
     menu.addSeparator();
     menu.addItem(kMenuShowFolder, "Show Preset Folder", true);
+
+    // Zoom submenu: resize the editor from the menu so a window that is
+    // too large to drag can still be shrunk.
+    menu.addSeparator();
+    {
+        PopupMenu zoom;
+        const int currentW = resizeControls_.currentWidth ? resizeControls_.currentWidth() : 0;
+        auto addZoom = [&zoom, currentW](int id, const String& label, int width)
+        {
+            const bool isActive = (currentW >= width - 2 && currentW <= width + 2);
+            zoom.addItem(id, label, true, isActive);
+        };
+        addZoom(kMenuZoom80,  "80%",  416);
+        addZoom(kMenuZoom100, "100%", 520);
+        addZoom(kMenuZoom125, "125%", 650);
+        addZoom(kMenuZoom160, "160%", 832);
+        zoom.addSeparator();
+        zoom.addItem(kMenuZoomFit, "Fit to Screen", true, false);
+        menu.addSubMenu("Zoom", zoom);
+    }
+
     menu.addSeparator();
 
     // Preset list grouped by bank. Factory banks come first.
@@ -398,6 +429,11 @@ void PresetBar::handleMenuResult_(int result)
         case kMenuExport:     doExport_(); break;
         case kMenuShowFolder: pm_.getStore().ensureRootDirectory();
                               pm_.getStore().getRootDirectory().revealToUser(); break;
+        case kMenuZoom80:     if (resizeControls_.resizeToWidth) resizeControls_.resizeToWidth(416); break;
+        case kMenuZoom100:    if (resizeControls_.resizeToWidth) resizeControls_.resizeToWidth(520); break;
+        case kMenuZoom125:    if (resizeControls_.resizeToWidth) resizeControls_.resizeToWidth(650); break;
+        case kMenuZoom160:    if (resizeControls_.resizeToWidth) resizeControls_.resizeToWidth(832); break;
+        case kMenuZoomFit:    if (resizeControls_.fitToScreen)   resizeControls_.fitToScreen();   break;
         default: break;
     }
 }

@@ -54,6 +54,12 @@ private:
     // Update the undo and redo buttons from the history state.
     void updateHistoryButtons_();
 
+    // Screen-aware resize for the preset bar Zoom submenu. The cap keeps
+    // the window on-screen so the drag handle always stays reachable.
+    void resizeToWidth_(int targetW);
+    void fitToScreen_();
+    int  currentScreenMaxWidth_() const;
+
     ChronosProcessor& processorRef;
     MarsDSP::GUI::Metrics metrics_;
     MarsDSP::GUI::LookAndFeel lnf_;
