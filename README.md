@@ -36,6 +36,26 @@ Requires CMake ≥ 3.23.1, a C++23 toolchain, and Python 3. Artefacts land in
 - **AU (macOS)** — copy `Chronos.component` to `/Library/Audio/Plug-Ins/Components`.
 - **Standalone (macOS)** — run `Chronos.app` from anywhere.
 
+### macOS: “can’t be opened” / “damaged” warning (notarization)
+
+Chronos is not notarized yet, so macOS may refuse to load it after a
+download. This is expected and harmless — clear the quarantine flag macOS
+put on the download. Open **Terminal**, paste this one line, press Return,
+and type your password when asked (it covers every format at once; missing
+ones are skipped silently):
+
+```sh
+sudo xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/Chronos.vst3 /Library/Audio/Plug-Ins/Components/Chronos.component /Applications/Chronos.app 2>/dev/null
+```
+
+This touches only Chronos — it changes no system-wide security setting.
+When you want the default protection back (Gatekeeper will block Chronos
+again until it is notarized), paste this instead:
+
+```sh
+sudo xattr -w com.apple.quarantine "0083;00000000;Safari;" ~/Library/Audio/Plug-Ins/VST3/Chronos.vst3 /Library/Audio/Plug-Ins/Components/Chronos.component /Applications/Chronos.app 2>/dev/null
+```
+
 ## Presets
 
 Preset files (`.chronos`) live under the user data directory:
