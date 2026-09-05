@@ -120,7 +120,7 @@ namespace MarsDSP::Filters {
         {
             const M128 input = MM(set_ps)(0, 0, R, L);
             const M128 out = step(svf, input);
-            alignas(16) std::array<float, 4> lanes;
+            alignas(16) std::array<float, 4> lanes {};
             MM(store_ps)(lanes.data(), out);
             L = lanes[0];
             R = lanes[1];
