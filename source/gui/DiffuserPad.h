@@ -9,6 +9,7 @@
 #include "AccentConsumer.h"
 #include "MetricsConsumer.h"
 #include "tap/DiffusionModel.h"
+#include "utils/animation/Animation.h"
 #include <atomic>
 #include <memory>
 
@@ -99,10 +100,11 @@ private:
 
     bool hovered_ = false;
 
-    // The pad cloud halo glyph and its fade.
     Image haloImage_;
     float fade_ = 0.0f;
-    float targetFade_ = 0.0f;
+    MarsDSP::Animation::Animation<float> fadeAnim_ { MarsDSP::Animation::kSlowTimeMs,
+                                 MarsDSP::Animation::kEaseInOut,
+                                 MarsDSP::Animation::kEaseInOut };
     std::unique_ptr<DiffusionModel> diffusionModel_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DiffuserPad)

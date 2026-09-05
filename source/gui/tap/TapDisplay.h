@@ -11,6 +11,8 @@
 #include "TapTracker.h"
 #include "DiffusionModel.h"
 #include "HaloImage.h"
+#include "utils/animation/Animation.h"
+#include <atomic>
 #include <vector>
 
 class ChronosProcessor;
@@ -71,12 +73,17 @@ private:
     float currentInputLevelL_ = 0.0f;
     float currentInputLevelR_ = 0.0f;
 
-    // The diffusion halo.
     Image haloImage_;
     float haloFade_ = 0.0f;
-    float targetHaloFade_ = 0.0f;
+    MarsDSP::Animation::Animation<float> haloFadeAnim_ { MarsDSP::Animation::kSlowTimeMs,
+                                      MarsDSP::Animation::kEaseInOut,
+                                      MarsDSP::Animation::kEaseInOut };
     std::unique_ptr<DiffusionModel> diffusionModel_;
-    float prevHaloFade_ = 0.0f;
+
+    std::atomic<float> pendingDiffusion_ { -1.0f };
+    std::atomic<float> pendingDiffuserSize_ { -1.0f };
+    float lastDiffusion_ = -1.0f;
+    float lastDiffuserSize_ = -1.0f;
 
     // Previous-frame state for the paint budget gate.
     Point<float> prevHoverPos_{};

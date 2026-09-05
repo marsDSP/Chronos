@@ -155,9 +155,7 @@ namespace MarsDSP::GUI
         static constexpr float kHaloAlpha     = 0.55f;
         static constexpr float kHaloBarFade   = 0.6f;
         static constexpr float kPadCloudFrac  = 0.42f;
-        static constexpr float kHaloFadeTau    = 0.080f;
-
-        // The most slack a shorter card may leave in a grid row (section 4.1).
+        static constexpr int   kHaloFadeMs    = 220;
         static constexpr int kRowSlackMaxDU = 12;
 
         // Declared card heights (section 4.1). Each equals its breakdown sum.

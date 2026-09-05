@@ -107,16 +107,31 @@ TapDisplay::TapDisplay(ChronosProcessor& processor)
     if (const double sr = processorRef_.getSampleRate(); sr > 0.0)
         diffusionModel_ = std::make_unique<DiffusionModel>(sr);
 
-    targetHaloFade_ = processorRef_.getParameters().getRawEnableDiffuser() ? 1.0f : 0.0f;
-    haloFade_ = targetHaloFade_;
+
+    const bool diffuserOn = processorRef_.getParameters().getRawEnableDiffuser();
+    haloFadeAnim_.setSourceValue(diffuserOn ? 0.0f : 1.0f);
+    haloFadeAnim_.setTargetValue(diffuserOn ? 1.0f : 0.0f);
+    haloFadeAnim_.target(diffuserOn, true);
+    haloFade_ = haloFadeAnim_.value();
+
+    pendingDiffusion_.store(processorRef_.getParameters().getRawDiffusion(),
+                           std::memory_order_relaxed);
+    pendingDiffuserSize_.store(processorRef_.getParameters().getRawDiffuserSize(),
+                              std::memory_order_relaxed);
+    lastDiffusion_ = pendingDiffusion_.load(std::memory_order_relaxed);
+    lastDiffuserSize_ = pendingDiffuserSize_.load(std::memory_order_relaxed);
 
     processorRef_.getAPVTS().addParameterListener(enableDiffuserParamID.getParamID(), this);
+    processorRef_.getAPVTS().addParameterListener(diffusionParamID.getParamID(), this);
+    processorRef_.getAPVTS().addParameterListener(diffuserSizeParamID.getParamID(), this);
 }
 
 TapDisplay::~TapDisplay()
 {
     stopTimer();
     processorRef_.getAPVTS().removeParameterListener(enableDiffuserParamID.getParamID(), this);
+    processorRef_.getAPVTS().removeParameterListener(diffusionParamID.getParamID(), this);
+    processorRef_.getAPVTS().removeParameterListener(diffuserSizeParamID.getParamID(), this);
 }
 
 void TapDisplay::visibilityChanged()
@@ -163,7 +178,16 @@ void TapDisplay::setAccentColour(const Colour c)
 void TapDisplay::parameterChanged(const String& parameterID, const float newValue)
 {
     if (parameterID == enableDiffuserParamID.getParamID())
-        targetHaloFade_ = (newValue > 0.5f) ? 1.0f : 0.0f;
+    {
+        haloFadeAnim_.setSourceValue(haloFadeAnim_.value());
+        const bool on = newValue > 0.5f;
+        haloFadeAnim_.setTargetValue(on ? 1.0f : 0.0f);
+        haloFadeAnim_.target(on);
+    }
+    else if (parameterID == diffusionParamID.getParamID())
+        pendingDiffusion_.store(newValue, std::memory_order_relaxed);
+    else if (parameterID == diffuserSizeParamID.getParamID())
+        pendingDiffuserSize_.store(newValue, std::memory_order_relaxed);
 
     triggerAsyncUpdate();
 }
@@ -272,24 +296,29 @@ void TapDisplay::timerCallback()
 
     tracker_.advance(static_cast<float>(dt));
 
-    // Ease the halo fade toward the enable target.
-    const float kFade = 1.0f - std::exp(-static_cast<float>(dt) / Metrics::kHaloFadeTau);
-    haloFade_ += (targetHaloFade_ - haloFade_) * kFade;
+
+    haloFade_ = haloFadeAnim_.update();
+
+
+    const float diffusion = pendingDiffusion_.load(std::memory_order_relaxed);
+    const float diffuserSize = pendingDiffuserSize_.load(std::memory_order_relaxed);
+    const bool haloGeometryChanged = std::fabs(diffusion - lastDiffusion_) > 0.001f
+                                || std::fabs(diffuserSize - lastDiffuserSize_) > 0.001f;
+    lastDiffusion_ = diffusion;
+    lastDiffuserSize_ = diffuserSize;
 
     // Repaint only when something changed since the last tick.
     const bool hoverChanged = (isHovered_ != prevIsHovered_)
                          || (hoverPos_ != prevHoverPos_);
     const bool inputChanged = (std::fabs(currentInputLevelL_ - prevInputLevelL_) > 0.005f
                           || std::fabs(currentInputLevelR_ - prevInputLevelR_) > 0.005f);
-    const bool haloConverging = std::fabs(haloFade_ - targetHaloFade_) > 0.005f;
 
     prevIsHovered_ = isHovered_;
     prevHoverPos_ = hoverPos_;
     prevInputLevelL_ = currentInputLevelL_;
     prevInputLevelR_ = currentInputLevelR_;
-    prevHaloFade_ = haloFade_;
     if (! simRan && ! tracker_.converging() && ! hoverChanged && ! inputChanged
-        && ! tracker_.wobbling() && ! haloConverging)
+        && ! tracker_.wobbling() && ! haloFadeAnim_.isAnimating() && ! haloGeometryChanged)
         return;
 
     repaint();

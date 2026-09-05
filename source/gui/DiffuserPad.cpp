@@ -2,6 +2,7 @@
 #include "Fonts.h"
 #include "tap/HaloImage.h"
 #include "tap/DiffusionModel.h"
+#include "utils/animation/Animation.h"
 
 #include <algorithm>
 #include <cmath>
@@ -31,12 +32,15 @@ DiffuserPad::DiffuserPad(AudioProcessorValueTreeState& apvts,
     setTooltip("Drag to set the diffusion and the size. Double-click to reset.");
     setHelpText("Drag to set the diffusion and the size. Double-click to reset.");
 
-    // The cloud fades with the enable. Prime the target from the live value.
+    // Prime the cloud fade from the live enable value and snap to rest.
     if (enableParam_ != nullptr)
-        targetFade_ = enableParam_->getValue() > 0.5f ? 1.0f : 0.0f;
-    fade_ = targetFade_;
-    if (std::fabs(fade_ - targetFade_) > 0.005f)
-        startTimerHz(60);
+    {
+        const bool on = enableParam_->getValue() > 0.5f;
+        fadeAnim_.setSourceValue(on ? 0.0f : 1.0f);
+        fadeAnim_.setTargetValue(on ? 1.0f : 0.0f);
+        fadeAnim_.target(on, true);
+        fade_ = fadeAnim_.value();
+    }
 }
 
 DiffuserPad::~DiffuserPad()
@@ -84,8 +88,13 @@ void DiffuserPad::parameterChanged(const String& parameterID, const float newVal
     else if (parameterID == enableID_)
     {
         pendingEnable_.store(newValue, std::memory_order_relaxed);
-        targetFade_ = (newValue > 0.5f) ? 1.0f : 0.0f;
-        if (std::fabs(fade_ - targetFade_) > 0.005f)
+        // Re-base the ease from the current eased value so a toggle
+        // mid-fade continues smoothly toward the new target.
+        fadeAnim_.setSourceValue(fadeAnim_.value());
+        const bool on = newValue > 0.5f;
+        fadeAnim_.setTargetValue(on ? 1.0f : 0.0f);
+        fadeAnim_.target(on);
+        if (fadeAnim_.isAnimating())
             startTimerHz(60);
     }
 
@@ -99,15 +108,16 @@ void DiffuserPad::handleAsyncUpdate()
 
 void DiffuserPad::timerCallback()
 {
-    // The fade runs only while it converges.
-    const bool fadeConverging = std::fabs(fade_ - targetFade_) > 0.005f;
-    if (fadeConverging)
-    {
-        const float k = 1.0f - std::exp(-1.0f / 60.0f / Metrics::kHaloFadeTau);
-        fade_ += (targetFade_ - fade_) * k;
-        repaint();
+    // Advance the cloud fade. The vendored Animation is frame-rate
+    // independent, so the ease lands in the same wall time at any display rate.
+    fade_ = fadeAnim_.update();
+    repaint();
+
+    // Keep the timer alive while the fade eases or a wheel burst is still open.
+    // Once both are at rest, stop and close any open wheel gesture.
+    if (fadeAnim_.isAnimating() || wheelDiffusionOpen_ || wheelSizeOpen_)
         return;
-    }
+
     stopTimer();
     endWheelGestures_();
 }
