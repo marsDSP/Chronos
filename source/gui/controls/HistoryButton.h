@@ -47,35 +47,43 @@ namespace MarsDSP::GUI
 
             g.setColour(c);
 
-            // Draw a curved arrow in a 20 x 20 unit box.
-            const float ox = cx - 10.0f * scale;
-            const float oy = cy - 10.0f * scale;
+            // A curved arrow over the top of the circle. Undo ends on the
+            // left, redo on the right; both heads point down. Redo mirrors
+            // undo. The arc and the head share one angle convention
+            // (cos/sin, 0 = right, y-down) so the head sits on the arc end.
+            const float r = 7.0f * scale;
+            const float a0 = (dir_ == Direction::Undo)
+                ? 0.0f
+                : MathConstants<float>::pi;
+            const float a1 = (dir_ == Direction::Undo)
+                ? -MathConstants<float>::pi
+                : MathConstants<float>::twoPi;
+            const float step = (a1 > a0) ? 0.1f : -0.1f;
 
             Path arrow;
-            const float r = 7.0f * scale;
-            const float startAngle = (dir_ == Direction::Undo)
-                ? MathConstants<float>::pi + 0.4f
-                : -0.4f;
-            const float endAngle = (dir_ == Direction::Undo)
-                ? MathConstants<float>::twoPi - 0.4f
-                : MathConstants<float>::pi - 0.4f;
-
-            arrow.addCentredArc(cx, cy, r, r, 0.0f, startAngle, endAngle, true);
+            arrow.startNewSubPath(cx + r * std::cos(a0), cy + r * std::sin(a0));
+            for (float a = a0 + step; (step > 0.0f ? a <= a1 : a >= a1); a += step)
+                arrow.lineTo(cx + r * std::cos(a), cy + r * std::sin(a));
+            arrow.lineTo(cx + r * std::cos(a1), cy + r * std::sin(a1));
             g.strokePath(arrow, PathStrokeType(stroke, PathStrokeType::mitered, PathStrokeType::rounded));
 
-            // Arrow head.
-            const float tipX = cx + r * std::cos(endAngle);
-            const float tipY = cy + r * std::sin(endAngle);
+            // Arrow head at the tip, aligned to the arc tangent. dP/da is
+            // (-sin a, cos a); travel flips sign when the arc runs backward,
+            // and the head opens opposite the travel direction.
+            const Point<float> tip(cx + r * std::cos(a1), cy + r * std::sin(a1));
+            const Point<float> tangent(-std::sin(a1), std::cos(a1));
+            const Point<float> backDir = (a1 > a0) ? -tangent : tangent;
             const float headLen = 4.0f * scale;
-            const float headAngle = (dir_ == Direction::Undo) ? endAngle + 0.5f : endAngle - 0.5f;
+            const float spread = 0.5f;
+            const float base = std::atan2(backDir.y, backDir.x);
 
             Path head;
-            head.startNewSubPath(tipX, tipY);
-            head.lineTo(tipX + headLen * std::cos(headAngle),
-                        tipY + headLen * std::sin(headAngle));
-            head.startNewSubPath(tipX, tipY);
-            head.lineTo(tipX + headLen * std::cos(headAngle + 2.0f),
-                        tipY + headLen * std::sin(headAngle + 2.0f));
+            head.startNewSubPath(tip);
+            head.lineTo(tip.x + headLen * std::cos(base + spread),
+                        tip.y + headLen * std::sin(base + spread));
+            head.startNewSubPath(tip);
+            head.lineTo(tip.x + headLen * std::cos(base - spread),
+                        tip.y + headLen * std::sin(base - spread));
             g.strokePath(head, PathStrokeType(stroke, PathStrokeType::mitered, PathStrokeType::rounded));
         }
 
