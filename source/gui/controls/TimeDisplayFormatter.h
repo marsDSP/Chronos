@@ -8,7 +8,8 @@
 namespace MarsDSP::GUI::TimeDisplayFormatter {
 
 // Format delay time in milliseconds or tempo-sync division text.
-String getDelayTimeText(const Slider* slider, bool syncActive);
+// divisionIndex picks the division name when syncActive is true.
+String getDelayTimeText(const Slider* slider, bool syncActive, int divisionIndex);
 
 } // namespace MarsDSP::GUI::TimeDisplayFormatter
 

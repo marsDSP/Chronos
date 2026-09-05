@@ -23,6 +23,7 @@
 // The editor shows one window with a tap display and a row of cards.
 class ChronosEditor final : public AudioProcessorEditor,
                             public AudioProcessorValueTreeState::Listener,
+                            private AsyncUpdater,
                             private Timer {
 public:
     explicit ChronosEditor(ChronosProcessor&);
@@ -36,8 +37,15 @@ public:
 
 private:
     void timerCallback() override;
+
+    // Apply the enablement law on the message thread.
+    void handleAsyncUpdate() override;
+
     void updateCoreAccentColour_(float delayModeVal);
     void pollParameterChanges_();
+
+    // Read the five mode parameters and make every inert control inert.
+    void updateEnablement_();
 
     ChronosProcessor& processorRef;
     MarsDSP::GUI::Metrics metrics_;

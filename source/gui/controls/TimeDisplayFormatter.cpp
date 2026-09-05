@@ -2,7 +2,7 @@
 
 namespace MarsDSP::GUI::TimeDisplayFormatter {
 
-String getDelayTimeText(const Slider* slider, const bool syncActive)
+String getDelayTimeText(const Slider* slider, const bool syncActive, const int divisionIndex)
 {
     if (slider == nullptr)
         return "---";
@@ -11,8 +11,6 @@ String getDelayTimeText(const Slider* slider, const bool syncActive)
 
     if (syncActive)
     {
-        const int index = std::clamp(static_cast<int>(std::round(val)), 0, 19);
-
         static const StringArray divisions = {
             "1/64", "1/32T", "1/32", "1/16T", "1/32.", "1/16",
             "1/8T", "1/16.", "1/8", "1/4T", "1/8.", "1/4",
@@ -20,8 +18,8 @@ String getDelayTimeText(const Slider* slider, const bool syncActive)
             "2/1", "4/1"
         };
 
-        if (index >= 0 && index < divisions.size())
-            return divisions[index];
+        if (divisionIndex >= 0 && divisionIndex < divisions.size())
+            return divisions[divisionIndex];
 
         return "1/4";
     }

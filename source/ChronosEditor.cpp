@@ -11,6 +11,8 @@ using GUIColours = MarsDSP::GUI::Colours;
 using MarsDSP::GUI::Metrics;
 using MarsDSP::GUI::AccentConsumer;
 using MarsDSP::GUI::MetricsConsumer;
+using MarsDSP::GUI::EnablementConsumer;
+using MarsDSP::GUI::EnablementState;
 // Uniform grid constants (design units, section 4.4).
 // Tooltip delay in milliseconds (section 4.5).
 constexpr int kTooltipDelayMs = 700;
@@ -72,7 +74,8 @@ Colour coreAccent(const ChronosProcessor& proc)
 }
 
 // 1. TIME card -> TIME sub-panel
-class TimePanel final : public Component, public AccentConsumer, public MetricsConsumer {
+class TimePanel final : public Component, public AccentConsumer, public MetricsConsumer,
+                        public EnablementConsumer {
 public:
     explicit TimePanel(ChronosProcessor& proc, PedalKnob& knobLnf)
         : timeLKnob("LEFT TIME", proc.getAPVTS(), delayTimeParamID, knobLnf),
@@ -123,6 +126,15 @@ public:
     divisionBox.setTooltip("Select the tempo-sync division.");
     divisionBox.setTitle("Delay Division");
     divisionBox.setHelpText("Select the tempo-sync division.");
+
+        // Keep the readouts on the division name under tempo sync.
+        divisionBox.onChange = [this]
+        {
+            const int div = divisionBox.getSelectedId() - 1;
+            timeLDisplay.setDivision(div);
+            timeRDisplay.setDivision(div);
+        };
+
         divisionAttach = std::make_unique<AudioProcessorValueTreeState::ComboBoxAttachment>(
             proc.getAPVTS(), delayDivisionParamID.getParamID(), divisionBox);
         addAndMakeVisible(divisionBox);
@@ -189,6 +201,31 @@ public:
         timeLinkButton.setMetrics(m);
         syncButton.setMetrics(m);
         resized();
+    }
+
+    void setControlsEnabled(const EnablementState& state) override
+    {
+        // Tempo sync takes the delay time from the host. The knobs do nothing.
+        const bool leftLive = ! state.delaySync;
+        // The link copies the left time to the right channel.
+        const bool rightLive = ! state.delaySync && ! state.timeLink;
+        // The division applies only under tempo sync.
+        const bool divisionLive = state.delaySync;
+
+        timeLKnob.setEnabled(leftLive);
+        timeLDisplay.setEnabled(leftLive);
+        timeRKnob.setEnabled(rightLive);
+        timeRDisplay.setEnabled(rightLive);
+
+        divisionBox.setEnabled(divisionLive);
+        divisionBox.setAlpha(divisionLive ? 1.0f : MarsDSP::GUI::kInertAlpha);
+
+        // The readouts show the division name under tempo sync.
+        const int div = divisionBox.getSelectedId() - 1;
+        timeLDisplay.setDivision(div);
+        timeRDisplay.setDivision(div);
+        timeLDisplay.setSyncState(state.delaySync);
+        timeRDisplay.setSyncState(state.delaySync);
     }
 
 private:
@@ -398,7 +435,8 @@ private:
 };
 
 // 5. CHARACTER card -> DRIVE sub-panel
-class DrivePanel final : public Component, public AccentConsumer, public MetricsConsumer {
+class DrivePanel final : public Component, public AccentConsumer, public MetricsConsumer,
+                         public EnablementConsumer {
 public:
     explicit DrivePanel(ChronosProcessor& proc, PedalKnob& knobLnf)
         : driveKnob("DRIVE", proc.getAPVTS(), driveParamID, knobLnf),
@@ -462,6 +500,12 @@ public:
         resized();
     }
 
+    void setControlsEnabled(const EnablementState& state) override
+    {
+        // The output saturator is off. The drive gain never reaches the audio.
+        driveKnob.setEnabled(! state.driveSatOff);
+    }
+
 private:
     Metrics metrics_;
     PDLKnob driveKnob;
@@ -470,7 +514,8 @@ private:
 };
 
 // 6. CHARACTER card -> DIFFUSE sub-panel
-class DiffusePanel final : public Component, public AccentConsumer, public MetricsConsumer {
+class DiffusePanel final : public Component, public AccentConsumer, public MetricsConsumer,
+                           public EnablementConsumer {
 public:
     explicit DiffusePanel(ChronosProcessor& proc, PedalKnob& knobLnf)
         : diffusionKnob("DIFFUSION", proc.getAPVTS(), diffusionParamID, knobLnf),
@@ -552,6 +597,17 @@ public:
         modDepthKnob.setMetrics(m);
         modRateKnob.setMetrics(m);
         resized();
+    }
+
+    void setControlsEnabled(const EnablementState& state) override
+    {
+        // The diffuser is off. The four knobs never reach the audio.
+        // The enable button stays live, so the user can switch the section on.
+        const bool live = state.enableDiffuser;
+        diffusionKnob.setEnabled(live);
+        sizeKnob.setEnabled(live);
+        modDepthKnob.setEnabled(live);
+        modRateKnob.setEnabled(live);
     }
 
 private:
@@ -724,6 +780,10 @@ ChronosEditor::ChronosEditor(ChronosProcessor& p)
 
     processorRef.getAPVTS().addParameterListener(delayModeParamID.getParamID(), this);
     processorRef.getAPVTS().addParameterListener(bypassParamID.getParamID(), this);
+    processorRef.getAPVTS().addParameterListener(delaySyncParamID.getParamID(), this);
+    processorRef.getAPVTS().addParameterListener(timeLinkParamID.getParamID(), this);
+    processorRef.getAPVTS().addParameterListener(enableDiffuserParamID.getParamID(), this);
+    processorRef.getAPVTS().addParameterListener(adaaOrderParamID.getParamID(), this);
 
     paramPoll_ = std::make_unique<LambdaTimer>([this] { pollParameterChanges_(); }, 10);
 
@@ -737,6 +797,9 @@ ChronosEditor::ChronosEditor(ChronosProcessor& p)
     const int w = std::clamp(storedW, Metrics::kMinWidth, Metrics::kMaxWidth);
     const int h = juce::roundToInt(static_cast<float>(w) / static_cast<float>(Metrics::kDesignAspect));
     setSize(w, h);
+
+    // Apply the enablement law once before the first paint.
+    updateEnablement_();
 
     header_.setExplicitFocusOrder(1);
     tapDisplay_.setExplicitFocusOrder(2);
@@ -763,6 +826,10 @@ ChronosEditor::~ChronosEditor()
     stopTimer();
     processorRef.getAPVTS().removeParameterListener(delayModeParamID.getParamID(), this);
     processorRef.getAPVTS().removeParameterListener(bypassParamID.getParamID(), this);
+    processorRef.getAPVTS().removeParameterListener(delaySyncParamID.getParamID(), this);
+    processorRef.getAPVTS().removeParameterListener(timeLinkParamID.getParamID(), this);
+    processorRef.getAPVTS().removeParameterListener(enableDiffuserParamID.getParamID(), this);
+    processorRef.getAPVTS().removeParameterListener(adaaOrderParamID.getParamID(), this);
     setLookAndFeel(nullptr);
 }
 
@@ -772,6 +839,44 @@ void ChronosEditor::parameterChanged(const String& parameterID, const float newV
         pendingDelayMode_.store(juce::roundToInt(newValue), std::memory_order_relaxed);
     else if (parameterID == bypassParamID.getParamID())
         pendingBypass_.store((juce::roundToInt(newValue) != 0) ? 1 : 0, std::memory_order_relaxed);
+
+    // The enablement law reads five parameters. Reapply it after any of them.
+    if (parameterID == delaySyncParamID.getParamID()
+        || parameterID == timeLinkParamID.getParamID()
+        || parameterID == enableDiffuserParamID.getParamID()
+        || parameterID == adaaOrderParamID.getParamID()
+        || parameterID == bypassParamID.getParamID())
+        triggerAsyncUpdate();
+}
+
+void ChronosEditor::handleAsyncUpdate()
+{
+    updateEnablement_();
+}
+
+void ChronosEditor::updateEnablement_()
+{
+    const auto& params = processorRef.getParameters();
+
+    MarsDSP::GUI::EnablementState state;
+    state.delaySync = params.getRawDelaySync();
+    state.timeLink = params.getRawTimeLink();
+    state.enableDiffuser = params.getRawEnableDiffuser();
+    state.driveSatOff = (params.getADAAOrder() == 0);
+
+    timeCard_.setEnablement(state);
+    repeatsCard_.setEnablement(state);
+    characterCard_.setEnablement(state);
+    outputCard_.setEnablement(state);
+
+    // Bypass makes the tap band and the card row inert. The header bypass
+    // button and the preset bar stay live, so the user can leave bypass.
+    const bool live = ! params.getBypass();
+    tapDisplay_.setEnabled(live);
+    timeCard_.setEnabled(live);
+    repeatsCard_.setEnabled(live);
+    characterCard_.setEnabled(live);
+    outputCard_.setEnabled(live);
 }
 
 void ChronosEditor::updateCoreAccentColour_(const float delayModeVal)

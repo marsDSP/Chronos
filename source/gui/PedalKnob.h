@@ -110,6 +110,10 @@ namespace MarsDSP::GUI::Knobs {
 
         g.setImageResamplingQuality(Graphics::highResamplingQuality);
 
+        // An inert knob draws every layer at the inert alpha.
+        if (! slider.isEnabled())
+            g.setOpacity(kInertAlpha);
+
         // Draw a cached layer. The image is at the entry diameter,
         // so the draw transform scales to the logical size and carries
         // rotation and translation.
@@ -318,6 +322,9 @@ namespace MarsDSP::GUI::Knobs {
         void mouseExit(const MouseEvent &e) override;
         void mouseWheelMove(const MouseEvent &e, const MouseWheelDetails &wheel) override;
         void mouseDoubleClick(const MouseEvent &e) override;
+
+        // Repaint at the new alpha when the enablement changes.
+        void enablementChanged() override;
 
     private:
         void sliderValueChanged(Slider *) override { repaint(); }

@@ -618,6 +618,10 @@ void TapDisplay::paint(Graphics& g)
 
 void TapDisplay::mouseDown(const MouseEvent& e)
 {
+    // An inert display takes no drag.
+    if (! isEnabled())
+        return;
+
     dragStartX_ = e.position.x;
     dragStartY_ = e.position.y;
     dragging_ = true;
@@ -761,6 +765,10 @@ void TapDisplay::mouseExit(const MouseEvent&)
 
 void TapDisplay::mouseDoubleClick(const MouseEvent& e)
 {
+    // An inert display takes no double-click.
+    if (! isEnabled())
+        return;
+
     const bool isUpper = (e.position.y <= getHeight() * 0.5f);
     const bool timeLinked = processorRef_.getParameters().getRawTimeLink();
 
@@ -778,6 +786,10 @@ void TapDisplay::mouseDoubleClick(const MouseEvent& e)
 
 void TapDisplay::mouseWheelMove(const MouseEvent& e, const MouseWheelDetails& wheel)
 {
+    // An inert display takes no wheel input.
+    if (! isEnabled())
+        return;
+
     const bool isUpper = (e.position.y <= getHeight() * 0.5f);
     const bool timeLinked = processorRef_.getParameters().getRawTimeLink();
     const bool synced = processorRef_.getParameters().getRawDelaySync();

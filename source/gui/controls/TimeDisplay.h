@@ -39,6 +39,13 @@ public:
         repaint();
     }
 
+    // Store the tempo-sync division index for the sync readout.
+    void setDivision(const int index)
+    {
+        divisionIndex_ = index;
+        repaint();
+    }
+
     void setAccentColour(const Colour c)
     {
         accentColour_ = c;
@@ -52,6 +59,12 @@ public:
         repaint();
     }
 
+    // Repaint at the new alpha when the enablement changes.
+    void enablementChanged() override
+    {
+        repaint();
+    }
+
     void paint(Graphics& g) override
     {
         const auto m = metrics_;
@@ -59,19 +72,24 @@ public:
         const float corner = m.pxf(Metrics::kCornerSmall);
         const float sw = m.stroke(Metrics::kHairline);
 
-        g.setColour(tintInk(accentColour_, kTintReadoutFill));
+        // An inert readout draws at the inert alpha.
+        const float inertA = isEnabled() ? 1.0f : kInertAlpha;
+
+        g.setColour(tintInk(accentColour_, kTintReadoutFill).withMultipliedAlpha(inertA));
         g.fillRoundedRectangle(bounds, corner);
 
-        g.setColour(tintInk(accentColour_, kTintReadoutBorder));
+        g.setColour(tintInk(accentColour_, kTintReadoutBorder).withMultipliedAlpha(inertA));
         g.drawRoundedRectangle(bounds.reduced(sw / 2), corner, sw);
 
-        const String text = TimeDisplayFormatter::getDelayTimeText(slider_, syncActive_);
+        const String text = TimeDisplayFormatter::getDelayTimeText(slider_, syncActive_, divisionIndex_);
         const Font f = Fonts::font(Fonts::Weight::Semibold, m.font(13.0f));
-        Fonts::drawFixedAdvanceText(g, f, text, bounds, accentColour_);
+        Fonts::drawFixedAdvanceText(g, f, text, bounds, accentColour_.withMultipliedAlpha(inertA));
     }
 
     void mouseDown(const MouseEvent& e) override
     {
+        // An inert readout takes no drag.
+        if (! isEnabled()) return;
         if (slider_ == nullptr) return;
         dragStartValue_ = slider_->getValue();
         lastDragY_ = e.position.y;
@@ -106,6 +124,8 @@ public:
 
     void mouseWheelMove(const MouseEvent& e, const MouseWheelDetails& wheel) override
     {
+        // An inert readout takes no wheel input.
+        if (! isEnabled()) return;
         if (slider_ == nullptr || param_ == nullptr) return;
 
         const bool fine = e.mods.isShiftDown();
@@ -130,6 +150,7 @@ private:
     float lastDragY_ = 0.0f;
     double dragStartValue_ = 0.0;
     bool syncActive_ = false;
+    int divisionIndex_ = -1;
     Colour accentColour_ = Colours::accentDelayDigital;
     Metrics metrics_;
 

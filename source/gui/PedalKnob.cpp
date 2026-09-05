@@ -93,10 +93,20 @@ void PDLKnob::mouseExit(const MouseEvent &)
         repaint();
 }
 
+void PDLKnob::enablementChanged()
+{
+    slider.repaint();
+    repaint();
+}
+
 void PDLKnob::mouseWheelMove(const MouseEvent &e, const MouseWheelDetails &wheel)
 {
     // Handle only events that come from the slider.
     if (e.eventComponent != &slider)
+        return;
+
+    // An inert knob takes no wheel input.
+    if (! isEnabled())
         return;
 
     const bool fine = e.mods.isShiftDown();
@@ -125,6 +135,10 @@ void PDLKnob::mouseWheelMove(const MouseEvent &e, const MouseWheelDetails &wheel
 
 void PDLKnob::mouseDoubleClick(const MouseEvent &e)
 {
+    // An inert knob takes no text entry.
+    if (! isEnabled())
+        return;
+
     // A double-click on the label band opens inline text entry.
     const auto m = metrics_;
     const int labelBandH = m.px(Metrics::kLabelBandH);
@@ -190,12 +204,15 @@ void PDLKnob::paint(Graphics &g)
     const int labelBandH = m.px(Metrics::kLabelBandH);
     const Rectangle<float> labelArea = getLocalBounds().removeFromTop(labelBandH).toFloat();
 
+    // An inert knob draws its text at the inert alpha.
+    const float inertA = isEnabled() ? 1.0f : kInertAlpha;
+
     // Draw the value in the accent when the pointer is over or the knob is dragged.
     if (showValue_ && ! valueEditor_.isVisible())
     {
         const String text = slider.getTextFromValue(slider.getValue());
         const Font f = Fonts::font(Fonts::Weight::Medium, baseH);
-        Fonts::drawFixedAdvanceText(g, f, text, labelArea, accentColour_);
+        Fonts::drawFixedAdvanceText(g, f, text, labelArea, accentColour_.withMultipliedAlpha(inertA));
         return;
     }
 
@@ -211,7 +228,7 @@ void PDLKnob::paint(Graphics &g)
                               Justification::horizontallyCentred);
     };
 
-    g.setColour(labelColour_);
+    g.setColour(labelColour_.withMultipliedAlpha(inertA));
 
     Font f = Fonts::font(Fonts::Weight::Medium, baseH);
     String text = labelText_;

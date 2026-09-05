@@ -8,6 +8,7 @@
 #include "Colours.h"
 #include "Metrics.h"
 #include "AccentConsumer.h"
+#include "EnablementConsumer.h"
 #include <memory>
 #include <vector>
 
@@ -24,6 +25,9 @@ public:
 
     // Set the scale metrics for the card layout.
     void setMetrics(const Metrics& m);
+
+    // Push the enablement state to every content panel that reads it.
+    void setEnablement(const EnablementState& state);
 
     // Add one content panel under a subtab title.
     void addContent(const String& tabName, std::unique_ptr<Component> panel);

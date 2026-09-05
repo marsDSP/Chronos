@@ -38,6 +38,13 @@ void Card::setMetrics(const Metrics& m)
     repaint();
 }
 
+void Card::setEnablement(const EnablementState& state)
+{
+    for (auto& panel : contents_)
+        if (auto* ec = dynamic_cast<EnablementConsumer*>(panel.get()))
+            ec->setControlsEnabled(state);
+}
+
 void Card::addContent(const String& tabName, std::unique_ptr<Component> panel)
 {
     const int index = static_cast<int>(contents_.size());

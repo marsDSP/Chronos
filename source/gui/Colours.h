@@ -66,6 +66,9 @@ constexpr float kTintCentreLine     = 0.473f;
 // The alpha of the bypass scrim drawn over the tap and card bands.
 constexpr float kBypassScrimAlpha   = 0.38f;
 
+// The alpha of a control that a mode makes inert.
+constexpr float kInertAlpha         = 0.40f;
+
 } // namespace MarsDSP::GUI
 
 #endif
