@@ -1,0 +1,150 @@
+name: Beta build
+
+# Manual dispatch builds a dated prerelease. Tag pushes (beta*, v*beta*)
+# publish under the pushed tag name instead.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "beta*"
+      - "v*beta*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: beta-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            name: macOS
+          - os: windows-latest
+            name: Windows
+          - os: ubuntu-latest
+            name: Linux
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install JUCE Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+
+          # enable universe repos (software-properties-common provides add-apt-repository)
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends software-properties-common
+          sudo add-apt-repository -y universe
+          sudo apt-get update
+
+          # choose the first available webkit dev package
+          WEBKIT_CANDIDATES="libwebkit2gtk-4.0-dev libwebkit2gtk-4.1-dev libwebkit2gtk-4.2-dev libwebkit2gtk-4.3-dev"
+          WEBKIT_PKG=""
+          for p in $WEBKIT_CANDIDATES; do
+            if apt-cache show "$p" >/dev/null 2>&1; then
+              WEBKIT_PKG="$p"
+              break
+            fi
+          done
+
+          if [ -z "$WEBKIT_PKG" ]; then
+            echo "No libwebkit2gtk-dev package found in apt repos; aborting."
+            exit 1
+          fi
+
+          DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends \
+            libx11-dev libxcomposite-dev libxinerama-dev libxcursor-dev \
+            libxrandr-dev libxext-dev libfreetype6-dev libasound2-dev \
+            libgl1-mesa-dev libglu1-mesa-dev pkg-config \
+            libgtk-3-dev "$WEBKIT_PKG" libfontconfig1-dev \
+            libgdk-pixbuf2.0-dev
+
+      - name: Install modern GCC (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          # GCC 14 is the first to report __cplusplus = 202302L for -std=c++23
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-14 g++-14
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release -j
+
+      - name: Collect artifacts (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cd build/Chronos_artefacts/Release
+          zip -r -y "$GITHUB_WORKSPACE/Chronos-beta-macOS.zip" \
+            Chronos.vst3 Chronos.component Standalone/Chronos.app
+
+      - name: Collect artifacts (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive `
+            -Path build/Chronos_artefacts/Release/VST3/Chronos.vst3, `
+                  build/Chronos_artefacts/Release/Standalone/Chronos.exe `
+            -DestinationPath Chronos-beta-Windows.zip
+
+      - name: Collect artifacts (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cd build/Chronos_artefacts/Release
+          zip -r -y "$GITHUB_WORKSPACE/Chronos-beta-Linux.zip" \
+            VST3/Chronos.vst3 Standalone/Chronos
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Chronos-beta-${{ matrix.name }}
+          path: Chronos-beta-*.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish beta release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read version
+        id: ver
+        run: |
+          v=$(grep -m1 'set(CURRENT_VERSION' CMakeLists.txt | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            TAG="$GITHUB_REF_NAME"
+          else
+            TAG="beta-$(date -u +%Y%m%d-%H%M%S)"
+          fi
+          gh release create "$TAG" dist/Chronos-beta-*.zip \
+            --prerelease \
+            --title "Chronos ${{ steps.ver.outputs.version }} — beta ($TAG)" \
+            --notes "Beta builds of Chronos (Nonlinear Delay Engine). Not notarized — macOS users, see the README install section for the quarantine one-liner."
