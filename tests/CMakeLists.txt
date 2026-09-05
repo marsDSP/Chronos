@@ -2,6 +2,16 @@
 option(BUILD_TEST_HARNESSES "Build Chronos test/benchmark harnesses" OFF)
 
 if(BUILD_TEST_HARNESSES)
+    # The harnesses print with <print>/<format>, whose floating-point
+    # formatting needs std::to_chars — marked available in macOS 13.4 by
+    # libc++. The plugin artefacts keep the repo-wide 11.0 floor (verified:
+    # the plugin target does not use FP to_chars); only these dev-side test
+    # binaries build against 13.4. This shadows the cache value in this
+    # directory scope only.
+    if(APPLE)
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "13.4")
+    endif()
+
     add_executable(tan_bench harnesses/perf/tan_bench.cpp)
     target_link_libraries(tan_bench PRIVATE SharedCode)
 

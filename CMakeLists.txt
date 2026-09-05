@@ -36,11 +36,14 @@ set(Python3_FIND_VIRTUALENV STANDARD)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 message(STATUS "Found Python3: ${Python3_EXECUTABLE}")
 
-# macOS-specific settings
+# macOS-specific settings. The deployment floor is 11.0: the first macOS
+# that runs arm64, and the oldest the universal binary can honestly claim.
+# The x86_64 slice would build lower, but the combined artefact would still
+# need 11.0 for the arm64 slice.
 if(APPLE)
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0" CACHE STRING "Minimum OS X deployment version" FORCE)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum OS X deployment version" FORCE)
     set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64" CACHE STRING "Architectures")
-    set(CMAKE_XCODE_ATTRIBUTE_MACOSX_DEPLOYMENT_TARGET[arch=arm64] "14.0" CACHE STRING "arm 64 minimum deployment target" FORCE)
+    set(CMAKE_XCODE_ATTRIBUTE_MACOSX_DEPLOYMENT_TARGET[arch=arm64] "11.0" CACHE STRING "arm 64 minimum deployment target" FORCE)
 endif()
 
 if(MSVC)
@@ -65,6 +68,11 @@ juce_add_plugin("${PROJECT_NAME}"
         NEEDS_MIDI_OUTPUT FALSE
         IS_MIDI_EFFECT FALSE
         IS_SYNTH FALSE
+        MICROPHONE_PERMISSION_ENABLED TRUE
+        MICROPHONE_PERMISSION_TEXT "Chronos uses the audio input to process sound."
+        VST3_CATEGORIES "Fx" "Delay"
+        AU_MAIN_TYPE kAudioUnitType_Effect
+        HARDENED_RUNTIME_ENABLED TRUE
 )
 
 juce_generate_juce_header("${PROJECT_NAME}")

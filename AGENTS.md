@@ -24,6 +24,35 @@ No commit may include any co-author / agent attribution line. I am NOT here to p
 I am firmly pro-LLM but I do NOT support this shameless promotional tactic. Never add a `Co-Authored-By:` (or equivalent) trailer to a commit message, regardless of
 scope or tool. This is non-negotiable and applies to every commit. This especially happens when prompted to wrangle git, make a commit, or open a PR. This is FORBIDDEN, and failure to adhere to this hard rule will be seen/interpreted as deliberate sabotage.
 
+## Host & editor laws (beta spec H1–H8)
+
+Where these conflict with older descriptions elsewhere in this file, these win.
+
+- **H1 host-thread safety / async-updater rule** — a parameter listener does
+  no component work: it stores to an atomic and calls `triggerAsyncUpdate()`;
+  the async callback (message thread) does the repaint/layout/accent
+  propagation (`pendingDelayMode_` / `pendingBypass_` in `ChronosEditor`).
+  The audio path never dereferences host or GUI objects: `getPlayHead()` is
+  null-guarded, and metering + the `TapFeedFrame` FIFO push are gated on
+  `ChronosProcessor::editorOpen_`.
+- **H3 enablement law** — a control made irrelevant by another parameter is
+  disabled AND dimmed at `Colours::kInertAlpha` (no dead-looking enabled
+  state). The predicate table lives in `ChronosEditor::updateEnablement_`,
+  computed from raw parameter reads and pushed to panels via
+  `EnablementConsumer` / `EnablementState` (e.g. `timeLink` disables the
+  right-time controls, `delaySync` disables the ms knobs, `enableDiffuser`
+  off gates the diffuser knobs). Pinned by `enablement_check`.
+- **H4 preset recall** — a preset must carry every parameter except
+  `bypass` (stripped from saved and pasted state); load fails clean on an
+  unknown parameter, a missing parameter, or an out-of-range value; bank =
+  first-level folder; names/banks sanitised (reserved Windows device names,
+  path separators); an unsaved-edit guard confirms before a load discards
+  changes.
+- **H5 editor side tree** — window width and sub-tab indices persist in the
+  processor's `editorState_` side tree (carried by sessions, extracted
+  before the parameter tree applies), never inside a preset: presets carry
+  no geometry.
+
 ## Project overview
 
 Chronos is a **Nonlinear Delay Engine** JUCE audio plugin (see `README.md`). It is still early, but no longer a bare template: `ChronosProcessor::processBlock` builds `ChronosEngine::Params` from raw APVTS reads and calls `engine.process()`; the engine's per-sample chain is **wet delay (`FeedbackDelay`) → drive-gain → tanh saturation (Off/ADAA1/ADAA2 per `adaaOrder`, with `SaturatorMakeup` output makeup) → saturator latency alignment → wet HPF/LPF (`OutputFilterStage`: Digital `SimdSVF` or Analog Sallen-Key) → equal-power dry/wet crossfade → bypass blend → output gain → TPDF dither → quantization** to a target bit depth, driven by parameters owned by `ChronosParameters` over an `AudioProcessorValueTreeState`, and `createEditor()` returns a `ChronosEditor` (single-window card layout, rev G5). The wet generation is a single `FeedbackDelay` recirculating loop that owns the delay line (two `Pow2RingBuffer`s read via `FracDelayTap`/`BlockTapReader`, or a clocked `BrigadeLine` BBD core with an NE570 compander in BBD mode) and the in-loop diffuser; `feedback == 0` simply scales the loop gain to zero (single tap, no recirculation) — there is no separate `SimdDelayLine` path. The loop runs damp one-pole LP → loop-cut one-pole HP → DC blocker → equal-power cross-feed → loop tanh (hard-clip/ADAA1/ADAA2 per `loopSatOrder`, with `1/drive` makeup and a `loopTrim` from `SaturatorMakeup`), and the loop tap passes through an **in-loop Schroeder-allpass diffuser** (C7c: repeat n = n diffusion passes, so repeats progressively turn into a wash). It targets **Standalone**, **VST3**, and (on macOS) **AU** formats. The header-only DSP lives under `source/dsp/` (the wet delay line lives inside `FeedbackDelay` as two `Pow2RingBuffer`s read through `FracDelayTap`/`BlockTapReader`; `SimdDelayLine` remains only for its `maxDelaySamplesFor` sizing helper — no longer JUCE's `dsp::DelayLine`). C++23.

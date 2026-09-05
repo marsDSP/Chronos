@@ -7,9 +7,20 @@ Recorded so these conclusions are not re-litigated. Audited at the state of
 
 The RT path is single-threaded by construction. What was checked:
 
-- `source/` is free of `std::atomic`, `memory_order`, `std::mutex`, locks,
-  `shared_ptr`, and threads (grep-clean; the only hits are comment prose in
-  `BumpArena.h` saying the audio thread never allocates).
+- `source/` is free of `std::mutex`, locks, `shared_ptr`, and threads
+  (grep-clean). Two atomics sit on the RT path (H1), both relaxed, both
+  best-effort scalars that publish no pointer:
+  1. `ChronosProcessor::cachedBpm_` (`std::atomic<double>`) — the audio
+     thread stores the host BPM each block; `computeDelaySamples_` (audio)
+     and `getTailLengthSeconds` (host) load it.
+  2. `ChronosProcessor::editorOpen_` (`std::atomic<bool>`) — the message
+     thread sets it in `createEditor`/`setEditorOpen`; the audio thread
+     loads it to gate metering and the tap-frame FIFO push.
+  The `SpscFifo` index atomics are the sanctioned lock-free audio→GUI
+  handoff (256-deep, editor-gated). The remaining `std::atomic` hits
+  (`ChronosEditor`'s pending flags, `SegmentButtons::pendingValue_`,
+  `PresetManager::modified_`) are message-thread-only and never touched
+  from `process()`.
 - Parameter flow is one-directional: APVTS raw-parameter pointers →
   `ChronosParameters` block-rate getters (relaxed atomic loads owned by the
   JUCE parameter objects, in `parameters.update()` / `getRaw*()`) → plain-POD

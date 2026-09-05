@@ -101,6 +101,33 @@ jobs:
             ctest --test-dir build -C Release --output-on-failure -LE bench -E golden_render_check
           fi
 
+      - name: Build pluginval (vendored, own build directory)
+        # Built separately so its target names never collide with the
+        # plugin's JUCE.
+        run: |
+          cmake -S libs/pluginval -B build-pluginval -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-pluginval --config Release -j
+
+      - name: pluginval (strictness 10, every format)
+        shell: bash
+        run: |
+          set -euo pipefail
+          PV="build-pluginval/pluginval_artefacts/Release/pluginval"
+          if [ "$RUNNER_OS" = "Windows" ]; then PV="${PV}.exe"; fi
+          if [ "$RUNNER_OS" = "macOS" ]; then PV="build-pluginval/pluginval_artefacts/Release/pluginval.app/Contents/MacOS/pluginval"; fi
+
+          validate() {
+            "$PV" --strictness-level 10 --validate-in-process --timeout-ms 300000 --validate "$1"
+          }
+
+          # AU validation is macOS only (auval). Standalone and VST3 run
+          # on every runner.
+          validate "build/Chronos_artefacts/Release/VST3/Chronos.vst3"
+          validate "build/Chronos_artefacts/Release/Standalone/Chronos.app"
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            validate "build/Chronos_artefacts/Release/AU/Chronos.component"
+          fi
+
       - name: Derivation scripts (coefficient drift checks)
         run: |
           python -m pip install numpy mpmath
