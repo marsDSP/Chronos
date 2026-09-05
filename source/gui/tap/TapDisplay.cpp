@@ -201,8 +201,11 @@ TapDisplay::TapDisplay(ChronosProcessor& processor)
 
 
     const bool diffuserOn = processorRef_.getParameters().getRawEnableDiffuser();
-    haloFadeAnim_.setSourceValue(diffuserOn ? 0.0f : 1.0f);
-    haloFadeAnim_.setTargetValue(diffuserOn ? 1.0f : 0.0f);
+    // source/target are the fixed off/on endpoints; only target(bool) ever
+    // flips direction afterward, so a reversal mid-fade stays continuous
+    // instead of snapping (see the parameterChanged comment below).
+    haloFadeAnim_.setSourceValue(0.0f);
+    haloFadeAnim_.setTargetValue(1.0f);
     haloFadeAnim_.target(diffuserOn, true);
     haloFade_ = haloFadeAnim_.value();
 
@@ -269,10 +272,7 @@ void TapDisplay::parameterChanged(const String& parameterID, const float newValu
 {
     if (parameterID == enableDiffuserParamID.getParamID())
     {
-        haloFadeAnim_.setSourceValue(haloFadeAnim_.value());
-        const bool on = newValue > 0.5f;
-        haloFadeAnim_.setTargetValue(on ? 1.0f : 0.0f);
-        haloFadeAnim_.target(on);
+        haloFadeAnim_.target(newValue > 0.5f);
     }
     else if (parameterID == diffusionParamID.getParamID())
         pendingDiffusion_.store(newValue, std::memory_order_relaxed);

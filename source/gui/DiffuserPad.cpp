@@ -33,11 +33,14 @@ DiffuserPad::DiffuserPad(AudioProcessorValueTreeState& apvts,
     setHelpText("Drag to set the diffusion and the size. Double-click to reset.");
 
     // Prime the cloud fade from the live enable value and snap to rest.
+    // source/target are the fixed off/on endpoints; only target(bool) ever
+    // flips direction afterward, so a reversal mid-fade stays continuous
+    // instead of snapping (see the parameterChanged comment below).
     if (enableParam_ != nullptr)
     {
         const bool on = enableParam_->getValue() > 0.5f;
-        fadeAnim_.setSourceValue(on ? 0.0f : 1.0f);
-        fadeAnim_.setTargetValue(on ? 1.0f : 0.0f);
+        fadeAnim_.setSourceValue(0.0f);
+        fadeAnim_.setTargetValue(1.0f);
         fadeAnim_.target(on, true);
         fade_ = fadeAnim_.value();
     }
@@ -88,12 +91,8 @@ void DiffuserPad::parameterChanged(const String& parameterID, const float newVal
     else if (parameterID == enableID_)
     {
         pendingEnable_.store(newValue, std::memory_order_relaxed);
-        // Re-base the ease from the current eased value so a toggle
-        // mid-fade continues smoothly toward the new target.
-        fadeAnim_.setSourceValue(fadeAnim_.value());
-        const bool on = newValue > 0.5f;
-        fadeAnim_.setTargetValue(on ? 1.0f : 0.0f);
-        fadeAnim_.target(on);
+
+        fadeAnim_.target(newValue > 0.5f);
         if (fadeAnim_.isAnimating())
             startTimerHz(60);
     }
