@@ -71,6 +71,13 @@ constexpr float kBypassScrimAlpha   = 0.38f;
 // The alpha of a control that a mode makes inert.
 constexpr float kInertAlpha         = 0.40f;
 
+// Tap display alphas (section 4.6).
+constexpr float kTapDryAlpha        = 0.45f;
+constexpr float kTapBarAlpha        = 0.85f;
+constexpr float kTapHoverFillAlpha  = 0.05f;
+constexpr float kTapHoverLinkAlpha  = 0.04f;
+constexpr float kTapCursorAlpha     = 0.6f;
+
 } // namespace MarsDSP::GUI
 
 #endif

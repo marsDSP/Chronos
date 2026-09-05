@@ -141,6 +141,10 @@ namespace MarsDSP::GUI
         static constexpr float kKnobArcStroke = 2.5f;
         static constexpr float kKnobArcGap    = 2.0f;
 
+        // The tap drag sensitivity (section 4.6), design units.
+        static constexpr float kDragTimeGain       = 1.2f;
+        static constexpr float kDragPixelsPerDivision = 25.0f;
+
         // The most slack a shorter card may leave in a grid row (section 4.1).
         static constexpr int kRowSlackMaxDU = 12;
 

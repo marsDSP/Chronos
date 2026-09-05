@@ -90,6 +90,12 @@ if(BUILD_TEST_HARNESSES)
         ${CMAKE_SOURCE_DIR}/source/gui/tap/TapSimulation.cpp)
     target_link_libraries(tap_sim_check PRIVATE SharedCode)
 
+    # Tap tracker harness (rev G7 appendix A). Links the tracker and the sim.
+    add_executable(tap_tracker_check harnesses/gui/tap_tracker_check.cpp
+        ${CMAKE_SOURCE_DIR}/source/gui/tap/TapTracker.cpp
+        ${CMAKE_SOURCE_DIR}/source/gui/tap/TapSimulation.cpp)
+    target_link_libraries(tap_tracker_check PRIVATE SharedCode)
+
     # State schema harness. Links the JUCE processor modules with SharedCode.
     # The harness builds a real APVTS from the Chronos parameter layout.
     # It needs no JucePlugin macros and no plugin client wrapper.
@@ -566,7 +572,7 @@ if(BUILD_TEST_HARNESSES)
         diffuser_ring_check diffuser_decorrelation_check loop_gain_check
         bypass_null_check crossfade_parity dither_check bump_arena_check
         spsc_fifo_check
-        tap_sim_check
+        tap_sim_check tap_tracker_check
         simd_delay_check frac_delay_tap_check dilog_check nonlinearity_check
         adaa2_check f2_oracle_check f2_minimax_check makeup_table_check
         alias_check simd_delay_parity diffuser_parity nested_allpass_check

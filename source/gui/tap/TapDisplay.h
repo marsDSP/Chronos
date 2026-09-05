@@ -8,6 +8,7 @@
 #include "../Fonts.h"
 #include "../Colours.h"
 #include "TapSimulation.h"
+#include "TapTracker.h"
 #include <vector>
 
 class ChronosProcessor;
@@ -49,31 +50,13 @@ private:
     void timerCallback() override;
     void updateTimerState_();
 
-    // One tap tracked by identity across frames.
-    struct TrackedTap {
-        int key = 0;
-        bool dry = false;
-        float targetTime = 0.0f;
-        float targetGain = 0.0f;
-        float displayedTime = 0.0f;
-        float displayedGain = 0.0f;
-        bool dying = false;
-    };
-
     [[nodiscard]] TapSim::Parameters buildParameters_() const;
     [[nodiscard]] bool paramsChanged_(const TapSim::Parameters& p) const;
     void runSimulation_(const TapSim::Parameters& p);
-    void matchChannel_(std::vector<TrackedTap>& tracked,
-                       const std::vector<TapSim::Tap>& simTaps,
-                       float baseTime);
-    void advanceEases_(float deltaSeconds);
 
     ChronosProcessor& processorRef_;
     Metrics metrics_;
-    std::vector<TrackedTap> trackedL_;
-    std::vector<TrackedTap> trackedR_;
-    float displayedTotalTime_ = 0.25f;
-    float targetTotalTime_ = 0.25f;
+    TapTracker tracker_;
     bool hasState_ = false;
     TapSim::Parameters lastParams_ {};
     double lastTimeSecs_ = 0.0;
@@ -87,7 +70,7 @@ private:
     float prevWetLevelL_ = 0.0f;
     float prevWetLevelR_ = 0.0f;
 
-    // Drag and hover state
+    // Drag and hover state.
     float dragStartX_ = 0.0f;
     float dragStartY_ = 0.0f;
     float startNormL_ = 0.0f;
@@ -95,6 +78,9 @@ private:
     float startNormFb_ = 0.0f;
     int startDiv_ = 11;
     bool dragging_ = false;
+    // The axis latch. Zero until the dead zone clears. Then 1 for
+    // horizontal (time) or 2 for vertical (feedback).
+    int dragAxis_ = 0;
 
     // The drag latch stores the mode and link state at mouse-down.
     bool dragSynced_ = false;

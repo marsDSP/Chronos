@@ -12,15 +12,6 @@
 namespace MarsDSP::GUI {
 namespace {
 
-// Ease time constants in seconds.
-const float kTauMove = 0.060f;
-const float kTauGain = 0.050f;
-const float kTauDie  = 0.080f;
-const float kTauSpan = 0.120f;
-
-// A dying tap below this gain is removed.
-const float kCullGain = 0.005f;
-
 const String kMidDot = String::charToString(static_cast<juce_wchar>(0x00B7));
 
 // Division names in parameter-layout order, index 0 to 19.
@@ -104,6 +95,7 @@ std::vector<int> collisionFilteredIndices(const std::vector<float>& xs,
 }
 
 } // namespace
+
 TapDisplay::TapDisplay(ChronosProcessor& processor)
     : processorRef_(processor)
 {
@@ -170,7 +162,15 @@ TapSim::Parameters TapDisplay::buildParameters_() const
 
     const double bpm = processorRef_.getCachedBpm();
     p.secondsPerBeat = static_cast<float>((bpm > 0.0) ? (60.0 / bpm) : 0.5);
-    p.maxWindowSeconds = 2.0f;
+
+    // The window shows the first three repeats and caps at the largest level.
+    const float maxTime = std::max(p.timeLSeconds, p.timeRSeconds);
+    p.maxWindowSeconds = std::clamp(3.0f * maxTime, 2.0f, 16.0f);
+
+    // The modulation fields carry the depth and rate for the wobble.
+    // The simulation itself ignores them.
+    p.modDepthCents = params.getRawDelayModDepth();
+    p.modRateHz = params.getRawDelayModRateHz();
 
     return p;
 }
@@ -185,116 +185,14 @@ bool TapDisplay::paramsChanged_(const TapSim::Parameters& p) const
         || a.mix != p.mix
         || a.delaySync != p.delaySync
         || a.delayDivision != p.delayDivision
-        || a.secondsPerBeat != p.secondsPerBeat;
+        || a.secondsPerBeat != p.secondsPerBeat
+        || a.maxWindowSeconds != p.maxWindowSeconds;
 }
 
 void TapDisplay::runSimulation_(const TapSim::Parameters& p)
 {
     const auto result = TapSim::Engine::simulate(p);
-    targetTotalTime_ = std::max(0.25f, result.totalTimeSeconds);
-
-    // The base delay is the first repeat time. Fall back to the parameter.
-    const float baseL = (result.left.size() > 1) ? result.left[1].timeSeconds : p.timeLSeconds;
-    const float baseR = (result.right.size() > 1) ? result.right[1].timeSeconds : p.timeRSeconds;
-
-    matchChannel_(trackedL_, result.left, baseL);
-    matchChannel_(trackedR_, result.right, baseR);
-}
-
-void TapDisplay::matchChannel_(std::vector<TrackedTap>& tracked,
-                                const std::vector<TapSim::Tap>& simTaps,
-                                const float baseTime)
-{
-    const float invBase = (baseTime > 1e-6f) ? (1.0f / baseTime) : 0.0f;
-
-    // Mark every tracked tap as dying. Clear the flag when a sim tap matches.
-    for (auto& t : tracked)
-        t.dying = true;
-
-    for (const auto& sim : simTaps)
-    {
-        if (sim.empty)
-            continue;
-
-        // Key by the repeat index. The dry tap keys to zero.
-        const int key = (invBase > 0.0f && !sim.dry)
-            ? static_cast<int>(std::round(sim.timeSeconds * invBase))
-            : 0;
-
-        TrackedTap* found = nullptr;
-        for (auto& t : tracked)
-        {
-            if (t.key == key)
-            {
-                found = &t;
-                break;
-            }
-        }
-
-        if (found != nullptr)
-        {
-            found->dry = sim.dry;
-            found->targetTime = sim.timeSeconds;
-            found->targetGain = sim.gain;
-            found->dying = false;
-        }
-        else
-        {
-            TrackedTap t;
-            t.key = key;
-            t.dry = sim.dry;
-            t.targetTime = sim.timeSeconds;
-            t.targetGain = sim.gain;
-            // A new tap grows from gain zero at its own position.
-            t.displayedTime = sim.timeSeconds;
-            t.displayedGain = 0.0f;
-            t.dying = false;
-            tracked.push_back(std::move(t));
-        }
-    }
-}
-
-void TapDisplay::advanceEases_(const float deltaSeconds)
-{
-    if (deltaSeconds <= 0.0f)
-        return;
-
-    const float kMove = 1.0f - std::exp(-deltaSeconds / kTauMove);
-    const float kGain = 1.0f - std::exp(-deltaSeconds / kTauGain);
-    const float kDie  = 1.0f - std::exp(-deltaSeconds / kTauDie);
-    const float kSpan = 1.0f - std::exp(-deltaSeconds / kTauSpan);
-
-    const auto easeLane = [&](std::vector<TrackedTap>& lane)
-    {
-        for (auto it = lane.begin(); it != lane.end(); )
-        {
-            TrackedTap& t = *it;
-
-            if (t.dying)
-            {
-                // A dying tap keeps its position. Only the gain decays.
-                t.displayedGain += (0.0f - t.displayedGain) * kDie;
-
-                if (std::fabs(t.displayedGain) < kCullGain)
-                {
-                    it = lane.erase(it);
-                    continue;
-                }
-            }
-            else
-            {
-                t.displayedTime += (t.targetTime - t.displayedTime) * kMove;
-                t.displayedGain += (t.targetGain - t.displayedGain) * kGain;
-            }
-
-            ++it;
-        }
-    };
-
-    easeLane(trackedL_);
-    easeLane(trackedR_);
-
-    displayedTotalTime_ += (targetTotalTime_ - displayedTotalTime_) * kSpan;
+    tracker_.retarget(result, p);
 }
 
 void TapDisplay::timerCallback()
@@ -342,7 +240,7 @@ void TapDisplay::timerCallback()
         simRan = true;
     }
 
-    advanceEases_(static_cast<float>(dt));
+    tracker_.advance(static_cast<float>(dt));
 
     // Repaint only when something changed since the last tick.
     const bool hoverChanged = (isHovered_ != prevIsHovered_)
@@ -350,21 +248,11 @@ void TapDisplay::timerCallback()
     const bool wetChanged = (std::fabs(currentWetLevelL_ - prevWetLevelL_) > 0.005f
                           || std::fabs(currentWetLevelR_ - prevWetLevelR_) > 0.005f);
 
-    const auto laneConverging = [](const std::vector<TrackedTap>& lane) {
-        for (const auto& t : lane)
-            if (t.dying || std::fabs(t.displayedTime - t.targetTime) > 1e-4f
-                || std::fabs(t.displayedGain - t.targetGain) > 1e-4f)
-                return true;
-        return false;
-    };
-    const bool tapsConverging = laneConverging(trackedL_) || laneConverging(trackedR_);
-    const bool spanConverging = (std::fabs(displayedTotalTime_ - targetTotalTime_) > 1e-4f);
-
     prevIsHovered_ = isHovered_;
     prevHoverPos_ = hoverPos_;
     prevWetLevelL_ = currentWetLevelL_;
     prevWetLevelR_ = currentWetLevelR_;
-    if (! simRan && ! tapsConverging && ! spanConverging && ! hoverChanged && ! wetChanged)
+    if (! simRan && ! tracker_.converging() && ! hoverChanged && ! wetChanged)
         return;
 
     repaint();
@@ -397,7 +285,7 @@ void TapDisplay::paint(Graphics& g)
     if (maxLaneHeight <= 0.0f)
         return;
 
-    const float totalTime = std::max(0.25f, displayedTotalTime_);
+    const float totalTime = std::max(0.25f, tracker_.displayedSpan());
 
     const bool synced = processorRef_.getParameters().getRawDelaySync();
     const double bpm = processorRef_.getCachedBpm();
@@ -421,26 +309,23 @@ void TapDisplay::paint(Graphics& g)
         return plotBounds.getX() + std::clamp(t / totalTime, 0.0f, 1.0f) * plotBounds.getWidth();
     };
 
-    // Minor grid lines
+    // Minor grid lines.
     g.setColour(tintInk(accent, kTintGridMinor));
     for (const float t : ticks.minors)
         g.drawVerticalLine(roundToInt(timeToX(t)), plotBounds.getY(), plotBounds.getBottom());
 
-    // Major grid lines
+    // Major grid lines.
     g.setColour(tintInk(accent, kTintGridMajor));
     for (const float t : ticks.majors)
         g.drawVerticalLine(roundToInt(timeToX(t)), plotBounds.getY(), plotBounds.getBottom());
 
-    // Center divider
+    // Center divider.
     g.setColour(tint(plotFillLit, accent, kTintCentreLine));
     g.drawHorizontalLine(static_cast<int>(centerY), plotBounds.getX(), plotBounds.getRight());
 
-    // Draw taps
-    const auto drawLane = [&](const std::vector<TrackedTap>& taps, const bool isTopLane)
+    // Draw taps. The head scales with the displayed gain.
+    const auto drawLane = [&](const std::vector<TapTracker::TrackedTap>& taps, const bool isTopLane)
     {
-        const float wetLevel = isTopLane ? currentWetLevelL_ : currentWetLevelR_;
-        const float envIntensity = std::clamp(wetLevel * 3.5f, 0.0f, 1.0f);
-
         for (const auto& tap : taps)
         {
             const float timeNorm = std::clamp(tap.displayedTime / totalTime, 0.0f, 1.0f);
@@ -465,24 +350,27 @@ void TapDisplay::paint(Graphics& g)
                 barPath.lineTo(x, centerY + barHeight);
             }
 
-            const float baseAlpha = tap.dry ? 0.45f : 0.85f;
+            const float baseAlpha = tap.dry ? kTapDryAlpha : kTapBarAlpha;
             g.setColour(tapCol.withAlpha(baseAlpha));
             g.strokePath(barPath, PathStrokeType(metrics_.pxf(Metrics::kTapBarStroke), PathStrokeType::curved, PathStrokeType::rounded));
 
-            // Head dot with envelope brightness modulation
+            // Head dot. The head scales with the displayed gain.
             const float headY = isTopLane ? (centerY - barHeight) : (centerY + barHeight);
             const float baseHead = metrics_.pxf(Metrics::kTapHeadRadius);
-            const float headRadius = tap.dry ? baseHead : (baseHead + envIntensity * metrics_.pxf(Metrics::kTapHeadGrow));
-            const float glowAlpha = tap.dry ? 1.0f : std::clamp(0.8f + envIntensity * 0.2f, 0.0f, 1.0f);
-            g.setColour(tapCol.withAlpha(glowAlpha));
-            g.fillEllipse(x - headRadius, headY - headRadius, headRadius * 2, headRadius * 2);
+            const float headScale = std::clamp(tap.displayedGain / TapTracker::kHeadFullGain, 0.0f, 1.0f);
+            const float headRadius = baseHead * headScale;
+            if (headRadius > 0.25f)
+            {
+                g.setColour(tapCol.withAlpha(headScale));
+                g.fillEllipse(x - headRadius, headY - headRadius, headRadius * 2, headRadius * 2);
+            }
         }
     };
 
-    drawLane(trackedL_, true);
-    drawLane(trackedR_, false);
+    drawLane(tracker_.lane(true), true);
+    drawLane(tracker_.lane(false), false);
 
-    // Hover half-highlight and channel affordance label
+    // Hover half-highlight and channel affordance label.
     if (isHovered_)
     {
         const bool timeLinked = processorRef_.getParameters().getRawTimeLink();
@@ -490,31 +378,31 @@ void TapDisplay::paint(Graphics& g)
 
         if (timeLinked)
         {
-            g.setColour(accent.withAlpha(0.04f));
+            g.setColour(accent.withAlpha(kTapHoverLinkAlpha));
             g.fillRect(plotBounds);
-            g.setColour(accent.withAlpha(0.6f));
+            g.setColour(accent.withAlpha(kTapCursorAlpha));
             g.setFont(Fonts::font(Fonts::Weight::Medium, metrics_.font(Metrics::kTapLabelFont)));
             g.drawText("L/R LINK", plotBounds.reduced(metrics_.pxf(Metrics::kTapLabelInset)).toNearestInt(), Justification::topLeft, false);
         }
         else if (hoverUpper)
         {
-            g.setColour(accent.withAlpha(0.05f));
+            g.setColour(accent.withAlpha(kTapHoverFillAlpha));
             g.fillRect(plotBounds.withBottom(centerY));
-            g.setColour(accent.withAlpha(0.6f));
+            g.setColour(accent.withAlpha(kTapCursorAlpha));
             g.setFont(Fonts::font(Fonts::Weight::Medium, metrics_.font(Metrics::kTapLabelFont)));
             g.drawText("LEFT TIME", plotBounds.reduced(metrics_.pxf(Metrics::kTapLabelInset)).toNearestInt(), Justification::topLeft, false);
         }
         else
         {
-            g.setColour(accent.withAlpha(0.05f));
+            g.setColour(accent.withAlpha(kTapHoverFillAlpha));
             g.fillRect(plotBounds.withTop(centerY));
-            g.setColour(accent.withAlpha(0.6f));
+            g.setColour(accent.withAlpha(kTapCursorAlpha));
             g.setFont(Fonts::font(Fonts::Weight::Medium, metrics_.font(Metrics::kTapLabelFont)));
             g.drawText("RIGHT TIME", plotBounds.reduced(metrics_.pxf(Metrics::kTapLabelInset)).toNearestInt(), Justification::bottomLeft, false);
         }
     }
 
-    // Ruler tick marks
+    // Ruler tick marks.
     const float tickTop = plotBounds.getBottom();
     const float majorTickLen = metrics_.pxf(Metrics::kMajorTick);
     const float minorTickLen = metrics_.pxf(Metrics::kMinorTick);
@@ -534,8 +422,8 @@ void TapDisplay::paint(Graphics& g)
     g.setFont(rulerFont);
     g.setColour(Colours::rulerText);
 
-    // Clamp the label into the plot. A centred label that would cross the
-    // edge sticks to the edge, so the first label clears the border stroke.
+    // Clamp the label into the plot. A centred label that would cross
+    // the edge sticks to the edge, so the first label clears the border.
     const float labelEdgeLeft = plotBounds.getX() + metrics_.pxf(Metrics::kRulerLabelInset);
     const float labelEdgeRight = plotBounds.getRight() - metrics_.pxf(Metrics::kRulerLabelInset);
     const auto drawRulerLabel = [&](const String& text, const float cx)
@@ -584,11 +472,11 @@ void TapDisplay::paint(Graphics& g)
                            majorXs[static_cast<std::size_t>(i)]);
     }
 
-    // Hover cursor and measurement readout
+    // Hover cursor and measurement readout.
     if (isHovered_)
     {
         const bool hoverUpper = (hoverPos_.y <= centerY);
-        const auto& lane = hoverUpper ? trackedL_ : trackedR_;
+        const auto& lane = hoverUpper ? tracker_.lane(true) : tracker_.lane(false);
 
         float cursorX = hoverPos_.x;
         int snapKey = -1;
@@ -610,7 +498,7 @@ void TapDisplay::paint(Graphics& g)
             }
         }
 
-        g.setColour(accent.withAlpha(0.6f));
+        g.setColour(accent.withAlpha(kTapCursorAlpha));
         g.drawVerticalLine(static_cast<int>(cursorX), plotBounds.getY(), plotBounds.getBottom());
 
         String readout;
@@ -643,6 +531,7 @@ void TapDisplay::mouseDown(const MouseEvent& e)
     dragStartX_ = e.position.x;
     dragStartY_ = e.position.y;
     dragging_ = true;
+    dragAxis_ = 0;
 
     auto& apvts = processorRef_.getAPVTS();
     auto* pDelayL = apvts.getParameter(delayTimeParamID.getParamID());
@@ -655,42 +544,13 @@ void TapDisplay::mouseDown(const MouseEvent& e)
     startNormFb_ = pFb ? pFb->getValue() : 0.0f;
     startDiv_ = processorRef_.getParameters().getRawDelayDivision();
 
-    const bool isUpper = (e.position.y <= getHeight() * 0.5f);
-
     // Store the mode and link state at mouse-down. The drag reads only this.
     dragSynced_ = processorRef_.getParameters().getRawDelaySync();
     dragLinked_ = processorRef_.getParameters().getRawTimeLink();
-    dragIsUpper_ = isUpper;
+    dragIsUpper_ = (e.position.y <= getHeight() * 0.5f);
 
+    // Open no gesture until the dead zone clears and the axis latches.
     dragGestures_.clear();
-
-    if (dragSynced_)
-    {
-        if (pDiv != nullptr)
-        {
-            pDiv->beginChangeGesture();
-            dragGestures_.push_back(pDiv);
-        }
-    }
-    else if (dragLinked_ || dragIsUpper_)
-    {
-        if (pDelayL != nullptr)
-        {
-            pDelayL->beginChangeGesture();
-            dragGestures_.push_back(pDelayL);
-        }
-    }
-    else if (pDelayR != nullptr)
-    {
-        pDelayR->beginChangeGesture();
-        dragGestures_.push_back(pDelayR);
-    }
-
-    if (pFb != nullptr)
-    {
-        pFb->beginChangeGesture();
-        dragGestures_.push_back(pFb);
-    }
 }
 
 void TapDisplay::mouseDrag(const MouseEvent& e)
@@ -703,48 +563,94 @@ void TapDisplay::mouseDrag(const MouseEvent& e)
     const float w = static_cast<float>(std::max(1, getWidth()));
     const float h = static_cast<float>(std::max(1, getHeight()));
 
+    // The dead zone. Nothing is written until it clears.
+    const float deadZone = metrics_.pxf(Metrics::kDragDeadZone);
+    if (dragAxis_ == 0)
+    {
+        if (std::fabs(dx) < deadZone && std::fabs(dy) < deadZone)
+            return;
+
+        // Latch to the dominant axis.
+        dragAxis_ = (std::fabs(dx) >= std::fabs(dy)) ? 1 : 2;
+        const auto cursor = (dragAxis_ == 1) ? MouseCursor::LeftRightResizeCursor
+                                           : MouseCursor::UpDownResizeCursor;
+        setMouseCursor(cursor);
+    }
+
     auto& apvts = processorRef_.getAPVTS();
 
-    // Write only to a parameter in the snapshot set.
-    const auto inDragSet = [this](const RangedAudioParameter* p)
+    // Horizontal writes time (or the division under sync).
+    if (dragAxis_ == 1)
     {
-        return std::find(dragGestures_.begin(), dragGestures_.end(), p) != dragGestures_.end();
-    };
-
-    if (dragSynced_)
-    {
-        auto* pDiv = apvts.getParameter(delayDivisionParamID.getParamID());
-        if (pDiv != nullptr && inDragSet(pDiv))
+        if (dragSynced_)
         {
-            const float pixelsPerDiv = 25.0f;
-            const int step = static_cast<int>(std::round(dx / pixelsPerDiv));
-            const int newDiv = std::clamp(startDiv_ + step, 0, 19);
-            pDiv->setValueNotifyingHost(pDiv->getNormalisableRange().convertTo0to1(static_cast<float>(newDiv)));
+            auto* pDiv = apvts.getParameter(delayDivisionParamID.getParamID());
+            if (pDiv != nullptr && dragGestures_.empty())
+            {
+                pDiv->beginChangeGesture();
+                dragGestures_.push_back(pDiv);
+            }
+            if (std::find(dragGestures_.begin(), dragGestures_.end(), pDiv) != dragGestures_.end())
+            {
+                const float pixelsPerDiv = metrics_.pxf(Metrics::kDragPixelsPerDivision);
+                const int step = static_cast<int>(std::round(dx / pixelsPerDiv));
+                const int newDiv = std::clamp(startDiv_ + step, 0, 19);
+                pDiv->setValueNotifyingHost(pDiv->getNormalisableRange().convertTo0to1(static_cast<float>(newDiv)));
+            }
+        }
+        else
+        {
+            const float dNorm = (dx / w) * Metrics::kDragTimeGain;
+            auto* pDelayL = apvts.getParameter(delayTimeParamID.getParamID());
+            auto* pDelayR = apvts.getParameter(delayTimeRParamID.getParamID());
+
+            // Open the gesture the existing link/upper rule selects.
+            if (dragGestures_.empty())
+            {
+                if (dragLinked_ || dragIsUpper_)
+                {
+                    if (pDelayL != nullptr)
+                    {
+                        pDelayL->beginChangeGesture();
+                        dragGestures_.push_back(pDelayL);
+                    }
+                }
+                else if (pDelayR != nullptr)
+                {
+                    pDelayR->beginChangeGesture();
+                    dragGestures_.push_back(pDelayR);
+                }
+            }
+
+            const auto inDragSet = [this](const RangedAudioParameter* p)
+            {
+                return std::find(dragGestures_.begin(), dragGestures_.end(), p) != dragGestures_.end();
+            };
+
+            if (dragLinked_ || dragIsUpper_)
+            {
+                if (pDelayL != nullptr && inDragSet(pDelayL))
+                    pDelayL->setValueNotifyingHost(std::clamp(startNormL_ + dNorm, 0.0f, 1.0f));
+            }
+            else if (pDelayR != nullptr && inDragSet(pDelayR))
+            {
+                pDelayR->setValueNotifyingHost(std::clamp(startNormR_ + dNorm, 0.0f, 1.0f));
+            }
         }
     }
-    else
+    else // dragAxis_ == 2: vertical writes feedback.
     {
-        const float dNorm = (dx / w) * 1.2f;
-        auto* pDelayL = apvts.getParameter(delayTimeParamID.getParamID());
-        auto* pDelayR = apvts.getParameter(delayTimeRParamID.getParamID());
-
-        if (dragLinked_ || dragIsUpper_)
+        auto* pFb = apvts.getParameter(feedbackParamID.getParamID());
+        if (pFb != nullptr && dragGestures_.empty())
         {
-            if (pDelayL != nullptr && inDragSet(pDelayL))
-                pDelayL->setValueNotifyingHost(std::clamp(startNormL_ + dNorm, 0.0f, 1.0f));
+            pFb->beginChangeGesture();
+            dragGestures_.push_back(pFb);
         }
-        else if (pDelayR != nullptr && inDragSet(pDelayR))
+        if (std::find(dragGestures_.begin(), dragGestures_.end(), pFb) != dragGestures_.end())
         {
-            pDelayR->setValueNotifyingHost(std::clamp(startNormR_ + dNorm, 0.0f, 1.0f));
+            const float dNormFb = -dy / h;
+            pFb->setValueNotifyingHost(std::clamp(startNormFb_ + dNormFb, 0.0f, 1.0f));
         }
-    }
-
-    // Vertical drag modulates feedback.
-    auto* pFb = apvts.getParameter(feedbackParamID.getParamID());
-    if (pFb != nullptr && inDragSet(pFb))
-    {
-        const float dNormFb = -dy / h;
-        pFb->setValueNotifyingHost(std::clamp(startNormFb_ + dNormFb, 0.0f, 1.0f));
     }
 }
 
@@ -759,6 +665,8 @@ void TapDisplay::mouseUp(const MouseEvent&)
     dragGestures_.clear();
 
     dragging_ = false;
+    dragAxis_ = 0;
+    setMouseCursor(MouseCursor::NormalCursor);
 }
 
 void TapDisplay::mouseMove(const MouseEvent& e)

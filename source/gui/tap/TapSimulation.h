@@ -27,6 +27,10 @@ struct Parameters {
     int delayDivision = 11;
     float secondsPerBeat = 0.5f;
     float maxWindowSeconds = 2.0f;
+    // The modulation fields carry the depth and rate for the wobble.
+    // The simulation itself ignores them. The tracker reads them.
+    float modDepthCents = 0.0f;
+    float modRateHz = 0.35f;
 };
 
 // The result of one simulation run.

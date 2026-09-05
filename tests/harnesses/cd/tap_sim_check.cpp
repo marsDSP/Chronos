@@ -173,7 +173,32 @@ int runAll()
             CHECK(std::fabs(res.right[i].timeSeconds - expTime) < 1e-4f);
         }
 
-        std::println("tempo sync mode: PASS");
+    std::println("tempo sync mode: PASS");
+    }
+
+    // 6. Window: a long delay shows its first three repeats.
+    g_section = "window";
+    {
+        Parameters p;
+        p.timeLSeconds = 3.0f;
+        p.timeRSeconds = 3.0f;
+        p.feedback = 0.5f;
+        p.crossFeed = 0.0f;
+        p.mix = 50.0f;
+        p.maxWindowSeconds = 9.0f;
+
+        const auto res = Engine::simulate(p);
+
+        // Three wet taps at 3, 6, and 9 seconds.
+        CHECK(res.left.size() == 4);
+        CHECK(res.right.size() == 4);
+        for (std::size_t i = 1; i < res.left.size(); ++i)
+        {
+            const float expTime = static_cast<float>(i) * 3.0f;
+            CHECK(std::fabs(res.left[i].timeSeconds - expTime) < 1e-4f);
+            CHECK(std::fabs(res.right[i].timeSeconds - expTime) < 1e-4f);
+        }
+        std::println("window (3 s delay, 9 s window): PASS");
     }
 
     return 0;
