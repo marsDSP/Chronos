@@ -96,6 +96,10 @@ if(BUILD_TEST_HARNESSES)
         ${CMAKE_SOURCE_DIR}/source/gui/tap/TapSimulation.cpp)
     target_link_libraries(tap_tracker_check PRIVATE SharedCode)
 
+    # Diffusion model harness (rev G7 appendix A). Header-only model vs the shipped Diffuser.
+    add_executable(diffusion_halo_check harnesses/gui/diffusion_halo_check.cpp)
+    target_link_libraries(diffusion_halo_check PRIVATE SharedCode)
+
     # State schema harness. Links the JUCE processor modules with SharedCode.
     # The harness builds a real APVTS from the Chronos parameter layout.
     # It needs no JucePlugin macros and no plugin client wrapper.
@@ -572,7 +576,7 @@ if(BUILD_TEST_HARNESSES)
         diffuser_ring_check diffuser_decorrelation_check loop_gain_check
         bypass_null_check crossfade_parity dither_check bump_arena_check
         spsc_fifo_check
-        tap_sim_check tap_tracker_check
+        tap_sim_check tap_tracker_check diffusion_halo_check
         simd_delay_check frac_delay_tap_check dilog_check nonlinearity_check
         adaa2_check f2_oracle_check f2_minimax_check makeup_table_check
         alias_check simd_delay_parity diffuser_parity nested_allpass_check

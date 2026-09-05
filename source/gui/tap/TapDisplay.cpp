@@ -101,11 +101,22 @@ TapDisplay::TapDisplay(ChronosProcessor& processor)
 {
     // Arrow keys step the delay time and the division.
     setWantsKeyboardFocus(true);
+
+    // Build the halo glyph and the diffusion model once.
+    haloImage_ = makeHaloImage(accentColour_);
+    if (const double sr = processorRef_.getSampleRate(); sr > 0.0)
+        diffusionModel_ = std::make_unique<DiffusionModel>(sr);
+
+    targetHaloFade_ = processorRef_.getParameters().getRawEnableDiffuser() ? 1.0f : 0.0f;
+    haloFade_ = targetHaloFade_;
+
+    processorRef_.getAPVTS().addParameterListener(enableDiffuserParamID.getParamID(), this);
 }
 
 TapDisplay::~TapDisplay()
 {
     stopTimer();
+    processorRef_.getAPVTS().removeParameterListener(enableDiffuserParamID.getParamID(), this);
 }
 
 void TapDisplay::visibilityChanged()
@@ -144,6 +155,21 @@ void TapDisplay::setMetrics(const Metrics& m)
 void TapDisplay::setAccentColour(const Colour c)
 {
     accentColour_ = c;
+    // Rebuild the halo glyph in the new accent.
+    haloImage_ = makeHaloImage(c);
+    repaint();
+}
+
+void TapDisplay::parameterChanged(const String& parameterID, const float newValue)
+{
+    if (parameterID == enableDiffuserParamID.getParamID())
+        targetHaloFade_ = (newValue > 0.5f) ? 1.0f : 0.0f;
+
+    triggerAsyncUpdate();
+}
+
+void TapDisplay::handleAsyncUpdate()
+{
     repaint();
 }
 
@@ -246,17 +272,24 @@ void TapDisplay::timerCallback()
 
     tracker_.advance(static_cast<float>(dt));
 
+    // Ease the halo fade toward the enable target.
+    const float kFade = 1.0f - std::exp(-static_cast<float>(dt) / Metrics::kHaloFadeTau);
+    haloFade_ += (targetHaloFade_ - haloFade_) * kFade;
+
     // Repaint only when something changed since the last tick.
     const bool hoverChanged = (isHovered_ != prevIsHovered_)
                          || (hoverPos_ != prevHoverPos_);
     const bool inputChanged = (std::fabs(currentInputLevelL_ - prevInputLevelL_) > 0.005f
                           || std::fabs(currentInputLevelR_ - prevInputLevelR_) > 0.005f);
+    const bool haloConverging = std::fabs(haloFade_ - targetHaloFade_) > 0.005f;
 
     prevIsHovered_ = isHovered_;
     prevHoverPos_ = hoverPos_;
     prevInputLevelL_ = currentInputLevelL_;
     prevInputLevelR_ = currentInputLevelR_;
-    if (! simRan && ! tracker_.converging() && ! hoverChanged && ! inputChanged && ! tracker_.wobbling())
+    prevHaloFade_ = haloFade_;
+    if (! simRan && ! tracker_.converging() && ! hoverChanged && ! inputChanged
+        && ! tracker_.wobbling() && ! haloConverging)
         return;
 
     repaint();
@@ -327,6 +360,64 @@ void TapDisplay::paint(Graphics& g)
     g.setColour(tint(plotFillLit, accent, kTintCentreLine));
     g.drawHorizontalLine(static_cast<int>(centerY), plotBounds.getX(), plotBounds.getRight());
 
+    // The diffusion halo. Draw halos first, largest repeat first, clipped to the plot.
+    const float diffusion = processorRef_.getParameters().getRawDiffusion();
+    const float diffuserSize = processorRef_.getParameters().getRawDiffuserSize();
+    const float pxPerSecond = plotBounds.getWidth() / totalTime;
+    const bool haloOn = haloImage_.isValid() && diffusionModel_ != nullptr
+                         && haloFade_ > 0.001f && diffusion > 0.001f;
+
+    if (haloOn)
+    {
+        const float sigma1 = diffusionModel_->sigma1Seconds(diffusion, diffuserSize);
+        const float sigmaRef = diffusionModel_->sigmaRef();
+        const float baseAlpha = Metrics::kHaloAlpha * haloFade_ * diffusion;
+
+        // Draw the largest repeat first so the smaller halos sit on top.
+        const auto drawHalos = [&](const std::vector<TapTracker::TrackedTap>& taps, bool leftLane)
+        {
+            for (auto it = taps.rbegin(); it != taps.rend(); ++it)
+            {
+                const auto& tap = *it;
+                if (tap.dry || tap.key < 1)
+                    continue;
+                const float gain = std::clamp(std::fabs(tap.displayedGain), 0.0f, 1.0f);
+                if (gain <= 0.001f)
+                    continue;
+
+                const float sigmaN = sigma1 * std::sqrt(static_cast<float>(tap.key));
+                const float halfWidth = Metrics::kHaloSigmas * sigmaN * pxPerSecond;
+                if (2.0f * halfWidth < 1.0f)
+                    continue;
+
+                const float timeNorm = std::clamp(tap.displayedTime / totalTime, 0.0f, 1.0f);
+                const float modOffsetPx = metrics_.pxf(tracker_.modOffset(leftLane, tap.key));
+                const float cx = plotBounds.getX() + timeNorm * plotBounds.getWidth() + modOffsetPx;
+                const float barHeight = gain * maxLaneHeight;
+                const float headY = leftLane ? (centerY - barHeight) : (centerY + barHeight);
+                const float haloH = std::fabs(headY - centerY);
+
+                const float a = baseAlpha;
+
+                g.setOpacity(a);
+                const int drawW = roundToInt(2.0f * halfWidth);
+                const int drawH = roundToInt(haloH);
+                const auto haloRect = Rectangle<int>(roundToInt(cx) - drawW / 2,
+                                                       roundToInt(std::min(centerY, headY)),
+                                                       drawW, drawH);
+                g.drawImageTransformed(haloImage_,
+                    AffineTransform::scale(static_cast<float>(drawW) / static_cast<float>(haloImage_.getWidth()),
+                                         static_cast<float>(drawH) / static_cast<float>(haloImage_.getHeight()))
+                        .translated(haloRect.getX(), haloRect.getY()));
+            }
+        };
+
+        Graphics::ScopedSaveState ss(g);
+        g.reduceClipRegion(plotBounds.toNearestInt());
+        drawHalos(tracker_.lane(true), true);
+        drawHalos(tracker_.lane(false), false);
+    }
+
     // Draw taps. The head scales with the displayed gain and the activity.
     const auto drawLane = [&](const std::vector<TapTracker::TrackedTap>& taps, const bool isTopLane)
     {
@@ -344,6 +435,7 @@ void TapDisplay::paint(Graphics& g)
             // The activity lights the tap as the audio passes through.
             const float act = tracker_.activity(leftLane, tap.dry ? 0.0f : tap.targetTime);
 
+
             const float barHeight = gain * maxLaneHeight;
             const Colour tapCol = tap.dry ? accent.darker(0.4f) : accent;
 
@@ -359,8 +451,10 @@ void TapDisplay::paint(Graphics& g)
                 barPath.lineTo(x, centerY + barHeight);
             }
 
+            // The halo softens the bar as the diffusion rises.
             const float baseAlpha = tap.dry ? kTapDryAlpha : kTapBarAlpha;
-            const float barAlpha = tap.dry ? baseAlpha : baseAlpha * (0.70f + 0.30f * act);
+            const float barFade = tap.dry ? 1.0f : (1.0f - Metrics::kHaloBarFade * haloFade_ * diffusion);
+            const float barAlpha = tap.dry ? baseAlpha : baseAlpha * (0.70f + 0.30f * act) * barFade;
             g.setColour(tapCol.withAlpha(barAlpha));
             g.strokePath(barPath, PathStrokeType(metrics_.pxf(Metrics::kTapBarStroke), PathStrokeType::curved, PathStrokeType::rounded));
 
@@ -377,7 +471,6 @@ void TapDisplay::paint(Graphics& g)
             }
         }
     };
-
     drawLane(tracker_.lane(true), true);
     drawLane(tracker_.lane(false), false);
 

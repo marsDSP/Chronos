@@ -8,7 +8,9 @@
 #include "Metrics.h"
 #include "AccentConsumer.h"
 #include "MetricsConsumer.h"
+#include "tap/DiffusionModel.h"
 #include <atomic>
+#include <memory>
 
 namespace MarsDSP::GUI {
 
@@ -32,6 +34,9 @@ public:
 
     void setAccentColour(Colour c) override;
     void setMetrics(const Metrics& m) override;
+
+    // Set the host sample rate for the diffusion model.
+    void setSampleRate(double sr);
 
     void paint(Graphics& g) override;
     void resized() override;
@@ -93,6 +98,12 @@ private:
     bool wheelSizeOpen_      = false;
 
     bool hovered_ = false;
+
+    // The pad cloud halo glyph and its fade.
+    Image haloImage_;
+    float fade_ = 0.0f;
+    float targetFade_ = 0.0f;
+    std::unique_ptr<DiffusionModel> diffusionModel_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DiffuserPad)
 };

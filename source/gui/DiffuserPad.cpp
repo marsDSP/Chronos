@@ -1,8 +1,11 @@
 #include "DiffuserPad.h"
 #include "Fonts.h"
+#include "tap/HaloImage.h"
+#include "tap/DiffusionModel.h"
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 
 namespace MarsDSP::GUI {
 
@@ -27,6 +30,13 @@ DiffuserPad::DiffuserPad(AudioProcessorValueTreeState& apvts,
     setTitle("Diffuser");
     setTooltip("Drag to set the diffusion and the size. Double-click to reset.");
     setHelpText("Drag to set the diffusion and the size. Double-click to reset.");
+
+    // The cloud fades with the enable. Prime the target from the live value.
+    if (enableParam_ != nullptr)
+        targetFade_ = enableParam_->getValue() > 0.5f ? 1.0f : 0.0f;
+    fade_ = targetFade_;
+    if (std::fabs(fade_ - targetFade_) > 0.005f)
+        startTimerHz(60);
 }
 
 DiffuserPad::~DiffuserPad()
@@ -40,6 +50,8 @@ DiffuserPad::~DiffuserPad()
 void DiffuserPad::setAccentColour(Colour c)
 {
     accent_ = c;
+    // Rebuild the halo glyph in the new accent.
+    haloImage_ = makeHaloImage(c);
     repaint();
 }
 
@@ -47,6 +59,13 @@ void DiffuserPad::setMetrics(const Metrics& m)
 {
     metrics_ = m;
     resized();
+    repaint();
+}
+
+void DiffuserPad::setSampleRate(const double sr)
+{
+    if (sr > 0.0)
+        diffusionModel_ = std::make_unique<DiffusionModel>(sr);
     repaint();
 }
 
@@ -63,7 +82,12 @@ void DiffuserPad::parameterChanged(const String& parameterID, const float newVal
     else if (parameterID == sizeID_)
         pendingSize_.store(newValue, std::memory_order_relaxed);
     else if (parameterID == enableID_)
+    {
         pendingEnable_.store(newValue, std::memory_order_relaxed);
+        targetFade_ = (newValue > 0.5f) ? 1.0f : 0.0f;
+        if (std::fabs(fade_ - targetFade_) > 0.005f)
+            startTimerHz(60);
+    }
 
     triggerAsyncUpdate();
 }
@@ -75,6 +99,15 @@ void DiffuserPad::handleAsyncUpdate()
 
 void DiffuserPad::timerCallback()
 {
+    // The fade runs only while it converges.
+    const bool fadeConverging = std::fabs(fade_ - targetFade_) > 0.005f;
+    if (fadeConverging)
+    {
+        const float k = 1.0f - std::exp(-1.0f / 60.0f / Metrics::kHaloFadeTau);
+        fade_ += (targetFade_ - fade_) * k;
+        repaint();
+        return;
+    }
     stopTimer();
     endWheelGestures_();
 }
@@ -108,6 +141,30 @@ void DiffuserPad::paint(Graphics& g)
     const float diffusion = diffusionParam_->getValue();
     const float size = sizeParam_->getValue();
     const auto area = activeArea_();
+
+    // The cloud. The halo glyph centred in the active area, full height,
+    // width scales with the model spread. Size widens, diffusion fills it.
+    if (haloImage_.isValid() && diffusion > 0.001f && fade_ > 0.001f)
+    {
+        if (diffusionModel_)
+        {
+            const float sigma1 = diffusionModel_->sigma1Seconds(diffusion, size);
+            const float sigmaRef = diffusionModel_->sigmaRef();
+            const float halfWidth = Metrics::kPadCloudFrac * area.getWidth()
+                * (sigmaRef > 0.0f ? sigma1 / sigmaRef : 0.0f);
+            const float a = Metrics::kHaloAlpha * diffusion * fade_;
+            g.setOpacity(a);
+            const int drawW = roundToInt(2.0f * halfWidth);
+            const int drawH = roundToInt(area.getHeight());
+            const auto cloudRect = Rectangle<int>(roundToInt(area.getCentreX()) - drawW / 2,
+                                                    roundToInt(area.getY()),
+                                                    drawW, drawH);
+            g.drawImageTransformed(haloImage_,
+                AffineTransform::scale(static_cast<float>(drawW) / static_cast<float>(haloImage_.getWidth()),
+                                     static_cast<float>(drawH) / static_cast<float>(haloImage_.getHeight()))
+                    .translated(cloudRect.getX(), cloudRect.getY()));
+        }
+    }
 
     // The handle. A ring in the accent with a centre dot.
     const float hx = area.getX() + size * area.getWidth();

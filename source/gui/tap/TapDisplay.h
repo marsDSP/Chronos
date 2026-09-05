@@ -9,6 +9,8 @@
 #include "../Colours.h"
 #include "TapSimulation.h"
 #include "TapTracker.h"
+#include "DiffusionModel.h"
+#include "HaloImage.h"
 #include <vector>
 
 class ChronosProcessor;
@@ -20,6 +22,8 @@ namespace MarsDSP::GUI {
 // Dragging the lower half adjusts the right delay time.
 class TapDisplay : public Component,
                    public SettableTooltipClient,
+                   private AudioProcessorValueTreeState::Listener,
+                   private AsyncUpdater,
                    private Timer {
 public:
     explicit TapDisplay(ChronosProcessor& processor);
@@ -39,9 +43,9 @@ public:
     void mouseDoubleClick(const MouseEvent& e) override;
     void mouseWheelMove(const MouseEvent& e, const MouseWheelDetails& wheel) override;
     bool keyPressed(const KeyPress& key) override;
-
     // Set the scale metrics for the label fonts.
     void setMetrics(const Metrics& m);
+
 
     // Store the live core accent and repaint.
     void setAccentColour(Colour c);
@@ -49,6 +53,9 @@ public:
 private:
     void timerCallback() override;
     void updateTimerState_();
+
+    void parameterChanged(const String& parameterID, float newValue) override;
+    void handleAsyncUpdate() override;
 
     [[nodiscard]] TapSim::Parameters buildParameters_() const;
     [[nodiscard]] bool paramsChanged_(const TapSim::Parameters& p) const;
@@ -63,6 +70,13 @@ private:
     Colour accentColour_ { Colours::accentDelayDigital };
     float currentInputLevelL_ = 0.0f;
     float currentInputLevelR_ = 0.0f;
+
+    // The diffusion halo.
+    Image haloImage_;
+    float haloFade_ = 0.0f;
+    float targetHaloFade_ = 0.0f;
+    std::unique_ptr<DiffusionModel> diffusionModel_;
+    float prevHaloFade_ = 0.0f;
 
     // Previous-frame state for the paint budget gate.
     Point<float> prevHoverPos_{};

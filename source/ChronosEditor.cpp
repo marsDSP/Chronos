@@ -374,6 +374,9 @@ public:
         addAndMakeVisible(modRateKnob);
         modDepthKnob.setTooltip("Set the diffuser modulation depth. Range 0 to 1.5 milliseconds.");
         modRateKnob.setTooltip("Set the diffuser modulation rate. Range 0.01 to 8 hertz.");
+
+        // Build the diffusion model from the host sample rate.
+        pad_.setSampleRate(proc.getSampleRate());
     }
 
     void resized() override
@@ -433,6 +436,9 @@ public:
         modDepthKnob.setEnabled(live);
         modRateKnob.setEnabled(live);
     }
+
+    // Forward the host sample rate to the pad for the diffusion model.
+    void setSampleRate(double sr) { pad_.setSampleRate(sr); }
 
 private:
     Metrics metrics_;
