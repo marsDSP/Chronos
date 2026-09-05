@@ -7,6 +7,7 @@
 #include "Colours.h"
 #include "Metrics.h"
 #include "controls/PowerButton.h"
+#include "controls/HistoryButton.h"
 #include "PresetBar.h"
 #include <memory>
 
@@ -26,6 +27,10 @@ public:
     // Store the live core accent for the bypass glyph.
     void setAccentColour(Colour c);
 
+    // The undo and redo buttons.
+    HistoryButton& getUndoButton() noexcept { return undoButton_; }
+    HistoryButton& getRedoButton() noexcept { return redoButton_; }
+
     void paint(Graphics& g) override;
     void resized() override;
 
@@ -35,6 +40,8 @@ private:
     Label wordmark_;
     PresetBar presetBar_;
     PowerButton bypassButton_;
+    HistoryButton undoButton_ { HistoryButton::Direction::Undo };
+    HistoryButton redoButton_ { HistoryButton::Direction::Redo };
     std::unique_ptr<AudioProcessorValueTreeState::ButtonAttachment> bypassAttach_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(Header)

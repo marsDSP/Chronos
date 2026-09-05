@@ -21,6 +21,13 @@ Header::Header(ChronosProcessor& proc)
     bypassAttach_ = std::make_unique<AudioProcessorValueTreeState::ButtonAttachment>(
         processorRef_.getAPVTS(), bypassParamID.getParamID(), bypassButton_);
     addAndMakeVisible(bypassButton_);
+
+    addAndMakeVisible(undoButton_);
+    addAndMakeVisible(redoButton_);
+    undoButton_.setTooltip("Nothing to undo.");
+    redoButton_.setTooltip("Nothing to redo.");
+    undoButton_.setEnabled(false);
+    redoButton_.setEnabled(false);
 }
 
 void Header::setMetrics(const Metrics& m)
@@ -28,6 +35,8 @@ void Header::setMetrics(const Metrics& m)
     metrics_ = m;
     presetBar_.setMetrics(m);
     bypassButton_.setMetrics(m);
+    undoButton_.setMetrics(m);
+    redoButton_.setMetrics(m);
     resized();
     repaint();
 }
@@ -63,7 +72,16 @@ void Header::resized()
     wordmark_.setFont(Fonts::font(Fonts::Weight::Semibold, metrics_.font(Metrics::kWordmarkFont)));
     wordmark_.setBounds(left, 0, barX - left - metrics_.px(Metrics::kWordmarkGap), h);
 
-    bypassButton_.setBounds(right - bypassSize, (h - bypassSize) / 2, bypassSize, bypassSize);
+    // The right cluster: bypass, gap, redo, gap, undo.
+    const int histSize = metrics_.px(Metrics::kHistoryButtonSize);
+    const int histGap = metrics_.px(Metrics::kHistoryButtonGap);
+    const int clusterGap = metrics_.px(Metrics::kHeaderClusterGap);
+    int rx = right - bypassSize;
+    bypassButton_.setBounds(rx, (h - bypassSize) / 2, bypassSize, bypassSize);
+    rx -= clusterGap + histSize;
+    redoButton_.setBounds(rx, (h - histSize) / 2, histSize, histSize);
+    rx -= histGap + histSize;
+    undoButton_.setBounds(rx, (h - histSize) / 2, histSize, histSize);
 }
 
 } // namespace MarsDSP::GUI

@@ -100,6 +100,12 @@ if(BUILD_TEST_HARNESSES)
     add_executable(diffusion_halo_check harnesses/gui/diffusion_halo_check.cpp)
     target_link_libraries(diffusion_halo_check PRIVATE SharedCode)
 
+    # Edit history harness (rev G7 appendix A). StubProcessor pattern.
+    add_executable(edit_history_check harnesses/gui/edit_history_check.cpp
+        ${CMAKE_SOURCE_DIR}/source/state/EditHistory.cpp)
+    target_link_libraries(edit_history_check PRIVATE SharedCode
+        juce::juce_audio_processors juce::juce_gui_basics)
+
     # State schema harness. Links the JUCE processor modules with SharedCode.
     # The harness builds a real APVTS from the Chronos parameter layout.
     # It needs no JucePlugin macros and no plugin client wrapper.
@@ -109,7 +115,8 @@ if(BUILD_TEST_HARNESSES)
 
     add_executable(preset_store_check harnesses/gui/preset_store_check.cpp
         ${CMAKE_SOURCE_DIR}/source/presets/PresetStore.cpp
-        ${CMAKE_SOURCE_DIR}/source/presets/PresetManager.cpp)
+        ${CMAKE_SOURCE_DIR}/source/presets/PresetManager.cpp
+        ${CMAKE_SOURCE_DIR}/source/state/EditHistory.cpp)
     target_link_libraries(preset_store_check PRIVATE SharedCode
         juce::juce_audio_processors juce::juce_dsp juce::juce_gui_basics)
 
@@ -576,7 +583,7 @@ if(BUILD_TEST_HARNESSES)
         diffuser_ring_check diffuser_decorrelation_check loop_gain_check
         bypass_null_check crossfade_parity dither_check bump_arena_check
         spsc_fifo_check
-        tap_sim_check tap_tracker_check diffusion_halo_check
+        tap_sim_check tap_tracker_check diffusion_halo_check edit_history_check
         simd_delay_check frac_delay_tap_check dilog_check nonlinearity_check
         adaa2_check f2_oracle_check f2_minimax_check makeup_table_check
         alias_check simd_delay_parity diffuser_parity nested_allpass_check

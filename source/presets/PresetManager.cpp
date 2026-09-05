@@ -1,6 +1,7 @@
 #include "PresetManager.h"
 #include "../ChronosProcessor.h"
 #include "../ChronosParameters.h"
+#include "../state/EditHistory.h"
 
 namespace MarsDSP::Presets {
 
@@ -44,8 +45,8 @@ PresetManager::PresetManager(AudioProcessor& proc, AudioProcessorValueTreeState&
     registerParameterListeners_();
 }
 
-PresetManager::PresetManager(ChronosProcessor& proc)
-    : processorRef_(proc), apvtsRef_(proc.getAPVTS())
+PresetManager::PresetManager(ChronosProcessor& proc, MarsDSP::State::EditHistory& history)
+    : processorRef_(proc), apvtsRef_(proc.getAPVTS()), historyRef_(&history)
 {
     registerParameterListeners_();
 }
@@ -209,8 +210,10 @@ bool PresetManager::validatePresetXml_(const XmlElement& xml)
 // Apply a state tree through the processor recall path.
 // The live bypass value survives the load. An editor side tree on the
 // file is stripped, so a preset cannot move the window or the sub-tabs.
+// Capture the 27 non-bypass values before the load and record a snapshot
+// after, so a preset load undoes to the prior values.
 // Return false on a root tag mismatch.
-bool PresetManager::applyStateXml_(const XmlElement& xml)
+bool PresetManager::applyStateXml_(const XmlElement& xml, const String& name)
 {
     if (! xml.hasTagName(apvtsRef_.state.getType()))
         return false;
@@ -222,6 +225,13 @@ bool PresetManager::applyStateXml_(const XmlElement& xml)
     auto* bypass = apvtsRef_.getParameter(bypassParamID.getParamID());
     const float bypassNorm = (bypass != nullptr) ? bypass->getValue() : 0.0f;
 
+    // Capture every parameter value before the load. Bypass is
+    // included but drops out (before == after) since the load preserves it.
+    const auto& allParams = processorRef_.getParameters();
+    std::vector<float> before(allParams.size());
+    for (std::size_t i = 0; i < allParams.size(); ++i)
+        before[i] = allParams[i]->getValue();
+
     MemoryBlock blob;
     AudioProcessor::copyXmlToBinary(*stripped, blob);
 
@@ -229,6 +239,10 @@ bool PresetManager::applyStateXml_(const XmlElement& xml)
 
     if (bypass != nullptr)
         bypass->setValueNotifyingHost(bypassNorm);
+
+    // Record the load as one undo step.
+    if (historyRef_ != nullptr)
+        historyRef_->recordSnapshot("Load " + name, before);
     return true;
 }
 
@@ -246,7 +260,7 @@ bool PresetManager::loadPreset(const File& file)
     if (! validatePresetXml_(*xml))
         return false;
 
-    if (! applyStateXml_(*xml))
+    if (! applyStateXml_(*xml, xml->getStringAttribute(kPresetNameProp)))
         return false;
 
     loadIdentity(file);
@@ -316,7 +330,7 @@ bool PresetManager::pastePresetXml(const String& xmlText)
     if (! validatePresetXml_(*xml))
         return false;
 
-    if (! applyStateXml_(*xml))
+    if (! applyStateXml_(*xml, "Paste"))
         return false;
 
     // An unnamed modified patch. The host owns the name.
@@ -387,7 +401,7 @@ bool PresetManager::loadFactoryPreset(const String& name, const String& bank)
     }
 
     // Apply through the single deserialiser (invariant 15).
-    if (! applyStateXml_(*state.createXml()))
+    if (! applyStateXml_(*state.createXml(), name))
         return false;
 
     presetName_ = fp->name;

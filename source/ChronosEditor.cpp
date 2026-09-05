@@ -701,6 +701,18 @@ ChronosEditor::ChronosEditor(ChronosProcessor& p)
 
     updateEnablement_();
 
+    // Wire the undo and redo buttons to the history.
+    auto& history = processorRef.getEditHistory();
+    auto& undoBtn = header_.getUndoButton();
+    auto& redoBtn = header_.getRedoButton();
+    undoBtn.onClick = [&history] { history.undo(); };
+    redoBtn.onClick = [&history] { history.redo(); };
+    history.onChanged = [this] { updateHistoryButtons_(); };
+    updateHistoryButtons_();
+
+    // Arm the keyboard shortcuts. A click into the window grabs focus.
+    setWantsKeyboardFocus(true);
+
     header_.setExplicitFocusOrder(1);
     tapDisplay_.setExplicitFocusOrder(2);
     timeCard_.setExplicitFocusOrder(3);
@@ -735,6 +747,47 @@ ChronosEditor::~ChronosEditor()
     processorRef.getAPVTS().removeParameterListener(enableDiffuserParamID.getParamID(), this);
     processorRef.getAPVTS().removeParameterListener(adaaOrderParamID.getParamID(), this);
     setLookAndFeel(nullptr);
+}
+
+void ChronosEditor::updateHistoryButtons_()
+{
+    auto& history = processorRef.getEditHistory();
+    auto& undoBtn = header_.getUndoButton();
+    auto& redoBtn = header_.getRedoButton();
+
+    undoBtn.setEnabled(history.canUndo());
+    redoBtn.setEnabled(history.canRedo());
+    undoBtn.setTooltip(history.canUndo() ? ("Undo: " + history.undoName()) : "Nothing to undo.");
+    redoBtn.setTooltip(history.canRedo() ? ("Redo: " + history.redoName()) : "Nothing to redo.");
+}
+
+bool ChronosEditor::keyPressed(const KeyPress& key)
+{
+    const auto mods = key.getModifiers();
+    if (mods.isCommandDown() || mods.isCtrlDown())
+    {
+        if (key.getKeyCode() == 'z')
+        {
+            if (mods.isShiftDown())
+                processorRef.getEditHistory().redo();
+            else
+                processorRef.getEditHistory().undo();
+            return true;
+        }
+        if (key.getKeyCode() == 'y')
+        {
+            processorRef.getEditHistory().redo();
+            return true;
+        }
+    }
+    return false;
+}
+
+void ChronosEditor::mouseDown(const MouseEvent& e)
+{
+    // A click into the editor background grabs focus, so the
+    // keyboard shortcuts arm. A host that keeps the keyboard keeps it.
+    grabKeyboardFocus();
 }
 
 void ChronosEditor::parameterChanged(const String& parameterID, const float newValue)

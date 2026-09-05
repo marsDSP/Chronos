@@ -6,6 +6,7 @@
 #include "ChronosParameters.h"
 #include "utils/memory/SpscFifo.h"
 #include "gui/tap/TapFeedFrame.h"
+#include "state/EditHistory.h"
 #include "presets/PresetManager.h"
 
 //==============================================================================
@@ -47,6 +48,8 @@ public:
     const ChronosParameters& getParameters() const noexcept { return parameters; }
     MarsDSP::Presets::PresetManager& getPresetManager() noexcept { return presetManager_; }
 
+    MarsDSP::State::EditHistory& getEditHistory() noexcept { return editHistory_; }
+
     [[nodiscard]] MarsDSP::Memory::SpscFifo<MarsDSP::GUI::TapFeedFrame, 256>& getTapFifo() noexcept { return tapFifo_; }
 
     [[nodiscard]] double getCachedBpm() const noexcept { return cachedBpm_.load(std::memory_order_relaxed); }
@@ -87,8 +90,12 @@ private:
     MarsDSP::ChronosEngine engine;
     MarsDSP::Memory::SpscFifo<MarsDSP::GUI::TapFeedFrame, 256> tapFifo_;
 
+    // The gesture-scoped undo and redo history. Declared before the
+    // preset manager so the manager can record preset-load snapshots.
+    MarsDSP::State::EditHistory editHistory_ { *this };
+
     // The preset layer owns the identity and the change flag.
-    MarsDSP::Presets::PresetManager presetManager_ { *this, apvts };
+    MarsDSP::Presets::PresetManager presetManager_ { *this, editHistory_ };
 
     /// Bring a stored state up to the current schema version.
     void migrateState_ (ValueTree& state, int fromVersion);

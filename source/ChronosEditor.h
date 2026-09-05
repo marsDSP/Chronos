@@ -36,6 +36,9 @@ public:
 
     void parameterChanged(const String& parameterID, float newValue) override;
 
+    bool keyPressed(const KeyPress& key) override;
+    void mouseDown(const MouseEvent& e) override;
+
 private:
     void timerCallback() override;
 
@@ -47,6 +50,9 @@ private:
 
     // Read the five mode parameters and make every inert control inert.
     void updateEnablement_();
+
+    // Update the undo and redo buttons from the history state.
+    void updateHistoryButtons_();
 
     ChronosProcessor& processorRef;
     MarsDSP::GUI::Metrics metrics_;

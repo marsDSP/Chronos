@@ -8,6 +8,8 @@
 #include "PresetStore.h"
 #include "FactoryPresets.h"
 
+namespace MarsDSP::State { class EditHistory; }
+
 class ChronosProcessor;
 
 namespace MarsDSP::Presets {
@@ -18,7 +20,7 @@ namespace MarsDSP::Presets {
 class PresetManager final : private AudioProcessorValueTreeState::Listener {
 public:
     PresetManager(AudioProcessor& proc, AudioProcessorValueTreeState& apvts);
-    explicit PresetManager(ChronosProcessor& proc);
+    explicit PresetManager(ChronosProcessor& proc, MarsDSP::State::EditHistory& history);
     ~PresetManager() override;
 
     // The current preset name. Empty when no preset is loaded.
@@ -82,7 +84,8 @@ private:
     void unregisterParameterListeners_();
 
     // Apply a state tree through the processor recall path.
-    bool applyStateXml_(const XmlElement& xml);
+    // Record a snapshot of the 27 non-bypass values for undo.
+    bool applyStateXml_(const XmlElement& xml, const String& name);
 
     // Reject a preset with an unknown parameter, an out-of-range value,
     // or a missing parameter. Set lastError_ on a refusal.
@@ -90,6 +93,7 @@ private:
 
     AudioProcessor& processorRef_;
     AudioProcessorValueTreeState& apvtsRef_;
+    MarsDSP::State::EditHistory* historyRef_ { nullptr };
     PresetStore store_;
     String presetName_;
     String presetBank_;
