@@ -145,6 +145,11 @@ namespace MarsDSP::GUI
         static constexpr float kDragTimeGain       = 1.2f;
         static constexpr float kDragPixelsPerDivision = 25.0f;
 
+        // The modulation wobble display offset (section 4.7), design units.
+        // The pixel scale is perceptual, not physical.
+        static constexpr float kModJitterDU    = 4.0f;
+        static constexpr float kModJitterMaxDU = 16.0f;
+
         // The most slack a shorter card may leave in a grid row (section 4.1).
         static constexpr int kRowSlackMaxDU = 12;
 

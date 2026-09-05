@@ -6,6 +6,10 @@
 #include "gui/tap/TapTracker.h"
 #include "gui/tap/TapSimulation.h"
 
+// The modulation jitter constants live in Metrics.h (section 4.7).
+// Repeat them here so this harness stays JUCE-free.
+namespace { constexpr float kModJitterDU = 4.0f; constexpr float kModJitterMaxDU = 16.0f; }
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -292,6 +296,103 @@ int runAll()
             CHECK(t.targetSpan() == 16.0f);
         }
         std::println("window (3 s -> level 12, 5 s -> level 16): PASS");
+    }
+
+    // 7. Activity: one 5 ms envelope impulse at t0; key 0 peaks
+    //    at t0, key 1 at t0 + 375 ms, key 2 at t0 + 750 ms, each
+    //    within one bucket; all decay to zero within the release.
+    g_section = "activity";
+    {
+        TapTracker t;
+        Parameters p;
+        p.timeLSeconds = 0.375f;
+        p.timeRSeconds = 0.375f;
+        p.feedback = 0.5f;
+        p.mix = 50.0f;
+        p.maxWindowSeconds = 3.0f;
+        t.retarget(runSim(p), p);
+
+
+        // Push one 5 ms impulse at t0, then silence.
+        t.pushEnvelope(true, 1.0f, dt);
+        t.pushEnvelope(false, 1.0f, dt);
+
+        // Key 0 reads t = 0, so it peaks now, before the loop overwrites.
+        float act0Peak = t.activity(true, 0.0f);
+        float act1Peak = 0.0f, act2Peak = 0.0f;
+        int act1PeakTick = -1, act2PeakTick = -1;
+
+        for (int i = 0; i < 120; ++i)
+        {
+            t.advance(dt);
+            t.pushEnvelope(true, 0.0f, dt);
+            t.pushEnvelope(false, 0.0f, dt);
+
+
+            const float a1 = t.activity(true, 0.375f);
+            const float a2 = t.activity(true, 0.750f);
+            if (a1 > act1Peak) { act1Peak = a1; act1PeakTick = i; }
+            if (a2 > act2Peak) { act2Peak = a2; act2PeakTick = i; }
+        }
+
+        // Key 0 peaks at t0 (the impulse is live).
+        CHECK(act0Peak > 0.5f);
+        // Key 1 peaks at t0 + 375 ms (tick ~22).
+        CHECK(act1Peak > 0.3f);
+        CHECK(act1PeakTick >= 15 && act1PeakTick <= 30);
+        // Key 2 peaks at t0 + 750 ms (tick ~45).
+        CHECK(act2Peak > 0.2f);
+        CHECK(act2PeakTick >= 38 && act2PeakTick <= 52);
+
+        std::println("activity (impulse travels through the taps): PASS");
+    }
+
+    // 8. Wobble: depth 0 gives offset exactly 0; depth 50 gives a key-1
+    //    RMS offset within 35 percent of kModJitterDU, key-4 within 35
+    //    percent of twice that, and no offset beyond kModJitterMaxDU.
+    g_section = "wobble";
+    {
+        TapTracker t;
+        Parameters p;
+        p.timeLSeconds = 0.375f;
+        p.timeRSeconds = 0.375f;
+        p.feedback = 0.5f;
+        p.mix = 50.0f;
+        p.maxWindowSeconds = 3.0f;
+
+        // Depth 0: the offset is exactly 0 for every key.
+        p.modDepthCents = 0.0f;
+        t.retarget(runSim(p), p);
+        for (const auto& tap : t.lane(true))
+            CHECK(t.modOffset(true, tap.key) == 0.0f);
+
+        // Depth 50 over 10 s.
+        p.modDepthCents = 50.0f;
+        p.modRateHz = 0.35f;
+        t.retarget(runSim(p), p);
+
+        float sum1 = 0.0f, sum4 = 0.0f;
+        float maxOffset = 0.0f;
+        int count = 0;
+        for (int i = 0; i < 600; ++i)
+        {
+            t.advance(dt);
+            const float o1 = t.modOffset(true, 1);
+            const float o4 = t.modOffset(true, 4);
+            sum1 += o1 * o1;
+            sum4 += o4 * o4;
+            maxOffset = std::max(maxOffset, std::fabs(o1));
+            maxOffset = std::max(maxOffset, std::fabs(o4));
+            ++count;
+        }
+        const float rms1 = std::sqrt(sum1 / static_cast<float>(count));
+        const float rms4 = std::sqrt(sum4 / static_cast<float>(count));
+        CHECK(rms1 > kModJitterDU * 0.65f);
+        CHECK(rms1 < kModJitterDU * 1.35f);
+        CHECK(rms4 > kModJitterDU * 2.0f * 0.65f);
+        CHECK(rms4 < kModJitterDU * 2.0f * 1.35f);
+        CHECK(maxOffset <= kModJitterMaxDU);
+        std::println("wobble (depth 0 still, depth 50 RMS bounds): PASS");
     }
 
     return 0;

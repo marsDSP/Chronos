@@ -3,12 +3,27 @@
 #include <algorithm>
 #include <cmath>
 
+// The modulation jitter display constants live in Metrics.h (section 4.7).
+// Repeat them here so this translation unit stays JUCE-free.
+namespace { constexpr float kModJitterDU = 4.0f; constexpr float kModJitterMaxDU = 16.0f; }
+
 namespace MarsDSP::GUI {
 
-TapTracker::TapTracker() = default;
+TapTracker::TapTracker()
+    : envL_(static_cast<std::size_t>(kEnvBuckets), 0.0f),
+      envR_(static_cast<std::size_t>(kEnvBuckets), 0.0f)
+{
+    // Seed the two RNG streams with distinct indices.
+    rngL_.seed(0x9E3779B97F4A7C15uLL, 1u);
+    rngR_.seed(0x9E3779B97F4A7C15uLL, 2u);
+}
 
 void TapTracker::retarget(const TapSim::SimulationResult& result, const TapSim::Parameters& params)
 {
+    // Read the modulation fields the simulation ignores.
+    modDepth_ = params.modDepthCents;
+    modRateHz_ = params.modRateHz;
+
     // The base delay is the first repeat time. Fall back to the parameter.
     const float baseL = (result.left.size() > 1) ? result.left[1].timeSeconds : params.timeLSeconds;
     const float baseR = (result.right.size() > 1) ? result.right[1].timeSeconds : params.timeRSeconds;
@@ -112,6 +127,76 @@ void TapTracker::updateSpanLevel_(const float lastTapSeconds)
     targetSpan_ = kSpanLevels[static_cast<std::size_t>(spanLevel_)];
 }
 
+void TapTracker::pushEnvelope(const bool left, const float value, const float deltaSeconds)
+{
+    auto& env      = left ? envL_      : envR_;
+    auto& writeIdx = left ? envWriteIdxL_ : envWriteIdxR_;
+    auto& writeTime = left ? envWriteTimeL_ : envWriteTimeR_;
+    auto& envRef   = left ? envRefL_   : envRefR_;
+
+    // The reference follower makes the animation level-independent.
+    envRef = std::max(value, envRef * std::exp(-deltaSeconds / kEnvRefRelease));
+    if (envRef < kEnvFloor)
+        envRef = kEnvFloor;
+
+    // Fill every bucket between the previous write time and now.
+    const float prevTime = writeTime;
+    writeTime += deltaSeconds;
+    const int prevIdx = writeIdx;
+    const int bucketsDelta = static_cast<int>(deltaSeconds * kEnvRateHz);
+    const int newIdx = (prevIdx + std::max(1, bucketsDelta)) % kEnvBuckets;
+
+    // Write the value into every bucket from prevIdx to newIdx.
+    int idx = prevIdx;
+    for (int i = 0; i < std::max(1, bucketsDelta); ++i)
+    {
+        idx = (idx + 1) % kEnvBuckets;
+        env[static_cast<std::size_t>(idx)] = value;
+    }
+    if (newIdx != prevIdx)
+        env[static_cast<std::size_t>(newIdx)] = value;
+    writeIdx = newIdx;
+}
+
+float TapTracker::envAt_(const bool left, const float t) const noexcept
+{
+    const auto& env      = left ? envL_      : envR_;
+    const auto writeIdx = left ? envWriteIdxL_ : envWriteIdxR_;
+    const auto writeTime = left ? envWriteTimeL_ : envWriteTimeR_;
+
+    if (t <= 0.0f)
+        return env[static_cast<std::size_t>(writeIdx)];
+
+    // The bucket t seconds back.
+    const float bucketF = t * kEnvRateHz;
+    const int bucket = static_cast<int>(bucketF);
+    const int readIdx = ((writeIdx - bucket) % kEnvBuckets + kEnvBuckets) % kEnvBuckets;
+    const int nextIdx = (readIdx + 1) % kEnvBuckets;
+    const float frac = bucketF - static_cast<float>(bucket);
+    return env[static_cast<std::size_t>(readIdx)] * (1.0f - frac)
+         + env[static_cast<std::size_t>(nextIdx)] * frac;
+}
+
+float TapTracker::activity(const bool left, const float targetTime) const noexcept
+{
+    const float e = envAt_(left, targetTime);
+    const float ref = left ? envRefL_ : envRefR_;
+    return std::sqrt(std::clamp(e / ref, 0.0f, 1.0f));
+}
+
+float TapTracker::modOffset(const bool left, const int n) const noexcept
+{
+    if (n <= 0 || modDepth_ <= 0.0f)
+        return 0.0f;
+
+    // The wobble grows with the square root of the repeat index, capped at 3.
+    const float scale = std::min(std::sqrt(static_cast<float>(n)), 3.0f);
+    const float depthNorm = modDepth_ / 50.0f;
+    const float x = left ? ouL_.state() : ouR_.state();
+    float offset = kModJitterDU * depthNorm * scale * static_cast<float>(x);
+    return std::clamp(offset, -kModJitterMaxDU, kModJitterMaxDU);
+}
+
 void TapTracker::advance(const float deltaSeconds)
 {
     if (deltaSeconds <= 0.0f)
@@ -121,6 +206,15 @@ void TapTracker::advance(const float deltaSeconds)
     const float kGain = 1.0f - std::exp(-deltaSeconds / kTauGain);
     const float kFade = 1.0f - std::exp(-deltaSeconds / kTauFade);
     const float kSpan = 1.0f - std::exp(-deltaSeconds / kTauSpan);
+
+    // Step the modulation wobble once per tick.
+    if (modDepth_ > 0.0f)
+    {
+        ouL_.setRate(1.0f / deltaSeconds, modRateHz_);
+        ouR_.setRate(1.0f / deltaSeconds, modRateHz_);
+        ouL_.next(rngL_);
+        ouR_.next(rngR_);
+    }
 
     const auto easeLane = [&](std::vector<TrackedTap>& lane, float base)
     {

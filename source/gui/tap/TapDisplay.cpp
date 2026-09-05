@@ -207,26 +207,26 @@ void TapDisplay::timerCallback()
     const double dt = timeSecs - lastTimeSecs_;
     lastTimeSecs_ = timeSecs;
 
-    // Drain the wet-level feed every tick. This is independent of the sim.
+    // Drain the input-level feed every tick. This is independent of the sim.
     TapFeedFrame frame{};
-    float latestL = currentWetLevelL_;
-    float latestR = currentWetLevelR_;
+    float latestL = currentInputLevelL_;
+    float latestR = currentInputLevelR_;
     bool hasFrame = false;
     while (processorRef_.getTapFifo().pop(frame))
     {
-        latestL = frame.wetRmsL;
-        latestR = frame.wetRmsR;
+        latestL = std::max(latestL, frame.rmsL);
+        latestR = std::max(latestR, frame.rmsR);
         hasFrame = true;
     }
     if (hasFrame)
     {
-        currentWetLevelL_ = 0.65f * currentWetLevelL_ + 0.35f * latestL;
-        currentWetLevelR_ = 0.65f * currentWetLevelR_ + 0.35f * latestR;
+        currentInputLevelL_ = latestL;
+        currentInputLevelR_ = latestR;
     }
     else
     {
-        currentWetLevelL_ *= 0.90f;
-        currentWetLevelR_ *= 0.90f;
+        currentInputLevelL_ *= TapTracker::kEnvHoldDecay;
+        currentInputLevelR_ *= TapTracker::kEnvHoldDecay;
     }
 
     // Run the sim once per tick, and only when a parameter changed.
@@ -240,19 +240,23 @@ void TapDisplay::timerCallback()
         simRan = true;
     }
 
+    // Push the input envelope to the tracker.
+    tracker_.pushEnvelope(true, currentInputLevelL_, static_cast<float>(dt));
+    tracker_.pushEnvelope(false, currentInputLevelR_, static_cast<float>(dt));
+
     tracker_.advance(static_cast<float>(dt));
 
     // Repaint only when something changed since the last tick.
     const bool hoverChanged = (isHovered_ != prevIsHovered_)
                          || (hoverPos_ != prevHoverPos_);
-    const bool wetChanged = (std::fabs(currentWetLevelL_ - prevWetLevelL_) > 0.005f
-                          || std::fabs(currentWetLevelR_ - prevWetLevelR_) > 0.005f);
+    const bool inputChanged = (std::fabs(currentInputLevelL_ - prevInputLevelL_) > 0.005f
+                          || std::fabs(currentInputLevelR_ - prevInputLevelR_) > 0.005f);
 
     prevIsHovered_ = isHovered_;
     prevHoverPos_ = hoverPos_;
-    prevWetLevelL_ = currentWetLevelL_;
-    prevWetLevelR_ = currentWetLevelR_;
-    if (! simRan && ! tracker_.converging() && ! hoverChanged && ! wetChanged)
+    prevInputLevelL_ = currentInputLevelL_;
+    prevInputLevelR_ = currentInputLevelR_;
+    if (! simRan && ! tracker_.converging() && ! hoverChanged && ! inputChanged && ! tracker_.wobbling())
         return;
 
     repaint();
@@ -323,17 +327,22 @@ void TapDisplay::paint(Graphics& g)
     g.setColour(tint(plotFillLit, accent, kTintCentreLine));
     g.drawHorizontalLine(static_cast<int>(centerY), plotBounds.getX(), plotBounds.getRight());
 
-    // Draw taps. The head scales with the displayed gain.
+    // Draw taps. The head scales with the displayed gain and the activity.
     const auto drawLane = [&](const std::vector<TapTracker::TrackedTap>& taps, const bool isTopLane)
     {
+        const bool leftLane = isTopLane;
         for (const auto& tap : taps)
         {
             const float timeNorm = std::clamp(tap.displayedTime / totalTime, 0.0f, 1.0f);
-            const float x = plotBounds.getX() + timeNorm * plotBounds.getWidth();
+            const float modOffsetPx = metrics_.pxf(tracker_.modOffset(leftLane, tap.key));
+            const float x = plotBounds.getX() + timeNorm * plotBounds.getWidth() + modOffsetPx;
 
             const float gain = std::clamp(std::fabs(tap.displayedGain), 0.0f, 1.0f);
             if (gain <= 0.001f)
                 continue;
+
+            // The activity lights the tap as the audio passes through.
+            const float act = tracker_.activity(leftLane, tap.dry ? 0.0f : tap.targetTime);
 
             const float barHeight = gain * maxLaneHeight;
             const Colour tapCol = tap.dry ? accent.darker(0.4f) : accent;
@@ -351,17 +360,19 @@ void TapDisplay::paint(Graphics& g)
             }
 
             const float baseAlpha = tap.dry ? kTapDryAlpha : kTapBarAlpha;
-            g.setColour(tapCol.withAlpha(baseAlpha));
+            const float barAlpha = tap.dry ? baseAlpha : baseAlpha * (0.70f + 0.30f * act);
+            g.setColour(tapCol.withAlpha(barAlpha));
             g.strokePath(barPath, PathStrokeType(metrics_.pxf(Metrics::kTapBarStroke), PathStrokeType::curved, PathStrokeType::rounded));
 
-            // Head dot. The head scales with the displayed gain.
+            // Head dot. The head scales with the displayed gain and the activity.
             const float headY = isTopLane ? (centerY - barHeight) : (centerY + barHeight);
             const float baseHead = metrics_.pxf(Metrics::kTapHeadRadius);
             const float headScale = std::clamp(tap.displayedGain / TapTracker::kHeadFullGain, 0.0f, 1.0f);
-            const float headRadius = baseHead * headScale;
+            const float headRadius = baseHead * headScale + act * metrics_.pxf(Metrics::kTapHeadGrow);
             if (headRadius > 0.25f)
             {
-                g.setColour(tapCol.withAlpha(headScale));
+                const float headAlpha = (0.55f + 0.45f * act) * headScale;
+                g.setColour(tapCol.withAlpha(headAlpha));
                 g.fillEllipse(x - headRadius, headY - headRadius, headRadius * 2, headRadius * 2);
             }
         }

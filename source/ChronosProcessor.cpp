@@ -279,24 +279,10 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
 
     if (editorOpen)
     {
-        const float* outL = buffer.getReadPointer(0);
-        const float* outR = (totalNumInputChannels > 1) ? buffer.getReadPointer(1) : nullptr;
-        float sumOutL = 0.0f;
-        float sumOutR = 0.0f;
-        for (int i = 0; i < numSamples; ++i)
-        {
-            sumOutL += outL[i] * outL[i];
-            if (outR != nullptr)
-                sumOutR += outR[i] * outR[i];
-        }
-        const float wetRmsL = std::sqrt(sumOutL / static_cast<float>(numSamples));
-        const float wetRmsR = (outR != nullptr) ? std::sqrt(sumOutR / static_cast<float>(numSamples)) : wetRmsL;
-
+        // Push the input RMS pair only. The output RMS pass is gone.
         const MarsDSP::GUI::TapFeedFrame frame{
             .rmsL = rmsL,
-            .rmsR = rmsR,
-            .wetRmsL = wetRmsL,
-            .wetRmsR = wetRmsR
+            .rmsR = rmsR
         };
         if (! tapFifo_.push(frame))
         {

@@ -61,14 +61,14 @@ private:
     TapSim::Parameters lastParams_ {};
     double lastTimeSecs_ = 0.0;
     Colour accentColour_ { Colours::accentDelayDigital };
-    float currentWetLevelL_ = 0.0f;
-    float currentWetLevelR_ = 0.0f;
+    float currentInputLevelL_ = 0.0f;
+    float currentInputLevelR_ = 0.0f;
 
     // Previous-frame state for the paint budget gate.
     Point<float> prevHoverPos_{};
     bool prevIsHovered_ = false;
-    float prevWetLevelL_ = 0.0f;
-    float prevWetLevelR_ = 0.0f;
+    float prevInputLevelL_ = 0.0f;
+    float prevInputLevelR_ = 0.0f;
 
     // Drag and hover state.
     float dragStartX_ = 0.0f;
