@@ -72,24 +72,37 @@ float getDenorm (const AudioProcessorValueTreeState& a, const char* id)
     return raw->load();
 }
 
-// Serialise the APVTS state with the schema version stamped in.
-MemoryBlock saveState (AudioProcessorValueTreeState& a)
+// The tag of the editor state side tree on a serialised root.
+constexpr const char* kEditorTag = "EDITOR";
+
+// Serialise the APVTS state with the schema version stamped in and
+// the editor side tree appended, mirroring the processor path.
+MemoryBlock saveState (AudioProcessorValueTreeState& a, const ValueTree& editorState)
 {
     ValueTree s = a.copyState();
     s.setProperty ("version", 5, nullptr);
+    s.appendChild (editorState.createCopy(), nullptr);
     MemoryBlock block;
     AudioProcessor::copyXmlToBinary (*s.createXml(), block);
     return block;
 }
 
-// Load a state block into the APVTS. Mirrors the processor path: read the
-// version, then stamp the current version, then replace the state.
-void loadState (AudioProcessorValueTreeState& a, const MemoryBlock& block)
+// Load a state block into the APVTS. Mirrors the processor path: extract
+// and remove any EDITOR child before the version stamp and the replace.
+void loadState (AudioProcessorValueTreeState& a, const MemoryBlock& block, ValueTree& editorState)
 {
     auto xml = AudioProcessor::getXmlFromBinary (block.getData(), (int) block.getSize());
     if (xml == nullptr || ! xml->hasTagName (a.state.getType()))
         return;
     ValueTree s (ValueTree::fromXml (*xml));
+
+    const auto editor = s.getChildWithName (kEditorTag);
+    if (editor.isValid())
+    {
+        s.removeChild (editor, nullptr);
+        editorState = editor;
+    }
+
     s.setProperty ("version", 5, nullptr);
     a.replaceState (s);
 }
@@ -105,6 +118,7 @@ int main()
     {
         StubProcessor proc;
         auto& a = proc.apvts;
+        ValueTree editorSide { kEditorTag };
 
         // Move several parameters off their defaults.
         setDenorm (a, "delayTime", 1234.0f);
@@ -118,9 +132,9 @@ int main()
         setDenorm (a, "filterMode", 1.0f);
         setDenorm (a, "delayMode", 1.0f);
 
-        const MemoryBlock save1 = saveState (a);
-        loadState (a, save1);
-        const MemoryBlock save2 = saveState (a);
+        const MemoryBlock save1 = saveState (a, editorSide);
+        loadState (a, save1, editorSide);
+        const MemoryBlock save2 = saveState (a, editorSide);
 
         CHECK (save1.getSize() > 0);
         CHECK (save1.getSize() == save2.getSize());
@@ -173,6 +187,66 @@ int main()
         CHECK(dMode == 0.0f);
         // The live state now carries the current schema version.
         CHECK (static_cast<int> (a.state.getProperty ("version")) == 5);
+    }
+
+    // ----------------------------------------------------------------
+    // Editor side tree: the width and the tab indices ride on the
+    // serialised root under the EDITOR tag, never on the parameter
+    // tree. A version-5 file without the child loads unchanged.
+    // ----------------------------------------------------------------
+    g_section = "editor-side-tree";
+    {
+        StubProcessor proc;
+        auto& a = proc.apvts;
+        ValueTree side { kEditorTag };
+
+        setDenorm (a, "delayTime", 1234.0f);
+
+        side.setProperty ("editorWidth", 1600, nullptr);
+        side.setProperty ("timeTab", 1, nullptr);
+        side.setProperty ("characterTab", 1, nullptr);
+
+        const MemoryBlock save1 = saveState (a, side);
+
+        // Perturb the side tree, then reload. The saved values return.
+        side.setProperty ("editorWidth", 800, nullptr);
+        side.setProperty ("timeTab", 0, nullptr);
+        loadState (a, save1, side);
+
+        CHECK (static_cast<int> (side.getProperty ("editorWidth")) == 1600);
+        CHECK (static_cast<int> (side.getProperty ("timeTab")) == 1);
+        CHECK (static_cast<int> (side.getProperty ("characterTab")) == 1);
+
+        // The parameter tree carries no EDITOR child and no width
+        // property at any point in the session.
+        CHECK (! a.state.getChildWithName (kEditorTag).isValid());
+        CHECK (! a.state.hasProperty ("editorWidth"));
+
+        // The serialised session carries the EDITOR child once.
+        const auto again = saveState (a, side);
+        auto xml = AudioProcessor::getXmlFromBinary (again.getData(), (int) again.getSize());
+        CHECK (xml != nullptr);
+        int editorChildren = 0;
+        for (int i = 0; i < xml->getNumChildElements(); ++i)
+            if (auto* el = xml->getChildElement (i); el != nullptr && el->hasTagName (kEditorTag))
+                ++editorChildren;
+        CHECK (editorChildren == 1);
+
+        // A version-5 session file without the child loads unchanged:
+        // the side tree keeps its current values.
+        ValueTree bareSide { kEditorTag };
+        bareSide.setProperty ("editorWidth", 900, nullptr);
+        const MemoryBlock legacy = [&]
+        {
+            ValueTree s = a.copyState();
+            s.setProperty ("version", 5, nullptr);
+            MemoryBlock block;
+            AudioProcessor::copyXmlToBinary (*s.createXml(), block);
+            return block;
+        }();
+        loadState (a, legacy, bareSide);
+        CHECK (static_cast<int> (bareSide.getProperty ("editorWidth")) == 900);
+        CHECK (getDenorm (a, "delayTime") >= 1233.0f && getDenorm (a, "delayTime") <= 1235.0f);
     }
 
     std::println("=== state_roundtrip_check OK ===");

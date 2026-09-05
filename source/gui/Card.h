@@ -32,8 +32,11 @@ public:
     // Add one content panel under a subtab title.
     void addContent(const String& tabName, std::unique_ptr<Component> panel);
 
-    // Set the visible content panel index.
+    // Set the visible content panel index. Clamps to the panel count.
     void setSelectedContent(int index);
+
+    // The visible content panel index.
+    int getSelectedIndex() const;
 
     void paint(Graphics& g) override;
     void resized() override;

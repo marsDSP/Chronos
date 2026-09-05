@@ -792,11 +792,20 @@ ChronosEditor::ChronosEditor(ChronosProcessor& p)
                     Metrics::kMaxWidth, Metrics::kMaxHeight);
     getConstrainer()->setFixedAspectRatio(Metrics::kDesignAspect);
 
-    // Read the stored editor width. Default to 760. Clamp to [640, 1600].
-    const int storedW = static_cast<int>(processorRef.getAPVTS().state.getProperty("editorWidth", 760));
+    // Read the stored editor width from the side tree. Default to 760.
+    // Clamp to [640, 1600].
+    const int storedW = processorRef.getEditorWidth();
     const int w = std::clamp(storedW, Metrics::kMinWidth, Metrics::kMaxWidth);
     const int h = juce::roundToInt(static_cast<float>(w) / static_cast<float>(Metrics::kDesignAspect));
     setSize(w, h);
+
+    // Restore the four sub-tab selections from the side tree.
+    // setSelectedContent clamps each index to its panel count.
+    auto& editorState = processorRef.getEditorState();
+    timeCard_.setSelectedContent(static_cast<int>(editorState.getProperty("timeTab", 0)));
+    repeatsCard_.setSelectedContent(static_cast<int>(editorState.getProperty("repeatsTab", 0)));
+    characterCard_.setSelectedContent(static_cast<int>(editorState.getProperty("characterTab", 0)));
+    outputCard_.setSelectedContent(static_cast<int>(editorState.getProperty("outputTab", 0)));
 
     // Apply the enablement law once before the first paint.
     updateEnablement_();
@@ -975,5 +984,14 @@ void ChronosEditor::resized()
 void ChronosEditor::timerCallback()
 {
     stopTimer();
-    processorRef.getAPVTS().state.setProperty("editorWidth", getWidth(), nullptr);
+
+    // One write per settle, into the side tree. The parameter tree never
+    // carries window geometry or sub-tab selection.
+    processorRef.setEditorWidth(getWidth());
+
+    auto& editorState = processorRef.getEditorState();
+    editorState.setProperty("timeTab", timeCard_.getSelectedIndex(), nullptr);
+    editorState.setProperty("repeatsTab", repeatsCard_.getSelectedIndex(), nullptr);
+    editorState.setProperty("characterTab", characterCard_.getSelectedIndex(), nullptr);
+    editorState.setProperty("outputTab", outputCard_.getSelectedIndex(), nullptr);
 }

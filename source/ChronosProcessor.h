@@ -55,6 +55,14 @@ public:
     // The audio thread skips metering work when no editor is open.
     void setEditorOpen(bool open) noexcept { editorOpen_.store(open, std::memory_order_relaxed); }
 
+    // The editor state side tree. It never enters the parameter tree,
+    // so a preset cannot carry window geometry or sub-tab selection.
+    // The editor reads and writes it on the message thread only.
+    ValueTree& getEditorState() noexcept { return editorState_; }
+
+    int getEditorWidth() const { return static_cast<int>(editorState_.getProperty("editorWidth", 760)); }
+    void setEditorWidth(int w) { editorState_.setProperty("editorWidth", w, nullptr); }
+
     //==============================================================================
     int getNumPrograms() override;
     int getCurrentProgram() override;
@@ -84,6 +92,9 @@ private:
 
     // True while an editor is open. The audio thread reads this to gate metering.
     std::atomic<bool> editorOpen_ { false };
+
+    // The editor state side tree. Not a child of the parameter tree.
+    ValueTree editorState_ { "EDITOR" };
 
     // Name of the single factory program (returned via getProgramName).
     String programName_ { "Init" };

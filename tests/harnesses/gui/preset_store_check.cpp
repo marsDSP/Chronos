@@ -57,11 +57,12 @@ public:
     const String getProgramName (int) override { return {}; }
     void changeProgramName (int, const String&) override {}
 
-    // Mirror the processor state path.
+    // Mirror the processor state path, including the editor side tree.
     void getStateInformation (MemoryBlock& destData) override
     {
         ValueTree state = apvts.copyState();
         state.setProperty ("version", kStateVersion, nullptr);
+        state.appendChild (editorSide.createCopy(), nullptr);
         copyXmlToBinary (*state.createXml(), destData);
     }
 
@@ -70,6 +71,14 @@ public:
         auto xml = AudioProcessor::getXmlFromBinary (data, sizeInBytes);
         if (xml == nullptr || ! xml->hasTagName (apvts.state.getType())) return;
         ValueTree state (ValueTree::fromXml (*xml));
+
+        const auto editor = state.getChildWithName ("EDITOR");
+        if (editor.isValid())
+        {
+            state.removeChild (editor, nullptr);
+            editorSide = editor;
+        }
+
         if (const int fileVersion = state.getProperty ("version"); fileVersion < kStateVersion)
             migrateState_ (state, fileVersion);
         state.setProperty ("version", kStateVersion, nullptr);
@@ -77,6 +86,9 @@ public:
     }
 
     AudioProcessorValueTreeState apvts;
+
+    // The editor side tree, as the processor owns one.
+    ValueTree editorSide { "EDITOR" };
 
 private:
     static constexpr int kStateVersion = 5;
@@ -650,6 +662,39 @@ int main()
         CHECK (store.presetFile ("CON", "X") == tempRoot.getChildFile ("X.chronos"));
         CHECK (store.presetFile ("My:Bank", "Y")
                == tempRoot.getChildFile ("My_Bank").getChildFile ("Y.chronos"));
+    }
+
+    // ----------------------------------------------------------------
+    // 10. A preset carries no geometry. The session side tree holds a
+    //     1600 width and a non-default tab; the saved file has neither,
+    //     and a load into a side tree at 800 leaves it at 800.
+    // ----------------------------------------------------------------
+    g_section = "no-geometry";
+    {
+        StubProcessor proc;
+        PresetManager pm (proc, proc.apvts);
+        pm.getStore().setRootDirectory (tempRoot);
+
+        proc.editorSide.setProperty ("editorWidth", 1600, nullptr);
+        proc.editorSide.setProperty ("timeTab", 1, nullptr);
+
+        CHECK (pm.saveAs ("Geom", "a", "c"));
+        const auto file = store.presetFile ({}, "Geom");
+        const auto saved = parseXML (file.loadFileAsString());
+        CHECK (saved != nullptr);
+        CHECK (saved->getChildByName ("EDITOR") == nullptr);
+        CHECK (! saved->hasAttribute ("editorWidth"));
+
+        StubProcessor procB;
+        PresetManager pmB (procB, procB.apvts);
+        pmB.getStore().setRootDirectory (tempRoot);
+        procB.editorSide.setProperty ("editorWidth", 800, nullptr);
+        procB.editorSide.setProperty ("timeTab", 0, nullptr);
+
+        CHECK (pmB.loadPreset (file));
+        pmB.clearModified();
+        CHECK (static_cast<int> (procB.editorSide.getProperty ("editorWidth")) == 800);
+        CHECK (static_cast<int> (procB.editorSide.getProperty ("timeTab")) == 0);
     }
 
     // Clean up the temporary directory.

@@ -15,6 +15,8 @@ namespace
     constexpr int kMaxTailRepeats = 240;
     // Ring-down margin in samples, added to the delay repeat tail.
     constexpr int kMargin = 32768;
+    // The tag of the editor state side tree on the serialised root.
+    constexpr const char* kEditorTag = "EDITOR";
     // Constant latency budget of the saturator stage.
     constexpr int kAlignBudget = MarsDSP::Align::SaturatorAlign::kBudget;
 }
@@ -320,6 +322,10 @@ void ChronosProcessor::getStateInformation(MemoryBlock &destData)
 {
     ValueTree state = apvts.copyState();
     state.setProperty("version", kStateVersion, nullptr);
+
+    // The editor side tree rides on the serialised root. A session
+    // carries it; a preset never does.
+    state.appendChild(editorState_.createCopy(), nullptr);
     copyXmlToBinary(*state.createXml(), destData);
 }
 
@@ -328,6 +334,16 @@ void ChronosProcessor::setStateInformation(const void *data, int sizeInBytes)
     std::unique_ptr xml(getXmlFromBinary(data, sizeInBytes));
     if (xml == nullptr || !xml->hasTagName(apvts.state.getType())) return;
     ValueTree state(ValueTree::fromXml(*xml));
+
+    // Extract the editor side tree before the parameter tree applies.
+    // Its absence from an older file is the documented default.
+    const auto editor = state.getChildWithName(kEditorTag);
+    if (editor.isValid())
+    {
+        state.removeChild(editor, nullptr);
+        editorState_ = editor;
+    }
+
     if (const int fileVersion = state.getProperty("version"); fileVersion < kStateVersion)
         migrateState_(state, fileVersion);
     state.setProperty("version", kStateVersion, nullptr);

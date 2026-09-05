@@ -19,6 +19,9 @@ static const ParameterID kParamIDs[] = {
     loopSatOrderParamID,   delayModDepthParamID, delayModRateHzParamID, enableDiffuserParamID,
     diffusionParamID,      diffuserSizeParamID,  diffModDepthParamID,  diffModRateHzParamID
 };
+// The tag of the editor state side tree on a serialised root.
+static constexpr const char* kEditorTag = "EDITOR";
+
 // Remove the bypass parameter from a state tree. Bypass is not preset
 // state, so no written file and no pasted patch carries it.
 static void stripBypassParam_ (ValueTree& state)
@@ -26,6 +29,13 @@ static void stripBypassParam_ (ValueTree& state)
     for (int i = state.getNumChildren() - 1; i >= 0; --i)
         if (state.getChild(i).getProperty("id").toString() == bypassParamID.getParamID())
             state.removeChild(i, nullptr);
+}
+
+// Remove the editor side tree from a state tree. A preset carries no
+// window geometry and no sub-tab selection.
+static void stripEditorState_ (ValueTree& state)
+{
+    state.removeChild(state.getChildWithName(kEditorTag), nullptr);
 }
 
 PresetManager::PresetManager(AudioProcessor& proc, AudioProcessorValueTreeState& apvts)
@@ -76,6 +86,7 @@ bool PresetManager::saveAs(const String& name, const String& author, const Strin
 
     auto state = ValueTree::fromXml(*xml);
     stripBypassParam_(state);
+    stripEditorState_(state);
     state.setProperty(kPresetNameProp, cleanName, nullptr);
     state.setProperty(kPresetAuthorProp, author, nullptr);
     state.setProperty(kPresetCategoryProp, category, nullptr);
@@ -105,6 +116,7 @@ bool PresetManager::saveCurrent(const String& author, const String& category)
 
     auto state = ValueTree::fromXml(*xml);
     stripBypassParam_(state);
+    stripEditorState_(state);
     state.setProperty(kPresetNameProp, presetName_, nullptr);
     state.setProperty(kPresetAuthorProp, author, nullptr);
     state.setProperty(kPresetCategoryProp, category, nullptr);
@@ -195,17 +207,23 @@ bool PresetManager::validatePresetXml_(const XmlElement& xml)
 }
 
 // Apply a state tree through the processor recall path.
-// The live bypass value survives the load. Return false on a root tag mismatch.
+// The live bypass value survives the load. An editor side tree on the
+// file is stripped, so a preset cannot move the window or the sub-tabs.
+// Return false on a root tag mismatch.
 bool PresetManager::applyStateXml_(const XmlElement& xml)
 {
     if (! xml.hasTagName(apvtsRef_.state.getType()))
         return false;
 
+    auto stripped(std::make_unique<XmlElement>(xml));
+    while (auto* editor = stripped->getChildByName(kEditorTag))
+        stripped->removeChildElement(editor, true);
+
     auto* bypass = apvtsRef_.getParameter(bypassParamID.getParamID());
     const float bypassNorm = (bypass != nullptr) ? bypass->getValue() : 0.0f;
 
     MemoryBlock blob;
-    AudioProcessor::copyXmlToBinary(xml, blob);
+    AudioProcessor::copyXmlToBinary(*stripped, blob);
 
     processorRef_.setStateInformation(blob.getData(), static_cast<int>(blob.getSize()));
 
@@ -285,6 +303,7 @@ String PresetManager::copyPresetXml()
 
     auto state = ValueTree::fromXml(*xml);
     stripBypassParam_(state);
+    stripEditorState_(state);
     auto out = state.createXml();
     return (out != nullptr) ? out->toString() : String {};
 }

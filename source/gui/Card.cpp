@@ -70,13 +70,21 @@ void Card::addContent(const String& tabName, std::unique_ptr<Component> panel)
 
 void Card::setSelectedContent(const int index)
 {
-    subTabs_.setSelectedSubTab(index);
-    for (int i = 0; i < static_cast<int>(contents_.size()); ++i)
+    // Clamp to the panel count, so a restored index cannot hide every panel.
+    const int count = static_cast<int>(contents_.size());
+    const int clamped = (count > 0) ? std::clamp(index, 0, count - 1) : 0;
+    subTabs_.setSelectedSubTab(clamped);
+    for (int i = 0; i < count; ++i)
     {
-        const bool visible = (i == index);
+        const bool visible = (i == clamped);
         contents_[static_cast<std::size_t>(i)]->setVisible(visible);
     }
     resized();
+}
+
+int Card::getSelectedIndex() const
+{
+    return subTabs_.getSelectedSubTab();
 }
 
 void Card::paint(Graphics& g)
