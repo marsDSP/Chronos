@@ -154,6 +154,7 @@ namespace MarsDSP::GUI
         static constexpr float kHaloSigmas   = 4.0f;
         static constexpr float kHaloAlpha     = 0.55f;
         static constexpr float kHaloBarFade   = 0.6f;
+        static constexpr float kHaloBlurRadius = 5.0f;
         static constexpr float kPadCloudFrac  = 0.42f;
         static constexpr int   kHaloFadeMs    = 220;
         static constexpr int kRowSlackMaxDU = 12;

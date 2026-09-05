@@ -494,7 +494,9 @@ void TapDisplay::paint(Graphics& g)
         struct HaloKnot { float x; float gain; float reachPx; };
         constexpr float kMinDx = 0.01f;
 
-        const auto drawHaloLane = [&](const std::vector<TapTracker::TrackedTap>& taps, const bool leftLane)
+
+        const auto buildLaneWash = [&](const std::vector<TapTracker::TrackedTap>& taps, const bool leftLane,
+                                       Path& wash, ColourGradient& shade) -> bool
         {
             std::vector<HaloKnot> knots;
             for (const auto& tap : taps)
@@ -512,7 +514,7 @@ void TapDisplay::paint(Graphics& g)
                                   gain, reachPx });
             }
             if (knots.empty())
-                return;
+                return false;
             std::sort(knots.begin(), knots.end(),
                       [](const HaloKnot& a, const HaloKnot& b) { return a.x < b.x; });
 
@@ -538,7 +540,7 @@ void TapDisplay::paint(Graphics& g)
             const int xi0 = static_cast<int>(std::floor(x0));
             const int xi1 = static_cast<int>(std::ceil(x1));
             if (xi1 - xi0 < 1)
-                return;
+                return false;
 
             // The top edge: one cubic Bezier per spline segment, an exact
             // conversion from the Hermite tangents, so the curve is never
@@ -546,7 +548,6 @@ void TapDisplay::paint(Graphics& g)
             const float dir = leftLane ? -1.0f : 1.0f;
             const auto toY = [&](const float gain) { return centerY + dir * gain * maxLaneHeight; };
 
-            Path wash;
             wash.startNewSubPath(spline.x(0), toY(spline.y(0)));
             for (int k = 0; k < spline.numKnots() - 1; ++k)
             {
@@ -568,24 +569,58 @@ void TapDisplay::paint(Graphics& g)
             {
                 return std::clamp(baseAlpha * std::sqrt(std::max(0.0f, spline.evaluate(x))), 0.0f, 1.0f);
             };
-            ColourGradient shade(accent.withAlpha(alphaAt(static_cast<float>(xi0))),
-                                 Point<float>(static_cast<float>(xi0), centerY),
-                                 accent.withAlpha(alphaAt(static_cast<float>(xi1))),
-                                 Point<float>(static_cast<float>(xi1), centerY), false);
+            shade = ColourGradient(accent.withAlpha(alphaAt(static_cast<float>(xi0))),
+                                   Point<float>(static_cast<float>(xi0), centerY),
+                                   accent.withAlpha(alphaAt(static_cast<float>(xi1))),
+                                   Point<float>(static_cast<float>(xi1), centerY), false);
             const int cols = xi1 - xi0 + 1;
             const auto invSpan = 1.0 / static_cast<double>(std::max(1, cols - 1));
             for (int i = 1; i < cols - 1; ++i)
                 shade.addColour(static_cast<double>(i) * invSpan,
                                 accent.withAlpha(alphaAt(static_cast<float>(xi0 + i))));
-
-            g.setGradientFill(shade);
-            g.fillPath(wash);
+            return true;
         };
 
-        Graphics::ScopedSaveState ss(g);
-        g.reduceClipRegion(plotBounds.toNearestInt());
-        drawHaloLane(tracker_.lane(true), true);
-        drawHaloLane(tracker_.lane(false), false);
+        Path topWash, bottomWash;
+        ColourGradient topShade, bottomShade;
+        const bool hasTop = buildLaneWash(tracker_.lane(true), true, topWash, topShade);
+        const bool hasBottom = buildLaneWash(tracker_.lane(false), false, bottomWash, bottomShade);
+
+        if (hasTop || hasBottom)
+        {
+            const float blurPx = metrics_.pxf(Metrics::kHaloBlurRadius);
+            const float pad = blurPx * 2.0f + 4.0f;
+            const auto imgArea = plotBounds.expanded(pad);
+            double scaleFactor = Component::getApproximateScaleFactorForComponent(this);
+            scaleFactor = std::clamp(scaleFactor, 1.0, 4.0);
+            const float imgScale = static_cast<float>(scaleFactor);
+            const int imgW = std::max(1, roundToInt(imgArea.getWidth() * imgScale));
+            const int imgH = std::max(1, roundToInt(imgArea.getHeight() * imgScale));
+
+            Image haloImg(Image::ARGB, imgW, imgH, true);
+            {
+                Graphics haloG(haloImg);
+                haloG.addTransform(AffineTransform::translation(-imgArea.getX(), -imgArea.getY())
+                                       .scaled(imgScale));
+                if (hasTop)
+                {
+                    haloG.setGradientFill(topShade);
+                    haloG.fillPath(topWash);
+                }
+                if (hasBottom)
+                {
+                    haloG.setGradientFill(bottomShade);
+                    haloG.fillPath(bottomWash);
+                }
+            }
+            if (auto pixelData = haloImg.getPixelData())
+                pixelData->applyGaussianBlurEffect(blurPx * imgScale);
+
+            Graphics::ScopedSaveState ss(g);
+            g.reduceClipRegion(plotBounds.toNearestInt());
+            g.drawImageTransformed(haloImg,
+                AffineTransform::scale(1.0f / imgScale).translated(imgArea.getX(), imgArea.getY()));
+        }
     }
 
     // Draw taps. The head scales with the displayed gain and the activity.
