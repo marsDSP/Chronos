@@ -9,7 +9,7 @@
 #include "AccentConsumer.h"
 #include "MetricsConsumer.h"
 #include "tap/DiffusionModel.h"
-#include "utils/animation/Animation.h"
+#include "animation/Animation.h"
 #include <atomic>
 #include <memory>
 

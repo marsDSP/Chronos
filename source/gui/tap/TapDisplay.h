@@ -10,7 +10,7 @@
 #include "TapSimulation.h"
 #include "TapTracker.h"
 #include "DiffusionModel.h"
-#include "utils/animation/Animation.h"
+#include "../animation/Animation.h"
 #include <atomic>
 #include <vector>
 

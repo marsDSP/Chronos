@@ -2,7 +2,7 @@
 #include "Fonts.h"
 #include "tap/HaloImage.h"
 #include "tap/DiffusionModel.h"
-#include "utils/animation/Animation.h"
+#include "animation/Animation.h"
 
 #include <algorithm>
 #include <cmath>
