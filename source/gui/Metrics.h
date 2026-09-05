@@ -150,8 +150,8 @@ namespace MarsDSP::GUI
         static constexpr float kModJitterDU    = 4.0f;
         static constexpr float kModJitterMaxDU = 16.0f;
 
-        // The diffusion halo and pad cloud (section 4.8).
-        static constexpr float kHaloSigmas   = 2.5f;
+
+        static constexpr float kHaloSigmas   = 4.0f;
         static constexpr float kHaloAlpha     = 0.55f;
         static constexpr float kHaloBarFade   = 0.6f;
         static constexpr float kPadCloudFrac  = 0.42f;

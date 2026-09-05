@@ -10,14 +10,10 @@
 
 namespace MarsDSP::GUI {
 
-// A 256 x 2 ARGB image whose alpha across x follows exp(-z^2/2)
-// for z in [-kHaloSigmas, +kHaloSigmas], in the accent colour.
-// One drawImageTransformed per halo, under g.setOpacity, draws it at
-// any width and height with no allocation. Build in a constructor or
-// setAccentColour, never in paint (invariant 18).
+
 inline Image makeHaloImage(Colour accent)
 {
-    constexpr int kWidth = 256;
+    constexpr int kWidth = 512;
     constexpr int kHeight = 2;
     Image img(Image::ARGB, kWidth, kHeight, true);
 
