@@ -494,7 +494,7 @@ void TapDisplay::paint(Graphics& g)
             g.fillRect(plotBounds);
             g.setColour(accent.withAlpha(0.6f));
             g.setFont(Fonts::font(Fonts::Weight::Medium, metrics_.font(Metrics::kTapLabelFont)));
-            g.drawText("L/R LINK", plotBounds.reduced(4.0f).toNearestInt(), Justification::topLeft, false);
+            g.drawText("L/R LINK", plotBounds.reduced(metrics_.pxf(Metrics::kTapLabelInset)).toNearestInt(), Justification::topLeft, false);
         }
         else if (hoverUpper)
         {
@@ -502,7 +502,7 @@ void TapDisplay::paint(Graphics& g)
             g.fillRect(plotBounds.withBottom(centerY));
             g.setColour(accent.withAlpha(0.6f));
             g.setFont(Fonts::font(Fonts::Weight::Medium, metrics_.font(Metrics::kTapLabelFont)));
-            g.drawText("LEFT TIME", plotBounds.reduced(4.0f).toNearestInt(), Justification::topLeft, false);
+            g.drawText("LEFT TIME", plotBounds.reduced(metrics_.pxf(Metrics::kTapLabelInset)).toNearestInt(), Justification::topLeft, false);
         }
         else
         {
@@ -510,7 +510,7 @@ void TapDisplay::paint(Graphics& g)
             g.fillRect(plotBounds.withTop(centerY));
             g.setColour(accent.withAlpha(0.6f));
             g.setFont(Fonts::font(Fonts::Weight::Medium, metrics_.font(Metrics::kTapLabelFont)));
-            g.drawText("RIGHT TIME", plotBounds.reduced(4.0f).toNearestInt(), Justification::bottomLeft, false);
+            g.drawText("RIGHT TIME", plotBounds.reduced(metrics_.pxf(Metrics::kTapLabelInset)).toNearestInt(), Justification::bottomLeft, false);
         }
     }
 
@@ -525,19 +525,36 @@ void TapDisplay::paint(Graphics& g)
     for (const float t : ticks.majors)
         g.drawVerticalLine(roundToInt(timeToX(t)), tickTop, tickTop + majorTickLen);
 
-    // Ruler labels
-    const Font rulerFont = Fonts::font(Fonts::Weight::Regular, metrics_.font(Metrics::kRulerFont));
+    // Ruler labels. The display face carries the numeric readouts.
+    const Font rulerFont = Fonts::display(metrics_.displayFont(Metrics::kRulerFont));
     const float baselineY = tickTop + majorTickLen + metrics_.pxf(Metrics::kRulerLabelGap)
-                        + Fonts::kCapHeightRatio * metrics_.font(Metrics::kRulerFont);
+                        + rulerFont.getAscent();
     const int baselineYi = roundToInt(baselineY);
     const float minLabelGap = metrics_.pxf(Metrics::kTapLabelGapMin);
     g.setFont(rulerFont);
     g.setColour(Colours::rulerText);
 
+    // Clamp the label into the plot. A centred label that would cross the
+    // edge sticks to the edge, so the first label clears the border stroke.
+    const float labelEdgeLeft = plotBounds.getX() + metrics_.pxf(Metrics::kRulerLabelInset);
+    const float labelEdgeRight = plotBounds.getRight() - metrics_.pxf(Metrics::kRulerLabelInset);
+    const auto drawRulerLabel = [&](const String& text, const float cx)
+    {
+        const float w = Fonts::textWidth(rulerFont, text);
+        const float left = cx - w * 0.5f;
+        const float right = cx + w * 0.5f;
+        if (left < labelEdgeLeft)
+            g.drawSingleLineText(text, roundToInt(labelEdgeLeft), baselineYi, Justification::left);
+        else if (right > labelEdgeRight)
+            g.drawSingleLineText(text, roundToInt(labelEdgeRight), baselineYi, Justification::right);
+        else
+            g.drawSingleLineText(text, roundToInt(cx), baselineYi, Justification::horizontallyCentred);
+    };
+
     if (synced)
     {
         const int div = processorRef_.getParameters().getRawDelayDivision();
-        g.drawText(divisionName(div), rulerBounds.reduced(2.0f, 0.0f).toNearestInt(), Justification::centredLeft, true);
+        g.drawText(divisionName(div), rulerBounds.reduced(metrics_.pxf(Metrics::kRulerLabelInset), 0.0f).toNearestInt(), Justification::centredLeft, true);
 
         std::vector<float> majorXs;
         std::vector<String> majorLabels;
@@ -549,9 +566,8 @@ void TapDisplay::paint(Graphics& g)
         }
         const auto drawIdx = collisionFilteredIndices(majorXs, majorLabels, rulerFont, minLabelGap);
         for (const int i : drawIdx)
-            g.drawSingleLineText(majorLabels[static_cast<std::size_t>(i)],
-                                   roundToInt(majorXs[static_cast<std::size_t>(i)]), baselineYi,
-                                   Justification::horizontallyCentred);
+            drawRulerLabel(majorLabels[static_cast<std::size_t>(i)],
+                           majorXs[static_cast<std::size_t>(i)]);
     }
     else
     {
@@ -564,9 +580,8 @@ void TapDisplay::paint(Graphics& g)
         }
         const auto drawIdx = collisionFilteredIndices(majorXs, majorLabels, rulerFont, minLabelGap);
         for (const int i : drawIdx)
-            g.drawSingleLineText(majorLabels[static_cast<std::size_t>(i)],
-                                   roundToInt(majorXs[static_cast<std::size_t>(i)]), baselineYi,
-                                   Justification::horizontallyCentred);
+            drawRulerLabel(majorLabels[static_cast<std::size_t>(i)],
+                           majorXs[static_cast<std::size_t>(i)]);
     }
 
     // Hover cursor and measurement readout
@@ -608,12 +623,13 @@ void TapDisplay::paint(Graphics& g)
         }
 
         g.setColour(accent);
-        g.setFont(Fonts::font(Fonts::Weight::Medium, metrics_.font(Metrics::kTapReadoutFont)));
+        g.setFont(Fonts::display(metrics_.displayFont(Metrics::kTapReadoutFont)));
         const float readoutW = metrics_.pxf(Metrics::kHoverReadoutW);
-        float rx = cursorX + 6.0f;
+        const float readoutGap = metrics_.pxf(Metrics::kHoverReadoutGap);
+        float rx = cursorX + readoutGap;
         if (rx + readoutW > displayBounds.getRight())
-            rx = cursorX - readoutW - 6.0f;
-        const auto readoutRect = Rectangle<float>(rx, plotBounds.getY() + 2.0f, readoutW, metrics_.pxf(Metrics::kHoverReadoutH)).toNearestInt();
+            rx = cursorX - readoutW - readoutGap;
+        const auto readoutRect = Rectangle<float>(rx, plotBounds.getY() + metrics_.pxf(Metrics::kHoverReadoutTop), readoutW, metrics_.pxf(Metrics::kHoverReadoutH)).toNearestInt();
         g.drawText(readout, readoutRect, Justification::centredLeft, true);
     }
 }

@@ -56,19 +56,22 @@ namespace MarsDSP::GUI
 
         // Font heights (section 4.7), design units. Every one stays at
         // or above kFontMinDU, so the floor is a backstop and not a
-        // layout hazard.
+        // layout hazard. The display constants (readout, ruler, tapReadout,
+        // padReadout) render in the display face and stay at or above
+        // kDisplayFontMinDU, so the display floor is a backstop too.
         static constexpr float kWordmarkFont    = 15.0f;
         static constexpr float kKnobLabelFont   = 11.0f;
         static constexpr float kFooterFont      = 10.0f;
         static constexpr float kTapLabelFont    = 10.0f;
-        static constexpr float kTapReadoutFont  = 10.0f;
+        static constexpr float kTapReadoutFont  = 13.0f;
         static constexpr float kLabelFont       = 13.0f;
         static constexpr float kComboFont       = 12.0f;
         static constexpr float kMenuFont        = 14.0f;
         static constexpr float kTooltipFont     = 11.0f;
         static constexpr float kSegmentFont     = 10.0f;
         static constexpr float kSubTabFont      = 10.0f;
-        static constexpr float kReadoutFont     = 13.0f;
+        static constexpr float kReadoutFont     = 14.0f;
+        static constexpr float kPadReadoutFont  = 13.0f;
 
         // Element dimensions (section 4.7), design units.
         static constexpr float kHeaderSideMargin   = 14.0f;
@@ -130,15 +133,27 @@ namespace MarsDSP::GUI
         static constexpr float kRulerLabelGap      = 7.0f;
         static constexpr float kMajorTick          = 6.0f;
         static constexpr float kMinorTick          = 4.0f;
-        static constexpr float kRulerFont           = 10.0f;
+        static constexpr float kRulerFont           = 13.0f;
         static constexpr float kSelectorRowH       = 24.0f;
         static constexpr float kEnableRowH         = 22.0f;
+
+        // Tap display label and readout offsets (section 4.3, 4.6), design units.
+        static constexpr float kTapLabelInset      = 4.0f;
+        static constexpr float kRulerLabelInset    = 2.0f;
+        static constexpr float kHoverReadoutGap    = 6.0f;
+        static constexpr float kHoverReadoutTop    = 2.0f;
 
         // The legibility floor (section 4.7). No glyph renders below the
         // floor at any scale, and no declared font drops below the
         // minimum design height.
         static constexpr float kFontFloorPx = 8.0f;
         static constexpr float kFontMinDU   = 10.0f;
+
+        // The display-face legibility floor (section 4.3). No display
+        // glyph renders below this floor at any scale, and no declared
+        // display font drops below the minimum display design height.
+        static constexpr float kDisplayFontFloorPx = 10.0f;
+        static constexpr float kDisplayFontMinDU   = 13.0f;
 
         // Interaction constants (section 4.6).
         // The wheel and the arrow keys step in proportion space.
@@ -161,6 +176,9 @@ namespace MarsDSP::GUI
         // The three legibility constants cannot drift apart.
         static_assert(kFontMinDU * kScaleMin >= kFontFloorPx);
 
+        // The display legibility constants cannot drift apart.
+        static_assert(kDisplayFontMinDU * kScaleMin >= kDisplayFontFloorPx);
+
         // No declared font drops below the minimum design height.
         static_assert(kWordmarkFont   >= kFontMinDU);
         static_assert(kKnobLabelFont  >= kFontMinDU);
@@ -176,6 +194,12 @@ namespace MarsDSP::GUI
         static_assert(kReadoutFont    >= kFontMinDU);
         static_assert(kRulerFont      >= kFontMinDU);
         static_assert(kPresetBarFont  >= kFontMinDU);
+
+        // The four display constants stay at or above the display minimum.
+        static_assert(kReadoutFont    >= kDisplayFontMinDU);
+        static_assert(kRulerFont      >= kDisplayFontMinDU);
+        static_assert(kTapReadoutFont >= kDisplayFontMinDU);
+        static_assert(kPadReadoutFont >= kDisplayFontMinDU);
 
         // The scale factor, clamped to [kScaleMin, kScaleMax].
         float s = 1.0f;
@@ -197,6 +221,10 @@ namespace MarsDSP::GUI
         // Scale a font height. Never round. Hold every glyph at or above
         // the floor, so no text renders illegible at any scale.
         [[nodiscard]] float font(const float v) const noexcept { return std::max(kFontFloorPx, v * s); }
+
+        // Scale a display font height. Hold every display glyph at or
+        // above the display floor, so no readout renders illegible at any scale.
+        [[nodiscard]] float displayFont(const float v) const noexcept { return std::max(kDisplayFontFloorPx, v * s); }
 
     // Scale a stroke width. Hold a hairline above zero.
     float stroke(float v) const noexcept { return std::max(1.0f, v * s); }

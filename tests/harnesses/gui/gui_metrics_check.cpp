@@ -69,6 +69,15 @@ const FontConst kFontConsts[] = {
 };
 constexpr int kNumFontConsts = static_cast<int>(std::size(kFontConsts));
 
+// The display font constants, for the display floor assertion.
+const FontConst kDisplayFontConsts[] = {
+    { "readout",    MarsDSP::GUI::Metrics::kReadoutFont },
+    { "ruler",      MarsDSP::GUI::Metrics::kRulerFont },
+    { "tapReadout", MarsDSP::GUI::Metrics::kTapReadoutFont },
+    { "padReadout", MarsDSP::GUI::Metrics::kPadReadoutFont },
+};
+constexpr int kNumDisplayFontConsts = static_cast<int>(std::size(kDisplayFontConsts));
+
 // The declared text and icon colour pairs, for the contrast assertion.
 struct ColourPair { const char* fgName; juce::Colour fg; const char* bgName; juce::Colour bg; float minRatio; };
 const ColourPair kTextPairs[] = {
@@ -440,6 +449,33 @@ int runAll()
             }
         }
         std::println("font floor (14 constants x 3 scales): PASS");
+    }
+
+    // ----------------------------------------------------------------
+    // 7b. Display font floor: every display font constant renders at
+    //     or above kDisplayFontFloorPx at kScaleMin, 1.0, and kScaleMax.
+    // ----------------------------------------------------------------
+    g_section = "display_font_floor";
+    {
+        const float scales[] = {
+            MarsDSP::GUI::Metrics::kScaleMin,
+            1.0f,
+            MarsDSP::GUI::Metrics::kScaleMax
+        };
+
+        for (const float s : scales)
+        {
+            MarsDSP::GUI::Metrics m;
+            m.s = s;
+            for (int ci = 0; ci < kNumDisplayFontConsts; ++ci)
+            {
+                const float h = m.displayFont(kDisplayFontConsts[ci].du);
+                if (h < MarsDSP::GUI::Metrics::kDisplayFontFloorPx)
+                    FAIL("s={:.2f} display font {} = {} below the display floor {}",
+                         s, kDisplayFontConsts[ci].name, h, MarsDSP::GUI::Metrics::kDisplayFontFloorPx);
+            }
+        }
+        std::println("display font floor ({} constants x 3 scales): PASS", kNumDisplayFontConsts);
     }
 
     // ----------------------------------------------------------------

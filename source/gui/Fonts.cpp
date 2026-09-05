@@ -26,6 +26,7 @@ struct TypefaceCache {
     Typeface::Ptr regular;
     Typeface::Ptr medium;
     Typeface::Ptr semibold;
+    Typeface::Ptr display;
 
     struct DigitEntry { String typefaceName; float height; float advance; };
     mutable std::vector<DigitEntry> digitAdvances;
@@ -37,6 +38,7 @@ struct TypefaceCache {
         regular  = load("ClashGroteskRegular_ttf");
         medium   = load("ClashGroteskMedium_ttf");
         semibold = load("ClashGroteskSemibold_ttf");
+        display  = load("DotoBold_ttf");
 #endif
     }
 
@@ -82,6 +84,13 @@ Typeface::Ptr typefaceFor(const Weight weight)
 Font font(const Weight weight, const float height)
 {
     return Font { FontOptions { typefaceFor(weight) }.withHeight(jmax(1.0f, height)) };
+}
+
+Font display(const float height)
+{
+    const auto& c = cache();
+    const Typeface::Ptr tf = (c.display != nullptr) ? c.display : typefaceFor(Weight::Semibold);
+    return Font { FontOptions { tf }.withHeight(jmax(1.0f, height)) };
 }
 
 String shortLabel(const String& full)
