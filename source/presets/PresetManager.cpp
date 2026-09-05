@@ -7,16 +7,26 @@ namespace MarsDSP::Presets {
 // The current state schema version. Factory presets ship at the current schema.
 static constexpr int kFactoryStateVersion = 5;
 
-// The 28 APVTS parameter IDs. Register one dirty listener per ID.
+// The 27 preset parameter IDs. Bypass is not preset state: the host
+// owns it, and a preset saved while bypassed must not recall bypassed.
+// Register one dirty listener per ID.
 static const ParameterID kParamIDs[] = {
     gainParamID,          bitsParamID,         delayTimeParamID,    delayTimeRParamID,
     timeLinkParamID,       delaySyncParamID,    delayDivisionParamID, delayModeParamID,
-    bypassParamID,         filterModeParamID,   hpfFreqParamID,      lpfFreqParamID,
+    filterModeParamID,    hpfFreqParamID,      lpfFreqParamID,
     mixParamID,            driveParamID,        adaaOrderParamID,     feedbackParamID,
     dampHzParamID,         loopCutHzParamID,    crossFeedParamID,     loopDriveParamID,
     loopSatOrderParamID,   delayModDepthParamID, delayModRateHzParamID, enableDiffuserParamID,
     diffusionParamID,      diffuserSizeParamID,  diffModDepthParamID,  diffModRateHzParamID
 };
+// Remove the bypass parameter from a state tree. Bypass is not preset
+// state, so no written file and no pasted patch carries it.
+static void stripBypassParam_ (ValueTree& state)
+{
+    for (int i = state.getNumChildren() - 1; i >= 0; --i)
+        if (state.getChild(i).getProperty("id").toString() == bypassParamID.getParamID())
+            state.removeChild(i, nullptr);
+}
 
 PresetManager::PresetManager(AudioProcessor& proc, AudioProcessorValueTreeState& apvts)
     : processorRef_(proc), apvtsRef_(apvts)
@@ -65,6 +75,7 @@ bool PresetManager::saveAs(const String& name, const String& author, const Strin
     if (xml == nullptr) return false;
 
     auto state = ValueTree::fromXml(*xml);
+    stripBypassParam_(state);
     state.setProperty(kPresetNameProp, cleanName, nullptr);
     state.setProperty(kPresetAuthorProp, author, nullptr);
     state.setProperty(kPresetCategoryProp, category, nullptr);
@@ -93,6 +104,7 @@ bool PresetManager::saveCurrent(const String& author, const String& category)
     if (xml == nullptr) return false;
 
     auto state = ValueTree::fromXml(*xml);
+    stripBypassParam_(state);
     state.setProperty(kPresetNameProp, presetName_, nullptr);
     state.setProperty(kPresetAuthorProp, author, nullptr);
     state.setProperty(kPresetCategoryProp, category, nullptr);
@@ -106,12 +118,19 @@ bool PresetManager::saveCurrent(const String& author, const String& category)
     return true;
 }
 
-// Reject a preset with an unknown parameter or an out-of-range value.
-// Run this check before the state applies, so a bad file leaves the state untouched.
+// Reject a preset with an unknown parameter, an out-of-range value, or a
+// missing parameter. Run this check before the state applies, so a bad
+// file leaves the state untouched. A bypass child is ignored: an older
+// file may carry one, and bypass is not preset state.
 bool PresetManager::validatePresetXml_(const XmlElement& xml)
 {
+    lastError_.clear();
+
     if (! xml.hasTagName(apvtsRef_.state.getType()))
+    {
+        lastError_ = "the file has the wrong root tag";
         return false;
+    }
 
     for (int i = 0; i < xml.getNumChildElements(); ++i)
     {
@@ -123,41 +142,88 @@ bool PresetManager::validatePresetXml_(const XmlElement& xml)
         if (id == "version")
             continue;
 
+        if (id == bypassParamID.getParamID())
+            continue;
+
         auto* param = apvtsRef_.getParameter(id);
         if (param == nullptr)
+        {
+            lastError_ = "unknown parameter \"" + id + "\"";
             return false;
+        }
 
         const String valueText = el->getStringAttribute("value");
         if (valueText.isEmpty() || ! valueText.containsAnyOf("0123456789"))
+        {
+            lastError_ = "a value is missing for \"" + id + "\"";
             return false;
+        }
 
         const float value = valueText.getFloatValue();
         const auto range = param->getNormalisableRange();
         if (value < range.start || value > range.end)
+        {
+            lastError_ = "the value for \"" + id + "\" is out of range";
             return false;
+        }
+    }
+
+    // Total recall: every preset parameter must be present. A file that
+    // omits one would otherwise load as a hybrid of the file and the
+    // live state.
+    for (const auto& pid : kParamIDs)
+    {
+        bool found = false;
+        for (int i = 0; i < xml.getNumChildElements(); ++i)
+        {
+            auto* el = xml.getChildElement(i);
+            if (el != nullptr && el->hasTagName("PARAM")
+                && el->getStringAttribute("id") == pid.getParamID())
+            {
+                found = true;
+                break;
+            }
+        }
+        if (! found)
+        {
+            lastError_ = "missing parameter \"" + String(pid.getParamID()) + "\"";
+            return false;
+        }
     }
 
     return true;
 }
 
 // Apply a state tree through the processor recall path.
-// Return false on a root tag mismatch.
+// The live bypass value survives the load. Return false on a root tag mismatch.
 bool PresetManager::applyStateXml_(const XmlElement& xml)
 {
     if (! xml.hasTagName(apvtsRef_.state.getType()))
         return false;
 
+    auto* bypass = apvtsRef_.getParameter(bypassParamID.getParamID());
+    const float bypassNorm = (bypass != nullptr) ? bypass->getValue() : 0.0f;
+
     MemoryBlock blob;
     AudioProcessor::copyXmlToBinary(xml, blob);
 
     processorRef_.setStateInformation(blob.getData(), static_cast<int>(blob.getSize()));
+
+    if (bypass != nullptr)
+        bypass->setValueNotifyingHost(bypassNorm);
     return true;
 }
 
 bool PresetManager::loadPreset(const File& file)
 {
+    lastError_.clear();
+
     auto xml = PresetStore::loadPresetFile(file);
-    if (xml == nullptr) return false;
+    if (xml == nullptr)
+    {
+        lastError_ = "the file did not parse";
+        return false;
+    }
 
     if (! validatePresetXml_(*xml))
         return false;
@@ -185,6 +251,7 @@ void PresetManager::loadIdentity(const File& file)
     presetName_     = xml->getStringAttribute(kPresetNameProp);
     presetAuthor_   = xml->getStringAttribute(kPresetAuthorProp);
     presetCategory_ = xml->getStringAttribute(kPresetCategoryProp);
+    presetBank_     = store_.bankForFile(file);
     currentFile_    = file;
     isFactory_      = false;
 }
@@ -216,7 +283,10 @@ String PresetManager::copyPresetXml()
     auto xml = AudioProcessor::getXmlFromBinary(block.getData(), static_cast<int>(block.getSize()));
     if (xml == nullptr) return {};
 
-    return xml->toString();
+    auto state = ValueTree::fromXml(*xml);
+    stripBypassParam_(state);
+    auto out = state.createXml();
+    return (out != nullptr) ? out->toString() : String {};
 }
 
 bool PresetManager::pastePresetXml(const String& xmlText)

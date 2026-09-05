@@ -156,16 +156,19 @@ float getDenorm (const AudioProcessorValueTreeState& a, const char* id)
     return raw->load();
 }
 
-// The 28 parameter IDs, for round-trip and perturb.
+// The 27 preset parameter IDs. Bypass is not preset state, so the
+// round trip excludes it: a saved file carries no bypass child, and
+// a load leaves the live bypass value alone.
 static const char* const kParamIDs[] = {
     "gain",          "bits",          "delayTime",     "delayTimeR",
     "timeLink",      "delaySync",     "delayDivision",  "delayMode",
-    "bypass",        "filterMode",    "hpfFreq",       "lpfFreq",
+    "filterMode",    "hpfFreq",       "lpfFreq",
     "mix",           "drive",         "adaaOrder",      "feedback",
     "dampHz",        "loopCutHz",      "crossFeed",      "loopDrive",
     "loopSatOrder",   "delayModDepth",  "delayModRateHz", "enableDiffuser",
     "diffusion",      "diffuserSize",   "diffModDepth",   "diffModRateHz"
 };
+constexpr int kNumParams = static_cast<int> (std::size (kParamIDs));
 
 // Return a pseudo-random value for one parameter. The seed fixes the value per run.
 float randomDenorm (AudioProcessorValueTreeState& a, const char* id, int seed)
@@ -177,18 +180,28 @@ float randomDenorm (AudioProcessorValueTreeState& a, const char* id, int seed)
 }
 
 // Build a version-N state tree XML string for the migration test.
+// Every preset parameter is present at its default, so the file
+// passes the total recall check. outOfRange pushes one value outside
+// its range. unknownParam adds a parameter that does not exist.
 String buildVersionedXml (int version, const String& rootTag, bool outOfRange, bool unknownParam)
 {
+    StubProcessor probe;
     String xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<" + rootTag;
     if (version > 0)
         xml += " version=\"" + String (version) + "\"";
     xml += ">";
-    xml += "<PARAM id=\"delayTime\" value=\"900.0\"/>";
-    xml += "<PARAM id=\"feedback\" value=\"0.55\"/>";
-    xml += "<PARAM id=\"mix\" value=\"42.0\"/>";
-    xml += "<PARAM id=\"drive\" value=\"9.0\"/>";
-    if (outOfRange)
-        xml += "<PARAM id=\"feedback\" value=\"5.0\"/>";
+
+    for (int i = 0; i < kNumParams; ++i)
+    {
+        float denorm = 0.5f;
+        if (auto* p = probe.apvts.getParameter (kParamIDs[i]))
+            denorm = p->getNormalisableRange().convertFrom0to1 (p->getDefaultValue());
+        String valueText (denorm, 6);
+        if (outOfRange && String (kParamIDs[i]) == "feedback")
+            valueText = "5.0";
+        xml += "<PARAM id=\"" + String (kParamIDs[i]) + "\" value=\"" + valueText + "\"/>";
+    }
+
     if (unknownParam)
         xml += "<PARAM id=\"doesNotExist\" value=\"1.0\"/>";
     xml += "</" + rootTag + ">";
@@ -233,7 +246,7 @@ int main()
             // Set a random value for each parameter. Read back the stored
             // value so the discrete parameters compare equal after the load.
             std::vector<float> saved (std::size (kParamIDs));
-            for (int i = 0; i < 28; ++i)
+            for (int i = 0; i < kNumParams; ++i)
             {
                 setDenorm (proc.apvts, kParamIDs[i],
                            randomDenorm (proc.apvts, kParamIDs[i], i + 1 + iter * 31));
@@ -245,7 +258,7 @@ int main()
             CHECK (! pm.isModified());
 
             // Perturb every parameter so the load must restore the saved values.
-            for (int i = 0; i < 28; ++i)
+            for (int i = 0; i < kNumParams; ++i)
                 setDenorm (proc.apvts, kParamIDs[i],
                            randomDenorm (proc.apvts, kParamIDs[i], i + 100 + iter * 31));
 
@@ -259,7 +272,7 @@ int main()
             // async clear is queued; clear manually for the headless harness.
             pm.clearModified();
 
-            for (int i = 0; i < 28; ++i)
+            for (int i = 0; i < kNumParams; ++i)
             {
                 const auto v = getDenorm (proc.apvts, kParamIDs[i]);
                 const float diff = std::fabs (v - saved[std::size_t (i)]);
@@ -347,7 +360,7 @@ int main()
             AudioProcessor::copyXmlToBinary (*xml, blob);
             procB.setStateInformation (blob.getData(), (int) blob.getSize());
 
-            for (int i = 0; i < 28; ++i)
+            for (int i = 0; i < kNumParams; ++i)
             {
                 const auto a = getDenorm (procA.apvts, kParamIDs[i]);
                 const auto b = getDenorm (procB.apvts, kParamIDs[i]);
@@ -466,6 +479,177 @@ int main()
         // Rename refuses to clobber an existing file.
         CHECK (pm.saveAs ("Target", "a", "c"));
         CHECK (! pm.renameCurrent ("Dup"));
+    }
+
+    // ----------------------------------------------------------------
+    // 6. Bypass exclusion: no saved file carries a bypass child, and a
+    //    load never changes the live bypass value. An older file with a
+    //    bypass child loads, and the child is ignored.
+    // ----------------------------------------------------------------
+    g_section = "bypass-exclusion";
+    {
+        StubProcessor proc;
+        PresetManager pm (proc, proc.apvts);
+        pm.getStore().setRootDirectory (tempRoot);
+
+        // Save while bypassed. The file carries no bypass child.
+        setDenorm (proc.apvts, "bypass", 1.0f);
+        setDenorm (proc.apvts, "delayTime", 250.0f);
+        CHECK (pm.saveAs ("Bypassed", "a", "c"));
+
+        const auto file = store.presetFile ({}, "Bypassed");
+        const auto saved = parseXML (file.loadFileAsString());
+        CHECK (saved != nullptr);
+        for (int i = 0; i < saved->getNumChildElements(); ++i)
+        {
+            auto* el = saved->getChildElement (i);
+            if (el != nullptr && el->hasTagName ("PARAM"))
+                CHECK (el->getStringAttribute ("id") != "bypass");
+        }
+
+        // Unbypass and perturb. The load must not re-bypass.
+        setDenorm (proc.apvts, "bypass", 0.0f);
+        for (int i = 0; i < kNumParams; ++i)
+            setDenorm (proc.apvts, kParamIDs[i],
+                       randomDenorm (proc.apvts, kParamIDs[i], i + 7));
+        CHECK (pm.loadPreset (file));
+        pm.clearModified();
+        CHECK (getDenorm (proc.apvts, "bypass") == 0.0f);
+        CHECK (std::fabs (getDenorm (proc.apvts, "delayTime") - 250.0f) < 0.01f);
+
+        // A hand-edited file that carries a bypass child still loads.
+        // The child is ignored, and the live bypass survives.
+        auto patched = parseXML (file.loadFileAsString());
+        CHECK (patched != nullptr);
+        auto* bypassChild = new XmlElement ("PARAM");
+        bypassChild->setAttribute ("id", "bypass");
+        bypassChild->setAttribute ("value", 1.0f);
+        patched->addChildElement (bypassChild);
+
+        const auto legacy = tempRoot.getChildFile ("LegacyBypass.chronos");
+        CHECK (PresetStore::savePresetFile (legacy, patched->toString()));
+        setDenorm (proc.apvts, "bypass", 0.0f);
+        CHECK (pm.loadPreset (legacy));
+        pm.clearModified();
+        CHECK (getDenorm (proc.apvts, "bypass") == 0.0f);
+    }
+
+    // ----------------------------------------------------------------
+    // 7. Bank identity: a file in a bank reports that bank, a root
+    //    file reports empty, and a banked save writes into the bank.
+    //    The bank survives a factory-then-user load sequence.
+    // ----------------------------------------------------------------
+    g_section = "bank-identity";
+    {
+        StubProcessor proc;
+        PresetManager pm (proc, proc.apvts);
+        pm.getStore().setRootDirectory (tempRoot);
+
+        const auto bankDir = tempRoot.getChildFile ("MyBank");
+        bankDir.createDirectory();
+        const auto bankFile = bankDir.getChildFile ("Banked.chronos");
+        const auto rootFile = tempRoot.getChildFile ("Rooted.chronos");
+
+        {
+            MemoryBlock block;
+            proc.getStateInformation (block);
+            const auto xml = AudioProcessor::getXmlFromBinary (block.getData(), (int) block.getSize());
+            CHECK (xml != nullptr);
+            CHECK (PresetStore::savePresetFile (bankFile, xml->toString()));
+            CHECK (PresetStore::savePresetFile (rootFile, xml->toString()));
+        }
+
+        CHECK (store.bankForFile (bankFile) == "MyBank");
+        CHECK (store.bankForFile (rootFile).isEmpty());
+        CHECK (store.bankForFile (tempRoot.getChildFile ("nope.chronos")).isEmpty());
+
+        // A factory preset, then a root user preset: the bank is empty,
+        // not the stale factory bank.
+        CHECK (kNumFactoryPresets > 0);
+        CHECK (pm.loadFactoryPreset (kFactoryPresets[0].name, kFactoryPresets[0].bank));
+        pm.clearModified();
+        CHECK (pm.getCurrentBank() == String (kFactoryPresets[0].bank));
+        CHECK (pm.loadPreset (rootFile));
+        pm.clearModified();
+        CHECK (pm.getCurrentBank().isEmpty());
+
+        // A banked load, then a save: the new file lands in the bank.
+        CHECK (pm.loadPreset (bankFile));
+        pm.clearModified();
+        CHECK (pm.getCurrentBank() == "MyBank");
+        CHECK (pm.saveAs ("Banked2", "a", "c"));
+        CHECK (store.presetFile ("MyBank", "Banked2").existsAsFile());
+    }
+
+    // ----------------------------------------------------------------
+    // 8. Total recall: a full preset with one PARAM removed is refused
+    //    by name, and the state stays untouched.
+    // ----------------------------------------------------------------
+    g_section = "missing-param";
+    {
+        StubProcessor proc;
+        PresetManager pm (proc, proc.apvts);
+        pm.getStore().setRootDirectory (tempRoot);
+
+        MemoryBlock block;
+        proc.getStateInformation (block);
+        const auto xml = AudioProcessor::getXmlFromBinary (block.getData(), (int) block.getSize());
+        CHECK (xml != nullptr);
+
+        bool removed = false;
+        for (int i = xml->getNumChildElements() - 1; i >= 0; --i)
+        {
+            auto* el = xml->getChildElement (i);
+            if (el != nullptr && el->hasTagName ("PARAM")
+                && el->getStringAttribute ("id") == "mix")
+            {
+                xml->removeChildElement (el, true);
+                removed = true;
+                break;
+            }
+        }
+        CHECK (removed);
+
+        const auto file = tempRoot.getChildFile ("MissingMix.chronos");
+        CHECK (PresetStore::savePresetFile (file, xml->toString()));
+
+        setDenorm (proc.apvts, "delayTime", 500.0f);
+        const float before = getDenorm (proc.apvts, "delayTime");
+        const String beforeName = pm.getCurrentName();
+
+        CHECK (! pm.loadPreset (file));
+        CHECK (pm.getLastError().contains ("mix"));
+
+        const float after = getDenorm (proc.apvts, "delayTime");
+        CHECK (std::fabs (after - before) < 1e-6f);
+        CHECK (pm.getCurrentName() == beforeName);
+    }
+
+    // ----------------------------------------------------------------
+    // 9. Name hygiene: reserved device names and an empty result are
+    //    refused, the reserved characters are replaced, and the bank
+    //    goes through the same sanitiser.
+    // ----------------------------------------------------------------
+    g_section = "name-hygiene";
+    {
+        CHECK (PresetStore::sanitiseName ("CON").isEmpty());
+        CHECK (PresetStore::sanitiseName ("con").isEmpty());
+        CHECK (PresetStore::sanitiseName ("Com1.chronos").isEmpty());
+        CHECK (PresetStore::sanitiseName ("   ").isEmpty());
+        CHECK (PresetStore::sanitiseName ("a:b").containsChar (':') == false);
+        CHECK (! PresetStore::sanitiseName ("a*b?c\"d<e>f|g")
+                    .containsAnyOf ("*?\"<>|:"));
+
+        StubProcessor proc;
+        PresetManager pm (proc, proc.apvts);
+        pm.getStore().setRootDirectory (tempRoot);
+        CHECK (! pm.saveAs ("CON", "a", "c"));
+
+        // A reserved bank name falls back to the root. A bank with a
+        // reserved character lands in the sanitised directory.
+        CHECK (store.presetFile ("CON", "X") == tempRoot.getChildFile ("X.chronos"));
+        CHECK (store.presetFile ("My:Bank", "Y")
+               == tempRoot.getChildFile ("My_Bank").getChildFile ("Y.chronos"));
     }
 
     // Clean up the temporary directory.

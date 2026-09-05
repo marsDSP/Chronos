@@ -4,6 +4,7 @@
 #define CHRONOS_PRESET_BAR_H
 
 #include <JuceHeader.h>
+#include <functional>
 #include "Colours.h"
 #include "Metrics.h"
 #include "AccentConsumer.h"
@@ -44,6 +45,11 @@ private:
     void showMenu_();
     void handleMenuResult_(int result);
     void stepPreset_(int direction);
+
+    // Confirm before a load discards unsaved edits. Every load path
+    // routes through this guard, and proceed runs only on yes.
+    void confirmDiscardChanges_(std::function<void()> proceed);
+
     void doSave_();
     void doSaveAs_();
     void completeSaveAs_(const String& name);

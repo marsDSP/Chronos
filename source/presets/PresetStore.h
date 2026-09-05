@@ -62,8 +62,15 @@ public:
     // The file path for a bank and name.
     File presetFile(const String& bank, const String& name) const;
 
+    // The bank a file belongs to, from its position under the root.
+    // The parent directory name sits one level down. An empty string
+    // when the file sits directly in the root.
+    String bankForFile(const File& file) const;
+
     // Sanitise a name for the file system.
-    // Strip path separators and leading dots. Return the result.
+    // Strip path separators, reserved characters, and leading dots.
+    // Return an empty string for a reserved device name or when
+    // nothing survives.
     static String sanitiseName(const String& name);
 
 private:

@@ -26,6 +26,9 @@ public:
     String getCurrentBank() const { return presetBank_; }
     bool isCurrentFactory() const { return isFactory_; }
 
+    // The reason the last load refused a file. Empty after a success.
+    String getLastError() const { return lastError_; }
+
     // Return true when a parameter moved since the last load or save.
     bool isModified() const { return modified_.load(std::memory_order_relaxed); }
 
@@ -81,7 +84,8 @@ private:
     // Apply a state tree through the processor recall path.
     bool applyStateXml_(const XmlElement& xml);
 
-    // Reject a preset with an unknown parameter or an out-of-range value.
+    // Reject a preset with an unknown parameter, an out-of-range value,
+    // or a missing parameter. Set lastError_ on a refusal.
     bool validatePresetXml_(const XmlElement& xml);
 
     AudioProcessor& processorRef_;
@@ -94,6 +98,7 @@ private:
     bool isFactory_ = false;
     File currentFile_;
     std::atomic<bool> modified_ { false };
+    String lastError_;
 };
 
 } // namespace MarsDSP::Presets

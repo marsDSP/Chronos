@@ -209,21 +209,48 @@ void PresetBar::stepPreset_(int direction)
     int nextIdx = (currentIdx < 0) ? ((direction > 0) ? 0 : n - 1)
                                    : (currentIdx + direction + n) % n;
 
-    const auto& e = presets[static_cast<size_t>(nextIdx)];
-    if (e.factory)
+    const auto e = presets[static_cast<size_t>(nextIdx)];
+    const auto safe = SafePointer<PresetBar>(this);
+    confirmDiscardChanges_([safe, e]
     {
-        if (! pm_.loadFactoryPreset(e.name, e.bank))
-            NativeMessageBox::showMessageBoxAsync(MessageBoxIconType::WarningIcon,
-                "Preset Load Failed", "The factory preset could not load.");
-    }
-    else
+        if (safe == nullptr) return;
+        if (e.factory)
+        {
+            if (! safe->pm_.loadFactoryPreset(e.name, e.bank))
+                NativeMessageBox::showMessageBoxAsync(MessageBoxIconType::WarningIcon,
+                    "Preset Load Failed", "The factory preset could not load.");
+        }
+        else
+        {
+            const File file = safe->pm_.getStore().presetFile(e.bank, e.name);
+            if (! safe->pm_.loadPreset(file))
+                NativeMessageBox::showMessageBoxAsync(MessageBoxIconType::WarningIcon,
+                    "Preset Load Failed",
+                    "The preset file could not load. " + safe->pm_.getLastError());
+        }
+        safe->refreshName_();
+    });
+}
+
+// One guard for every load. When the current preset has unsaved
+// changes, an async yes-no box names it and proceeds only on yes.
+void PresetBar::confirmDiscardChanges_(std::function<void()> proceed)
+{
+    if (! pm_.isModified())
     {
-        const File file = pm_.getStore().presetFile(e.bank, e.name);
-        if (! pm_.loadPreset(file))
-            NativeMessageBox::showMessageBoxAsync(MessageBoxIconType::WarningIcon,
-                "Preset Load Failed", "The preset file could not load.");
+        proceed();
+        return;
     }
-    refreshName_();
+
+    const auto safe = SafePointer<PresetBar>(this);
+    NativeMessageBox::showYesNoBox(MessageBoxIconType::WarningIcon,
+        "Discard Changes?",
+        "The preset \"" + pm_.getCurrentName() + "\" has unsaved changes. Discard them?",
+        nullptr,
+        ModalCallbackFunction::create([safe, proceed](int r) {
+            if (safe != nullptr && r == 1)
+                proceed();
+        }));
 }
 
 void PresetBar::showMenu_()
@@ -314,12 +341,17 @@ void PresetBar::handleMenuResult_(int result)
         const int idx = result - kMenuFactoryPresetStart;
         if (idx >= 0 && idx < static_cast<int>(menuFactoryPresets_.size()))
         {
-            const auto& e = menuFactoryPresets_[static_cast<size_t>(idx)];
-            if (! pm_.loadFactoryPreset(e.name, e.bank))
-                NativeMessageBox::showMessageBoxAsync(MessageBoxIconType::WarningIcon,
-                    "Preset Load Failed", "The factory preset could not load.");
+            const auto e = menuFactoryPresets_[static_cast<size_t>(idx)];
+            const auto safe = SafePointer<PresetBar>(this);
+            confirmDiscardChanges_([safe, e]
+            {
+                if (safe == nullptr) return;
+                if (! safe->pm_.loadFactoryPreset(e.name, e.bank))
+                    NativeMessageBox::showMessageBoxAsync(MessageBoxIconType::WarningIcon,
+                        "Preset Load Failed", "The factory preset could not load.");
+                safe->refreshName_();
+            });
         }
-        refreshName_();
         return;
     }
 
@@ -328,11 +360,18 @@ void PresetBar::handleMenuResult_(int result)
         const int idx = result - kMenuUserPresetStart;
         if (idx >= 0 && idx < static_cast<int>(menuPresetFiles_.size()))
         {
-            if (! pm_.loadPreset(menuPresetFiles_[static_cast<size_t>(idx)]))
-                NativeMessageBox::showMessageBoxAsync(MessageBoxIconType::WarningIcon,
-                    "Preset Load Failed", "The preset file could not load.");
+            const File file = menuPresetFiles_[static_cast<size_t>(idx)];
+            const auto safe = SafePointer<PresetBar>(this);
+            confirmDiscardChanges_([safe, file]
+            {
+                if (safe == nullptr) return;
+                if (! safe->pm_.loadPreset(file))
+                    NativeMessageBox::showMessageBoxAsync(MessageBoxIconType::WarningIcon,
+                        "Preset Load Failed",
+                        "The preset file could not load. " + safe->pm_.getLastError());
+                safe->refreshName_();
+            });
         }
-        refreshName_();
         return;
     }
 
@@ -343,7 +382,18 @@ void PresetBar::handleMenuResult_(int result)
         case kMenuRename:     doRename_(); break;
         case kMenuDelete:     doDelete_(); break;
         case kMenuCopy:       SystemClipboard::copyTextToClipboard(pm_.copyPresetXml()); break;
-        case kMenuPaste:      pm_.pastePresetXml(SystemClipboard::getTextFromClipboard()); refreshName_(); break;
+        case kMenuPaste:
+        {
+            const String xml = SystemClipboard::getTextFromClipboard();
+            const auto safe = SafePointer<PresetBar>(this);
+            confirmDiscardChanges_([safe, xml]
+            {
+                if (safe == nullptr) return;
+                safe->pm_.pastePresetXml(xml);
+                safe->refreshName_();
+            });
+            break;
+        }
         case kMenuImport:     doImport_(); break;
         case kMenuExport:     doExport_(); break;
         case kMenuShowFolder: pm_.getStore().ensureRootDirectory();
@@ -405,8 +455,17 @@ void PresetBar::completeSaveAs_(const String& name)
             ModalCallbackFunction::create([safe, clean](int r) {
                 if (safe != nullptr && r == 1)
                 {
-                    safe->pm_.getStore().presetFile(safe->pm_.getCurrentBank(), clean).deleteFile();
-                    if (! safe->pm_.saveAs(clean, "", ""))
+                    // Keep the author and category the file held.
+                    String author, category;
+                    const File target = safe->pm_.getStore().presetFile(
+                        safe->pm_.getCurrentBank(), clean);
+                    if (const auto xml = MarsDSP::Presets::PresetStore::loadPresetFile(target))
+                    {
+                        author = xml->getStringAttribute(MarsDSP::Presets::kPresetAuthorProp);
+                        category = xml->getStringAttribute(MarsDSP::Presets::kPresetCategoryProp);
+                    }
+                    target.deleteFile();
+                    if (! safe->pm_.saveAs(clean, author, category))
                         NativeMessageBox::showMessageBoxAsync(MessageBoxIconType::WarningIcon,
                             "Save Failed", "The preset could not save.");
                     safe->refreshName_();
@@ -480,10 +539,19 @@ void PresetBar::doExport_()
     exportChooser_ = std::make_unique<FileChooser>("Export Preset",
         File::getSpecialLocation(File::userDocumentsDirectory), "*.chronos");
     const auto safe = SafePointer<PresetBar>(this);
-    exportChooser_->launchAsync(FileBrowserComponent::saveMode | FileBrowserComponent::canSelectFiles, [safe](const FileChooser& fc) {
+    exportChooser_->launchAsync(FileBrowserComponent::saveMode
+        | FileBrowserComponent::canSelectFiles
+        | FileBrowserComponent::warnAboutOverwriting, [safe](const FileChooser& fc) {
         if (safe == nullptr) return;
-        const File file = fc.getResult();
+        File file = fc.getResult();
         if (file == File()) return;
+
+        // Append the preset extension when the name has none, so the
+        // exported file is visible to the import filter.
+        if (file.getFileExtension().isEmpty())
+            file = file.getSiblingFile(file.getFileName()
+                + String(MarsDSP::Presets::kPresetExtension));
+
         const String xml = safe->pm_.copyPresetXml();
         if (! file.replaceWithText(xml))
             NativeMessageBox::showMessageBoxAsync(MessageBoxIconType::WarningIcon,
@@ -500,10 +568,16 @@ void PresetBar::doImport_()
         if (safe == nullptr) return;
         const File file = fc.getResult();
         if (file == File()) return;
-        if (! safe->pm_.loadPreset(file))
-            NativeMessageBox::showMessageBoxAsync(MessageBoxIconType::WarningIcon,
-                "Import Failed", "The preset file could not load.");
-        safe->refreshName_();
+
+        safe->confirmDiscardChanges_([safe, file]
+        {
+            if (safe == nullptr) return;
+            if (! safe->pm_.loadPreset(file))
+                NativeMessageBox::showMessageBoxAsync(MessageBoxIconType::WarningIcon,
+                    "Import Failed",
+                    "The preset file could not load. " + safe->pm_.getLastError());
+            safe->refreshName_();
+        });
     });
 }
 

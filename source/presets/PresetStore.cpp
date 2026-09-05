@@ -82,25 +82,51 @@ File PresetStore::presetFile(const String& bank, const String& name) const
 {
     const auto root = getRootDirectory();
     const auto fileName = sanitiseName(name) + String(kPresetExtension);
-    if (bank.isEmpty()) return root.getChildFile(fileName);
-    return root.getChildFile(bank).getChildFile(fileName);
+    const auto cleanBank = sanitiseName(bank);
+    if (cleanBank.isEmpty()) return root.getChildFile(fileName);
+    return root.getChildFile(cleanBank).getChildFile(fileName);
+}
+
+String PresetStore::bankForFile(const File& file) const
+{
+    const auto root = getRootDirectory();
+    const auto parent = file.getParentDirectory();
+    if (parent == root) return {};
+    if (parent.getParentDirectory() == root)
+        return parent.getFileName();
+    return {};
 }
 
 String PresetStore::sanitiseName(const String& name)
 {
     auto trimmed = name.trim();
+    if (trimmed.isEmpty()) return {};
 
-    // Strip path separators.
+    // Replace the path separators and the reserved file characters.
     for (auto i = 0; i < trimmed.length(); ++i)
     {
         const auto c = trimmed[i];
-        if (c == '/' || c == '\\')
+        if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?'
+            || c == '"' || c == '<' || c == '>' || c == '|')
             trimmed = trimmed.replaceSection(i, 1, "_");
     }
 
     // Strip leading dots.
     while (trimmed.startsWithChar('.'))
         trimmed = trimmed.substring(1);
+
+    if (trimmed.isEmpty()) return {};
+
+    // Reject the Windows reserved device names case-insensitively.
+    // The base name before any extension carries the rule.
+    const String base = trimmed.upToFirstOccurrenceOf(".", false, false);
+    static const char* const kReserved[] = {
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+    };
+    for (const auto* r : kReserved)
+        if (base.equalsIgnoreCase(r)) return {};
 
     return trimmed;
 }
