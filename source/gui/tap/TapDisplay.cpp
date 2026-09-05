@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 namespace MarsDSP::GUI {
@@ -102,8 +103,7 @@ TapDisplay::TapDisplay(ChronosProcessor& processor)
     // Arrow keys step the delay time and the division.
     setWantsKeyboardFocus(true);
 
-    // Build the halo glyph and the diffusion model once.
-    haloImage_ = makeHaloImage(accentColour_);
+    // Build the diffusion model once.
     if (const double sr = processorRef_.getSampleRate(); sr > 0.0)
         diffusionModel_ = std::make_unique<DiffusionModel>(sr);
 
@@ -170,8 +170,6 @@ void TapDisplay::setMetrics(const Metrics& m)
 void TapDisplay::setAccentColour(const Colour c)
 {
     accentColour_ = c;
-    // Rebuild the halo glyph in the new accent.
-    haloImage_ = makeHaloImage(c);
     repaint();
 }
 
@@ -389,62 +387,108 @@ void TapDisplay::paint(Graphics& g)
     g.setColour(tint(plotFillLit, accent, kTintCentreLine));
     g.drawHorizontalLine(static_cast<int>(centerY), plotBounds.getX(), plotBounds.getRight());
 
-    // The diffusion halo. Draw halos first, largest repeat first, clipped to the plot.
+
     const float diffusion = processorRef_.getParameters().getRawDiffusion();
     const float diffuserSize = processorRef_.getParameters().getRawDiffuserSize();
     const float pxPerSecond = plotBounds.getWidth() / totalTime;
-    const bool haloOn = haloImage_.isValid() && diffusionModel_ != nullptr
+    const bool haloOn = diffusionModel_ != nullptr
                          && haloFade_ > 0.001f && diffusion > 0.001f;
 
     if (haloOn)
     {
         const float sigma1 = diffusionModel_->sigma1Seconds(diffusion, diffuserSize);
-        const float sigmaRef = diffusionModel_->sigmaRef();
         const float baseAlpha = Metrics::kHaloAlpha * haloFade_ * diffusion;
 
-        // Draw the largest repeat first so the smaller halos sit on top.
-        const auto drawHalos = [&](const std::vector<TapTracker::TrackedTap>& taps, bool leftLane)
+
+        struct HaloTap { float x; float gain; float reachPx; float invTwoSigmaSq; };
+
+        const auto drawHaloLane = [&](const std::vector<TapTracker::TrackedTap>& taps, const bool leftLane)
         {
-            for (auto it = taps.rbegin(); it != taps.rend(); ++it)
+            std::vector<HaloTap> blobs;
+            float minSigmaPx = std::numeric_limits<float>::max();
+            for (const auto& tap : taps)
             {
-                const auto& tap = *it;
                 if (tap.dry || tap.key < 1)
                     continue;
                 const float gain = std::clamp(std::fabs(tap.displayedGain), 0.0f, 1.0f);
                 if (gain <= 0.001f)
                     continue;
-
-                const float sigmaN = sigma1 * std::sqrt(static_cast<float>(tap.key));
-                const float halfWidth = Metrics::kHaloSigmas * sigmaN * pxPerSecond;
-                if (2.0f * halfWidth < 1.0f)
+                const float sigmaPx = sigma1 * std::sqrt(static_cast<float>(tap.key)) * pxPerSecond;
+                const float reachPx = Metrics::kHaloSigmas * sigmaPx;
+                if (2.0f * reachPx < 1.0f)
                     continue;
-
                 const float timeNorm = std::clamp(tap.displayedTime / totalTime, 0.0f, 1.0f);
                 const float modOffsetPx = metrics_.pxf(tracker_.modOffset(leftLane, tap.key));
-                const float cx = plotBounds.getX() + timeNorm * plotBounds.getWidth() + modOffsetPx;
-                const float barHeight = gain * maxLaneHeight;
-                const float headY = leftLane ? (centerY - barHeight) : (centerY + barHeight);
-                const float haloH = std::fabs(headY - centerY);
-
-                const float a = baseAlpha;
-
-                g.setOpacity(a);
-                const int drawW = roundToInt(2.0f * halfWidth);
-                const int drawH = roundToInt(haloH);
-                const auto haloRect = Rectangle<int>(roundToInt(cx) - drawW / 2,
-                                                       roundToInt(std::min(centerY, headY)),
-                                                       drawW, drawH);
-                g.drawImageTransformed(haloImage_,
-                    AffineTransform::scale(static_cast<float>(drawW) / static_cast<float>(haloImage_.getWidth()),
-                                         static_cast<float>(drawH) / static_cast<float>(haloImage_.getHeight()))
-                        .translated(haloRect.getX(), haloRect.getY()));
+                minSigmaPx = std::min(minSigmaPx, sigmaPx);
+                blobs.push_back({ plotBounds.getX() + timeNorm * plotBounds.getWidth() + modOffsetPx,
+                                  gain, reachPx, 0.5f / (sigmaPx * sigmaPx) });
             }
+            if (blobs.empty())
+                return;
+            std::sort(blobs.begin(), blobs.end(),
+                      [](const HaloTap& a, const HaloTap& b) { return a.x < b.x; });
+
+            // The wash spans the outer repeats plus their Gaussian tails.
+            const float x0 = std::max(plotBounds.getX(), blobs.front().x - blobs.front().reachPx);
+            const float x1 = std::min(plotBounds.getRight(), blobs.back().x + blobs.back().reachPx);
+            const int xi0 = static_cast<int>(std::floor(x0));
+            const int xi1 = static_cast<int>(std::ceil(x1));
+            const int cols = xi1 - xi0 + 1;
+            if (cols < 2)
+                return;
+
+
+            std::vector<float> colGain(static_cast<std::size_t>(cols));
+            std::vector<float> colAlpha(static_cast<std::size_t>(cols));
+            for (int i = 0; i < cols; ++i)
+            {
+                const float x = static_cast<float>(xi0 + i);
+                float w = 0.0f, gw = 0.0f;
+                for (const auto& b : blobs)
+                {
+                    const float dx = x - b.x;
+                    if (std::fabs(dx) > b.reachPx)
+                        continue;
+                    const float wn = std::exp(-dx * dx * b.invTwoSigmaSq);
+                    w += wn;
+                    gw += b.gain * wn;
+                }
+                const float gain = (w > 1e-6f) ? (gw / w) : 0.0f;
+                colGain[static_cast<std::size_t>(i)] = gain;
+                colAlpha[static_cast<std::size_t>(i)] =
+                    std::clamp(baseAlpha * std::sqrt(gain) * std::min(w, 1.0f), 0.0f, 1.0f);
+            }
+
+            // The top edge, one vertex per column, closed back along the centre.
+            const float dir = leftLane ? -1.0f : 1.0f;
+            Path wash;
+            wash.startNewSubPath(static_cast<float>(xi0), centerY);
+            for (int i = 0; i < cols; ++i)
+                wash.lineTo(static_cast<float>(xi0 + i),
+                            centerY + dir * colGain[static_cast<std::size_t>(i)] * maxLaneHeight);
+            wash.lineTo(static_cast<float>(xi1), centerY);
+            wash.closeSubPath();
+
+            ColourGradient shade(accent.withAlpha(colAlpha.front()),
+                                 Point<float>(static_cast<float>(xi0), centerY),
+                                 accent.withAlpha(colAlpha.back()),
+                                 Point<float>(static_cast<float>(xi1), centerY), false);
+            constexpr int kMaxStops = 256;
+            const int sigmaStride = std::max(1, static_cast<int>(minSigmaPx * 0.5f));
+            const int stride = std::max(1, std::min((cols + kMaxStops - 1) / kMaxStops, sigmaStride));
+            const auto invSpan = 1.0 / static_cast<double>(cols - 1);
+            for (int i = stride; i < cols - 1; i += stride)
+                shade.addColour(static_cast<double>(i) * invSpan,
+                                accent.withAlpha(colAlpha[static_cast<std::size_t>(i)]));
+
+            g.setGradientFill(shade);
+            g.fillPath(wash);
         };
 
         Graphics::ScopedSaveState ss(g);
         g.reduceClipRegion(plotBounds.toNearestInt());
-        drawHalos(tracker_.lane(true), true);
-        drawHalos(tracker_.lane(false), false);
+        drawHaloLane(tracker_.lane(true), true);
+        drawHaloLane(tracker_.lane(false), false);
     }
 
     // Draw taps. The head scales with the displayed gain and the activity.

@@ -10,7 +10,6 @@
 #include "TapSimulation.h"
 #include "TapTracker.h"
 #include "DiffusionModel.h"
-#include "HaloImage.h"
 #include "utils/animation/Animation.h"
 #include <atomic>
 #include <vector>
@@ -73,7 +72,6 @@ private:
     float currentInputLevelL_ = 0.0f;
     float currentInputLevelR_ = 0.0f;
 
-    Image haloImage_;
     float haloFade_ = 0.0f;
     MarsDSP::Animation::Animation<float> haloFadeAnim_ { MarsDSP::Animation::kSlowTimeMs,
                                       MarsDSP::Animation::kEaseInOut,
