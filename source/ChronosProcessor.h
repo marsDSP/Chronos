@@ -6,8 +6,8 @@
 #include "ChronosParameters.h"
 #include "utils/memory/SpscFifo.h"
 #include "gui/tap/TapFeedFrame.h"
-#include "state/EditHistory.h"
-#include "presets/PresetManager.h"
+#include "utils/state/EditHistory.h"
+#include "utils/presets/PresetManager.h"
 
 //==============================================================================
 class ChronosProcessor final : public AudioProcessor

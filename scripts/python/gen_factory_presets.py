@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-    Regenerate and regression-check source/presets/FactoryPresets.h.
+    Regenerate and regression-check source/utils/presets/FactoryPresets.h.
 
     The canonical preset definitions live in this script. Run without
     arguments to check the committed header against the canonical data.
@@ -63,7 +63,7 @@ PRESETS: list[tuple[str, str, list[tuple[str, float]]]] = [
     ]),
 ]
 
-HEADER_PATH = Path(__file__).resolve().parents[2] / "source" / "presets" / "FactoryPresets.h"
+HEADER_PATH = Path(__file__).resolve().parents[2] / "source" / "utils" / "presets" / "FactoryPresets.h"
 
 
 def _camel(name: str) -> str:

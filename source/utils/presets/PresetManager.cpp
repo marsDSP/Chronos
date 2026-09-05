@@ -1,6 +1,6 @@
 #include "PresetManager.h"
-#include "../ChronosProcessor.h"
-#include "../ChronosParameters.h"
+#include "../../ChronosProcessor.h"
+#include "../../ChronosParameters.h"
 #include "../state/EditHistory.h"
 
 namespace MarsDSP::Presets {

@@ -102,7 +102,7 @@ if(BUILD_TEST_HARNESSES)
 
     # Edit history harness (rev G7 appendix A). StubProcessor pattern.
     add_executable(edit_history_check harnesses/gui/edit_history_check.cpp
-        ${CMAKE_SOURCE_DIR}/source/state/EditHistory.cpp)
+        ${CMAKE_SOURCE_DIR}/source/utils/state/EditHistory.cpp)
     target_link_libraries(edit_history_check PRIVATE SharedCode
         juce::juce_audio_processors juce::juce_gui_basics)
 
@@ -114,9 +114,9 @@ if(BUILD_TEST_HARNESSES)
         juce::juce_audio_processors juce::juce_dsp juce::juce_gui_basics)
 
     add_executable(preset_store_check harnesses/gui/preset_store_check.cpp
-        ${CMAKE_SOURCE_DIR}/source/presets/PresetStore.cpp
-        ${CMAKE_SOURCE_DIR}/source/presets/PresetManager.cpp
-        ${CMAKE_SOURCE_DIR}/source/state/EditHistory.cpp)
+        ${CMAKE_SOURCE_DIR}/source/utils/presets/PresetStore.cpp
+        ${CMAKE_SOURCE_DIR}/source/utils/presets/PresetManager.cpp
+        ${CMAKE_SOURCE_DIR}/source/utils/state/EditHistory.cpp)
     target_link_libraries(preset_store_check PRIVATE SharedCode
         juce::juce_audio_processors juce::juce_dsp juce::juce_gui_basics)
 

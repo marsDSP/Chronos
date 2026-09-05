@@ -1,6 +1,6 @@
 #include "PresetBar.h"
-#include "../presets/PresetManager.h"
-#include "../presets/PresetStore.h"
+#include "utils/presets/PresetManager.h"
+#include "utils/presets/PresetStore.h"
 #include "Fonts.h"
 
 #include <map>
