@@ -3,7 +3,7 @@
 namespace MarsDSP::GUI::Knobs {
 
 // Value hold duration in milliseconds after the pointer leaves or a drag ends.
-static constexpr int kValueHoldMs = 900;
+static constexpr int kValueHoldMs = 250;
 
 PDLKnob::PDLKnob(const String &labelText,
                  AudioProcessorValueTreeState &state,
@@ -96,6 +96,18 @@ void PDLKnob::mouseEnter(const MouseEvent &)
     stopTimer();
     showValue_ = true;
     repaint();
+}
+
+void PDLKnob::mouseMove(const MouseEvent &)
+{
+    // A missed enter cannot delay the swap. Set both flags when either is false.
+    if (! hovered_ || ! showValue_)
+    {
+        hovered_ = true;
+        stopTimer();
+        showValue_ = true;
+        repaint();
+    }
 }
 
 void PDLKnob::mouseExit(const MouseEvent &)

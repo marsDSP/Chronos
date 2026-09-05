@@ -51,6 +51,9 @@ namespace MarsDSP::GUI::Knobs {
             sliders_.push_back(s);
         }
 
+        // Store the scale metrics. The editor calls this in resized.
+        void setMetrics(const Metrics& m) { metrics_ = m; }
+
         void drawRotarySlider(Graphics &g,
                               const int x,
                               const int y,
@@ -67,14 +70,46 @@ namespace MarsDSP::GUI::Knobs {
         const auto rw = radius * 2.0f;
         const auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
 
+        // The arc sits at the outer edge. The artwork shrinks inside the
+        // arc so the cap never overlaps the ring.
+        const float arcStroke = metrics_.stroke(Metrics::kKnobArcStroke);
+        const float arcGap    = metrics_.pxf(Metrics::kKnobArcGap);
+        const float arcRadius = radius - arcStroke * 0.5f;
+        const float artworkDiameter = rw - 2.0f * (arcStroke + arcGap);
+
+        // The inert alpha applies to the arcs and the bitmap layers.
+        const float inertA = slider.isEnabled() ? 1.0f : kInertAlpha;
+
+        // Draw the track arc and the value arc before the bitmap layers.
+        {
+            Path trackArc;
+            trackArc.addCentredArc(centreX, centreY, arcRadius, arcRadius, 0.0f,
+                                   rotaryStartAngle, rotaryEndAngle, true);
+            g.setColour(Colours::knobArcTrack.withMultipliedAlpha(inertA));
+            g.strokePath(trackArc, PathStrokeType(arcStroke, PathStrokeType::curved, PathStrokeType::rounded));
+
+            const float originProp = static_cast<float>(
+                slider.getProperties().getWithDefault("arcOrigin", 0.0));
+            const float originAngle = rotaryStartAngle + originProp * (rotaryEndAngle - rotaryStartAngle);
+            const float a0 = std::min(originAngle, angle);
+            const float a1 = std::max(originAngle, angle);
+
+            const Colour arcCol = Colour(static_cast<juce::uint32>(static_cast<int>(
+                slider.getProperties().getWithDefault("arcColour",
+                    static_cast<int>(Colours::accentDelayDigital.getARGB())))));
+            g.setColour(arcCol.withMultipliedAlpha(inertA));
+            Path valueArc;
+            valueArc.addCentredArc(centreX, centreY, arcRadius, arcRadius, 0.0f, a0, a1, true);
+            g.strokePath(valueArc, PathStrokeType(arcStroke, PathStrokeType::curved, PathStrokeType::rounded));
+        }
 
         // Read the display scale. Clamp to [1, 4]. Fall back to 1.0 off-display.
         double scaleFactor = Component::getApproximateScaleFactorForComponent(&slider);
         if (scaleFactor < 1.0) scaleFactor = 1.0;
         if (scaleFactor > 4.0) scaleFactor = 4.0;
 
-        // The cache key is the physical diameter.
-        const int d = juce::roundToInt(rw);
+        // The cache key is the artwork diameter.
+        const int d = juce::roundToInt(artworkDiameter);
         const int physicalD = juce::roundToInt(static_cast<double>(d) * scaleFactor);
         const float scale = static_cast<float>(d) / 431.0f;
 
@@ -111,7 +146,7 @@ namespace MarsDSP::GUI::Knobs {
 
         g.setImageResamplingQuality(Graphics::highResamplingQuality);
 
-        // An inert knob draws every layer at the inert alpha.
+        // An inert knob draws the bitmap layers at the inert alpha.
         if (! slider.isEnabled())
             g.setOpacity(kInertAlpha);
 
@@ -194,6 +229,7 @@ namespace MarsDSP::GUI::Knobs {
 
         std::vector<CachedFrames> cache_;
         std::vector<Component::SafePointer<Slider>> sliders_;
+        Metrics metrics_;
 
         void timerCallback() override
         {
@@ -279,26 +315,6 @@ namespace MarsDSP::GUI::Knobs {
         Image srcRectangle2;
     };
 
-    namespace KnobHelpers
-    {
-        inline std::pair<float, float>getArcAngles(const float sliderPos,
-                                                    const float rotaryStartAngle,
-                                                    const float rotaryEndAngle,
-                                                    const Slider &slider)
-        {
-            const auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
-
-            if (slider.getProperties().getWithDefault("drawFromMiddle", false))
-            {
-                const float middlePos = 0.5f;
-                const auto middleAngle = rotaryStartAngle + middlePos * (rotaryEndAngle - rotaryStartAngle);
-                return {std::min(angle, middleAngle), std::max(angle, middleAngle)};
-            }
-
-            return {rotaryStartAngle, angle};
-        }
-    }
-
     // A slider whose arrow keys step in proportion space, so the skew
     // applies at the low end. The owner supplies the write. The vendored
     // Slider has no keyboard step override, and its built-in step is
@@ -344,10 +360,18 @@ namespace MarsDSP::GUI::Knobs {
         void resized() override;
         Slider &getSlider() { return slider; }
         void setLabelText(const String &text) { labelText_ = text; repaint(); }
-        void setDrawFromMiddle(bool v) { slider.getProperties().set("drawFromMiddle", v); }
 
-        // Store the accent colour for the value text.
-        void setAccentColour(Colour c) { accentColour_ = c; repaint(); }
+        // Set the arc origin as a proportion. The value arc grows from
+        // the origin angle in either direction. Default is zero.
+        void setArcOrigin(float proportion) { slider.getProperties().set("arcOrigin", proportion); }
+
+        // Store the accent colour for the value text and the value arc.
+        void setAccentColour(Colour c)
+        {
+            accentColour_ = c;
+            slider.getProperties().set("arcColour", static_cast<int>(c.getARGB()));
+            repaint();
+        }
 
         // Store the scale metrics and relayout.
         void setMetrics(const Metrics& m) { metrics_ = m; resized(); repaint(); }
@@ -362,6 +386,7 @@ namespace MarsDSP::GUI::Knobs {
         // Mouse listener callbacks for the slider.
         void mouseEnter(const MouseEvent &e) override;
         void mouseExit(const MouseEvent &e) override;
+        void mouseMove(const MouseEvent &e) override;
         void mouseDown(const MouseEvent &e) override;
         void mouseWheelMove(const MouseEvent &e, const MouseWheelDetails &wheel) override;
 

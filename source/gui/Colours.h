@@ -29,6 +29,7 @@ struct Colours {
 
     // Knob colours
     static inline const Colour knobTrack       { 0x14ABABAB };
+    static inline const Colour knobArcTrack    { 0xFF2E2E31 };
     static inline const Colour knobFill        { 0xFF303030 };
     static inline const Colour knobGradientTop { 0xFF464646 };
     static inline const Colour knobGradientBot { 0xFF101010 };

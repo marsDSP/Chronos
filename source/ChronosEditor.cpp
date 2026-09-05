@@ -31,8 +31,7 @@ private:
 // rowH is the pixel height of the knob row (label band plus gap plus knob).
 // hasReadout accounts for a value readout below the knob row.
 float knobDiameterPx(const Metrics& m, const float contentW, const float rowH, const int n,
-                    const bool hasReadout,
-                    const float dMaxDU = static_cast<float>(Metrics::kKnobMax))
+                    const bool hasReadout)
 {
     const float g = m.pxf(static_cast<float>(Metrics::kKnobGutter));
     const float cellW = (contentW - static_cast<float>(n - 1) * g) / static_cast<float>(n);
@@ -45,7 +44,7 @@ float knobDiameterPx(const Metrics& m, const float contentW, const float rowH, c
                : 0.0f);
     return std::clamp(std::min(cellW, cellH),
                       m.pxf(static_cast<float>(Metrics::kKnobMin)),
-                      m.pxf(dMaxDU));
+                      m.pxf(static_cast<float>(Metrics::kKnobMax)));
 }
 
 // Return the PDLKnob cell height in pixels: label band + gap + knob.
@@ -270,6 +269,10 @@ public:
         dampKnob.setTooltip("Set the repeat damping cutoff. Range 200 to 20000 hertz.");
         loopCutKnob.setTooltip("Set the repeat loop low cut. Range 20 to 2000 hertz.");
         delayModeSeg_.setTooltip("Select the delay core type.");
+
+        // The loop drive arc grows from the 0 dB angle in either direction.
+        if (auto* p = proc.getAPVTS().getParameter(loopDriveParamID.getParamID()))
+            loopDriveKnob.setArcOrigin(static_cast<float>(p->getNormalisableRange().convertTo0to1(0.0f)));
     }
 
     void resized() override
@@ -581,6 +584,10 @@ public:
         mixKnob.setTooltip("Set the dry to wet blend. Range 0 to 100 percent.");
         gainKnob.setTooltip("Set the output gain. Range minus 24 to 12 decibels.");
         bitsKnob.setTooltip("Set the output bit depth. Range 4 to 32 bits.");
+
+        // The gain arc grows from the 0 dB angle in either direction.
+        if (auto* p = proc.getAPVTS().getParameter(gainParamID.getParamID()))
+            gainKnob.setArcOrigin(static_cast<float>(p->getNormalisableRange().convertTo0to1(0.0f)));
     }
 
     void resized() override
@@ -823,6 +830,7 @@ void ChronosEditor::resized()
     const auto m = Metrics::fromWidth(getWidth());
     metrics_ = m;
     lnf_.setMetrics(m);
+    knobLnf_.setMetrics(m);
 
     header_.setMetrics(m);
     footer_.setMetrics(m);

@@ -137,6 +137,10 @@ namespace MarsDSP::GUI
         static constexpr float kPadHandleR  = 6.0f;
         static constexpr float kDragDeadZone = 4.0f;
 
+        // The value arc geometry (section 4.4), design units.
+        static constexpr float kKnobArcStroke = 2.5f;
+        static constexpr float kKnobArcGap    = 2.0f;
+
         // The most slack a shorter card may leave in a grid row (section 4.1).
         static constexpr int kRowSlackMaxDU = 12;
 

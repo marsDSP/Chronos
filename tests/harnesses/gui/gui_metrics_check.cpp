@@ -121,8 +121,7 @@ constexpr int kNumCoeffs = static_cast<int>(std::size(kCoeffSets));
 // Knob diameter derivation (mirrors ChronosEditor.cpp section 4.4).
 float knobDiameterPx(const MarsDSP::GUI::Metrics& m,
                      const float contentW, const float rowH,
-                     const int n, const bool hasReadout,
-                     const float dMaxDU)
+                     const int n, const bool hasReadout)
 {
     const float g = m.pxf(static_cast<float>(MarsDSP::GUI::Metrics::kKnobGutter));
     const float cellW = (contentW - static_cast<float>(n - 1) * g) / static_cast<float>(n);
@@ -135,7 +134,7 @@ float knobDiameterPx(const MarsDSP::GUI::Metrics& m,
                : 0.0f);
     return std::clamp(std::min(cellW, cellH),
                       m.pxf(static_cast<float>(MarsDSP::GUI::Metrics::kKnobMin)),
-                      m.pxf(dMaxDU));
+                      m.pxf(static_cast<float>(MarsDSP::GUI::Metrics::kKnobMax)));
 }
 
 // The nine band heights of section 4.1, in order.
@@ -353,8 +352,7 @@ int runAll()
             const float fs = m.s;
             const float contentW = 200.0f * fs;
             const float rowH = 80.0f * fs;
-            const float dStd = knobDiameterPx(m, contentW, rowH, 2, false,
-                                            static_cast<float>(MarsDSP::GUI::Metrics::kKnobMax));
+            const float dStd = knobDiameterPx(m, contentW, rowH, 2, false);
             if (dStd < 24.0f * fs - 1e-3f || dStd > 58.0f * fs + 1e-3f)
             {
                 FAIL("s={:.2f} standard knob {} out of [24s, 58s]=[{}, {}]", s, dStd,
