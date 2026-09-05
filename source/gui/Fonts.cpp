@@ -104,10 +104,12 @@ String shortLabel(const String& full)
         { "OUTPUT HPF",     "HPF"   },
         { "OUTPUT LPF",     "LPF"   },
         { "LOOP LPF",       "LPF"   },
+        { "LOW CUT",        "CUT"   },
         { "DIFFUSION",      "DIFF"  },
         { "DIFFUSER SIZE",  "SIZE"  },
         { "MOD DEPTH",      "DEPTH" },
         { "MOD RATE",       "RATE"  },
+        { "BIT DEPTH",      "BITS"  },
         { "ANTI-ALIAS",     "ALIAS" },
     };
 

@@ -1,90 +1,54 @@
 #include "Card.h"
-#include "Colours.h"
+#include "Fonts.h"
 #include "MetricsConsumer.h"
 
 namespace MarsDSP::GUI {
 
-Card::Card()
+Card::Card(const String& title)
+    : title_(title.toUpperCase())
 {
-    subTabs_.onSubTabChanged = [this](const int index)
+}
+
+void Card::setContent(std::unique_ptr<Component> panel)
+{
+    if (content_ != nullptr)
+        removeChildComponent(content_.get());
+
+    content_ = std::move(panel);
+    if (content_ != nullptr)
     {
-        setSelectedContent(index);
-    };
-    addAndMakeVisible(subTabs_);
+        addAndMakeVisible(*content_);
+        if (auto* ac = dynamic_cast<AccentConsumer*>(content_.get()))
+            ac->setAccentColour(accent_);
+    }
+    resized();
+    repaint();
 }
 
 void Card::setAccentColour(const Colour c)
 {
     accent_ = c;
-    subTabs_.setAccentColour(c);
-
-    for (auto& panel : contents_)
-        if (auto* ac = dynamic_cast<AccentConsumer*>(panel.get()))
+    if (content_ != nullptr)
+        if (auto* ac = dynamic_cast<AccentConsumer*>(content_.get()))
             ac->setAccentColour(c);
-
     repaint();
 }
 
 void Card::setMetrics(const Metrics& m)
 {
     metrics_ = m;
-    subTabs_.setMetrics(m);
-
-    for (auto& panel : contents_)
-        if (auto* mc = dynamic_cast<MetricsConsumer*>(panel.get()))
+    if (content_ != nullptr)
+        if (auto* mc = dynamic_cast<MetricsConsumer*>(content_.get()))
             mc->setMetrics(m);
-
     resized();
     repaint();
 }
 
 void Card::setEnablement(const EnablementState& state)
 {
-    for (auto& panel : contents_)
-        if (auto* ec = dynamic_cast<EnablementConsumer*>(panel.get()))
+    if (content_ != nullptr)
+        if (auto* ec = dynamic_cast<EnablementConsumer*>(content_.get()))
             ec->setControlsEnabled(state);
-}
-
-void Card::addContent(const String& tabName, std::unique_ptr<Component> panel)
-{
-    const int index = static_cast<int>(contents_.size());
-    subTabs_.addSubTab(tabName);
-
-    if (panel != nullptr)
-    {
-        addChildComponent(*panel);
-        contents_.push_back(std::move(panel));
-    }
-    else
-    {
-        auto placeholder = std::make_unique<Component>();
-        addChildComponent(*placeholder);
-        contents_.push_back(std::move(placeholder));
-    }
-
-    if (index == 0)
-        setSelectedContent(0);
-
-    resized();
-}
-
-void Card::setSelectedContent(const int index)
-{
-    // Clamp to the panel count, so a restored index cannot hide every panel.
-    const int count = static_cast<int>(contents_.size());
-    const int clamped = (count > 0) ? std::clamp(index, 0, count - 1) : 0;
-    subTabs_.setSelectedSubTab(clamped);
-    for (int i = 0; i < count; ++i)
-    {
-        const bool visible = (i == clamped);
-        contents_[static_cast<std::size_t>(i)]->setVisible(visible);
-    }
-    resized();
-}
-
-int Card::getSelectedIndex() const
-{
-    return subTabs_.getSelectedSubTab();
 }
 
 void Card::paint(Graphics& g)
@@ -98,28 +62,33 @@ void Card::paint(Graphics& g)
 
     g.setColour(tint(Colours::panelBackground, accent_, kTintCardBorder));
     g.drawRoundedRectangle(bounds.reduced(sw / 2), r, sw);
+
+    // The title row. Semibold, primary ink, uppercase, tracked, left aligned.
+    const int titleH = metrics_.px(static_cast<float>(Metrics::kCardTitleH));
+    const int hpad = metrics_.px(static_cast<float>(Metrics::kCardHPad));
+    Font titleFont = Fonts::font(Fonts::Weight::Semibold, metrics_.font(Metrics::kCardTitleFont));
+    titleFont.setExtraKerningFactor(Metrics::kTitleTracking);
+    g.setFont(titleFont);
+    g.setColour(Colours::textPrimary);
+    g.drawText(title_, hpad, 0, getWidth() - 2 * hpad, titleH, Justification::centredLeft, false);
 }
 
 void Card::resized()
 {
+    if (content_ == nullptr)
+        return;
+
     const int border = metrics_.px(static_cast<float>(Metrics::kCardBorderStroke));
     const int hpad = metrics_.px(static_cast<float>(Metrics::kCardHPad));
-    const int subTabH = metrics_.px(static_cast<float>(Metrics::kSubTabStripH));
-    const int gap = metrics_.px(static_cast<float>(Metrics::kSubTabGap));
+    const int titleH = metrics_.px(static_cast<float>(Metrics::kCardTitleH));
+    const int titleGap = metrics_.px(static_cast<float>(Metrics::kCardTitleGap));
     const int bottomPad = metrics_.px(static_cast<float>(Metrics::kCardBottomPad));
 
     const int x = border + hpad;
+    const int y = border + titleH + titleGap;
     const int w = getWidth() - 2 * (border + hpad);
-    subTabs_.setBounds(x, border, w, subTabH);
-
-    const int contentY = border + subTabH + gap;
-    const int contentH = getHeight() - contentY - bottomPad;
-    const Rectangle<int> contentArea(x, contentY, w, contentH);
-    for (auto& panel : contents_)
-    {
-        if (panel->isVisible())
-            panel->setBounds(contentArea);
-    }
+    const int h = getHeight() - y - bottomPad;
+    content_->setBounds(x, y, w, h);
 }
 
 } // namespace MarsDSP::GUI

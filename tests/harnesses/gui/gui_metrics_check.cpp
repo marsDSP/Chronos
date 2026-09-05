@@ -1,5 +1,5 @@
 /**
- * Metrics, tint, tick, and band harness for rev G4 (spec appendix B).
+ * Metrics, tint, tick, and band harness for rev G7 (spec appendix B).
  * Host-free: links Colours.h, Metrics.h, and the tick generator only.
  * It does not open an editor.
  */
@@ -8,6 +8,7 @@
 #include "gui/Metrics.h"
 #include "gui/tap/TickGenerator.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -38,8 +39,7 @@ float luminance(juce::Colour c)
          + 0.0722f * lineariseChannel(c.getFloatBlue());
 }
 
-// The WCAG contrast ratio between two colours. The ratio is 1 at equal
-// luminance and 21 at full black against full white.
+// The WCAG contrast ratio between two colours.
 float contrast(juce::Colour a, juce::Colour b)
 {
     const float la = luminance(a);
@@ -54,6 +54,7 @@ struct FontConst { const char* name; float du; };
 const FontConst kFontConsts[] = {
     { "wordmark",   MarsDSP::GUI::Metrics::kWordmarkFont },
     { "knobLabel",  MarsDSP::GUI::Metrics::kKnobLabelFont },
+    { "cardTitle",  MarsDSP::GUI::Metrics::kCardTitleFont },
     { "footer",     MarsDSP::GUI::Metrics::kFooterFont },
     { "tapLabel",   MarsDSP::GUI::Metrics::kTapLabelFont },
     { "tapReadout", MarsDSP::GUI::Metrics::kTapReadoutFont },
@@ -62,8 +63,8 @@ const FontConst kFontConsts[] = {
     { "menu",       MarsDSP::GUI::Metrics::kMenuFont },
     { "tooltip",    MarsDSP::GUI::Metrics::kTooltipFont },
     { "segment",    MarsDSP::GUI::Metrics::kSegmentFont },
-    { "subTab",     MarsDSP::GUI::Metrics::kSubTabFont },
     { "readout",    MarsDSP::GUI::Metrics::kReadoutFont },
+    { "padReadout", MarsDSP::GUI::Metrics::kPadReadoutFont },
     { "ruler",      MarsDSP::GUI::Metrics::kRulerFont },
     { "presetBar",  MarsDSP::GUI::Metrics::kPresetBarFont },
 };
@@ -118,7 +119,6 @@ const CoeffSet kCoeffSets[] = {
 constexpr int kNumCoeffs = static_cast<int>(std::size(kCoeffSets));
 
 // Knob diameter derivation (mirrors ChronosEditor.cpp section 4.4).
-// Re-implemented here because the original lives in an anonymous namespace.
 float knobDiameterPx(const MarsDSP::GUI::Metrics& m,
                      const float contentW, const float rowH,
                      const int n, const bool hasReadout,
@@ -138,7 +138,7 @@ float knobDiameterPx(const MarsDSP::GUI::Metrics& m,
                       m.pxf(dMaxDU));
 }
 
-// The nine band heights of section 4.3, in order.
+// The nine band heights of section 4.1, in order.
 struct BandSet { const char* name; int du; };
 const BandSet kBands[] = {
     { "topPad",    MarsDSP::GUI::Metrics::kTopPad },
@@ -146,21 +146,32 @@ const BandSet kBands[] = {
     { "gapHeader", MarsDSP::GUI::Metrics::kGapHeader },
     { "tap",       MarsDSP::GUI::Metrics::kTapH },
     { "gapTap",    MarsDSP::GUI::Metrics::kGapTap },
-    { "cardRow",   MarsDSP::GUI::Metrics::kCardRowH },
+    { "cardArea",  MarsDSP::GUI::Metrics::kCardAreaH },
     { "gapCards",  MarsDSP::GUI::Metrics::kGapCards },
     { "footer",    MarsDSP::GUI::Metrics::kFooterH },
     { "bottomPad", MarsDSP::GUI::Metrics::kBottomPad },
 };
 constexpr int kNumBands = static_cast<int>(std::size(kBands));
 
-// Design constants swept in section 5 (px non-decreasing check).
+// The six declared card heights (section 4.1).
+const BandSet kCardHeights[] = {
+    { "time",     MarsDSP::GUI::Metrics::kTimeCardH },
+    { "repeats",  MarsDSP::GUI::Metrics::kRepeatsCardH },
+    { "drive",    MarsDSP::GUI::Metrics::kDriveCardH },
+    { "filter",   MarsDSP::GUI::Metrics::kFilterCardH },
+    { "level",    MarsDSP::GUI::Metrics::kLevelCardH },
+    { "diffuser", MarsDSP::GUI::Metrics::kDiffuserCardH },
+};
+constexpr int kNumCardHeights = static_cast<int>(std::size(kCardHeights));
+
+// Design constants swept in the px non-decreasing check.
 const float kDesignConsts[] = {
     static_cast<float>(MarsDSP::GUI::Metrics::kTopPad),
     static_cast<float>(MarsDSP::GUI::Metrics::kHeaderH),
     static_cast<float>(MarsDSP::GUI::Metrics::kGapHeader),
     static_cast<float>(MarsDSP::GUI::Metrics::kTapH),
     static_cast<float>(MarsDSP::GUI::Metrics::kGapTap),
-    static_cast<float>(MarsDSP::GUI::Metrics::kCardRowH),
+    static_cast<float>(MarsDSP::GUI::Metrics::kCardAreaH),
     static_cast<float>(MarsDSP::GUI::Metrics::kGapCards),
     static_cast<float>(MarsDSP::GUI::Metrics::kFooterH),
     static_cast<float>(MarsDSP::GUI::Metrics::kBottomPad),
@@ -169,7 +180,6 @@ const float kDesignConsts[] = {
     static_cast<float>(MarsDSP::GUI::Metrics::kKnobGutter),
     static_cast<float>(MarsDSP::GUI::Metrics::kKnobMin),
     static_cast<float>(MarsDSP::GUI::Metrics::kKnobMax),
-    static_cast<float>(MarsDSP::GUI::Metrics::kHeroKnobMax),
     static_cast<float>(MarsDSP::GUI::Metrics::kPresetBarW),
     static_cast<float>(MarsDSP::GUI::Metrics::kPresetBarH),
     static_cast<float>(MarsDSP::GUI::Metrics::kPresetBarArrow),
@@ -216,12 +226,10 @@ int runAll()
             const float hue = static_cast<float>(h) * (360.0f / 64.0f);
             const juce::Colour accent = juce::Colour::fromHSV(hue, 1.0f, 1.0f, 1.0f);
 
-            juce::Colour prev {};
             float prevLum = -1.0f;
             for (int i = 0; i < kNumCoeffs; ++i)
             {
                 const auto& cs = kCoeffSets[i];
-                // The first five use tintInk; cardBorder and centreLine use tint.
                 const juce::Colour c =
                     (i < 5)
                         ? MarsDSP::GUI::tintInk(accent, cs.coeff)
@@ -237,7 +245,6 @@ int runAll()
                         FAIL("accent {} coeff {} channel {} = {} out of gamut", h, cs.name, ch, v);
                 }
 
-                // The spec orders the first five by luminance.
                 if (i < 5)
                 {
                     const float lum = luminance(c);
@@ -256,7 +263,7 @@ int runAll()
     // ----------------------------------------------------------------
     g_section = "tick_non_emptiness";
     {
-        const float Ws[] = { 410.0f, 486.0f, 640.0f, 1024.0f };
+        const float Ws[] = { 200.0f, 340.0f, 496.0f, 640.0f, 1024.0f };
         constexpr int kNumW = static_cast<int>(std::size(Ws));
         bool anyFail = false;
         for (int wi = 0; wi < kNumW; ++wi)
@@ -280,7 +287,7 @@ int runAll()
             }
         }
         if (! anyFail)
-            std::println("tick non-emptiness (2000 x 4 W): PASS");
+            std::println("tick non-emptiness (2000 x {} W): PASS", kNumW);
     }
 
     // ----------------------------------------------------------------
@@ -288,7 +295,7 @@ int runAll()
     // ----------------------------------------------------------------
     g_section = "tick_cleanliness";
     {
-        const float W = 640.0f;
+        const float W = 496.0f;
         for (int step = 0; step < 2000; ++step)
         {
             const float T = 0.001f * std::pow(10.0f, 3.0f * static_cast<float>(step) / 1999.0f);
@@ -296,7 +303,6 @@ int runAll()
             if (t.majorStep <= 0.0f)
                 FAIL("T={}: majorStep {} non-positive", T, t.majorStep);
 
-            // The major step must be a 1, 2, or 5 mantissa times a power of ten.
             const float mant = t.majorStep;
             const float decade = std::pow(10.0f, std::floor(std::log10(mant)));
             const float norm = mant / decade;
@@ -305,7 +311,6 @@ int runAll()
                   || std::fabs(norm - 5.0f) < 1e-6f))
                 FAIL("T={}: majorStep {} not in {{1,2,5}} x 10^n (norm {})", T, t.majorStep, norm);
 
-            // The minor step (the interval between minors) must divide the major step exactly.
             if (t.minors.size() >= 2)
             {
                 const float minorStep = t.minors[1] - t.minors[0];
@@ -344,24 +349,16 @@ int runAll()
                 prevPx[ci] = v;
             }
 
-            // Knob derivation bounds: standard in [24s, 58s], hero in [24s, 72s].
+            // Knob derivation bounds: standard in [24s, 58s].
             const float fs = m.s;
             const float contentW = 200.0f * fs;
             const float rowH = 80.0f * fs;
             const float dStd = knobDiameterPx(m, contentW, rowH, 2, false,
                                             static_cast<float>(MarsDSP::GUI::Metrics::kKnobMax));
-            const float dHero = knobDiameterPx(m, contentW, rowH, 2, false,
-                                             static_cast<float>(MarsDSP::GUI::Metrics::kHeroKnobMax));
             if (dStd < 24.0f * fs - 1e-3f || dStd > 58.0f * fs + 1e-3f)
             {
                 FAIL("s={:.2f} standard knob {} out of [24s, 58s]=[{}, {}]", s, dStd,
                      24.0f * fs, 58.0f * fs);
-                anyFail = true;
-            }
-            if (dHero < 24.0f * fs - 1e-3f || dHero > 72.0f * fs + 1e-3f)
-            {
-                FAIL("s={:.2f} hero knob {} out of [24s, 72s]=[{}, {}]", s, dHero,
-                     24.0f * fs, 72.0f * fs);
                 anyFail = true;
             }
         }
@@ -370,11 +367,22 @@ int runAll()
     }
 
     // ----------------------------------------------------------------
-    // 6. Band closure: 9 bands sum to px(640) within 1 px, card content >= tallest.
+    // 6. Band closure: 9 bands sum to px(932), card sums, row/col, slack.
     // ----------------------------------------------------------------
     g_section = "band_closure";
     {
         bool anyFail = false;
+
+        // The design-unit band heights must sum to 932 exactly.
+        int sumDU = 0;
+        for (int bi = 0; bi < kNumBands; ++bi)
+            sumDU += kBands[bi].du;
+        if (sumDU != MarsDSP::GUI::Metrics::kDesignHeight)
+        {
+            FAIL("band design-unit sum {} != 932 (regression)", sumDU);
+            anyFail = true;
+        }
+
         for (int si = 0; si <= 96; ++si)
         {
             const float s = 0.64f + static_cast<float>(si) * 0.01f;
@@ -382,46 +390,55 @@ int runAll()
                 MarsDSP::GUI::Metrics::fromWidth(
                     static_cast<int>(static_cast<float>(MarsDSP::GUI::Metrics::kDesignWidth) * s));
 
-            // The design-unit band heights must sum to 640 exactly.
-            int sumDU = 0;
-            for (int bi = 0; bi < kNumBands; ++bi)
-                sumDU += kBands[bi].du;
-            if (sumDU != MarsDSP::GUI::Metrics::kDesignHeight)
-            {
-                FAIL("band design-unit sum {} != 640 (regression)", sumDU);
-                anyFail = true;
-            }
-
-            // The px sum must match px(640) within the px rounding tolerance.
-            // px() rounds small bands down at low scales, so the worst-case
-            // deviation for these 9 bands is 2 px (5 small bands total 20 du).
+            // The px sum must match px(932) within the px rounding tolerance.
             int sum = 0;
             for (int bi = 0; bi < kNumBands; ++bi)
                 sum += m.px(kBands[bi].du);
             const int target = m.px(static_cast<float>(MarsDSP::GUI::Metrics::kDesignHeight));
             if (std::abs(sum - target) > 2)
             {
-                FAIL("s={:.2f} band px sum {} != px(640)={} (diff {})", s, sum, target, sum - target);
-                anyFail = true;
-            }
-
-            // Card content height = cardRow - border - subtab - gap - bottom pad.
-            const int cardContent = m.px(static_cast<float>(MarsDSP::GUI::Metrics::kCardRowH))
-                - m.px(static_cast<float>(MarsDSP::GUI::Metrics::kCardBorderStroke))
-                - m.px(static_cast<float>(MarsDSP::GUI::Metrics::kSubTabStripH))
-                - m.px(static_cast<float>(MarsDSP::GUI::Metrics::kSubTabGap))
-                - m.px(static_cast<float>(MarsDSP::GUI::Metrics::kCardBottomPad));
-            // Tallest sub-tab block (section 4.3): DIFFUSE = 194 design units.
-            const int tallestDU = 194;
-            const int tallestPx = m.px(static_cast<float>(tallestDU));
-            if (cardContent < tallestPx)
-            {
-                FAIL("s={:.2f} card content {} < tallest sub-tab {} ({}DU)", s, cardContent, tallestPx, tallestDU);
+                FAIL("s={:.2f} band px sum {} != px(932)={} (diff {})", s, sum, target, sum - target);
                 anyFail = true;
             }
         }
+
+        // The six card heights.
+        for (int ci = 0; ci < kNumCardHeights; ++ci)
+            CHECK(kCardHeights[ci].du > 0);
+
+        // Row 1 is the taller of the two cards in it.
+        CHECK(MarsDSP::GUI::Metrics::kRow1H
+              == std::max(MarsDSP::GUI::Metrics::kTimeCardH, MarsDSP::GUI::Metrics::kRepeatsCardH));
+        // Row 2 is the diffuser card.
+        CHECK(MarsDSP::GUI::Metrics::kRow2H == MarsDSP::GUI::Metrics::kDiffuserCardH);
+        // The card area is the two rows plus the gutter.
+        CHECK(MarsDSP::GUI::Metrics::kRow1H + MarsDSP::GUI::Metrics::kCardGutter
+                  + MarsDSP::GUI::Metrics::kRow2H
+              == MarsDSP::GUI::Metrics::kCardAreaH);
+        // The right column stacks to the diffuser card.
+        CHECK(MarsDSP::GUI::Metrics::kDriveCardH + MarsDSP::GUI::Metrics::kCardGutter
+                  + MarsDSP::GUI::Metrics::kFilterCardH + MarsDSP::GUI::Metrics::kCardGutter
+                  + MarsDSP::GUI::Metrics::kLevelCardH
+              == MarsDSP::GUI::Metrics::kDiffuserCardH);
+        // The slack in row 1 sits under the time card.
+        CHECK(MarsDSP::GUI::Metrics::kRow1H - MarsDSP::GUI::Metrics::kTimeCardH
+              <= MarsDSP::GUI::Metrics::kRowSlackMaxDU);
+
+        // The header reserves fit in the half the bar leaves clear.
+        CHECK(static_cast<int>(MarsDSP::GUI::Metrics::kHeaderSideMargin)
+                  + MarsDSP::GUI::Metrics::kWordmarkReserve
+                  + static_cast<int>(MarsDSP::GUI::Metrics::kWordmarkGap)
+              <= MarsDSP::GUI::Metrics::kHeaderHalfClear);
+        CHECK(static_cast<int>(MarsDSP::GUI::Metrics::kHeaderSideMargin)
+                  + static_cast<int>(MarsDSP::GUI::Metrics::kHeaderBypassSize)
+                  + static_cast<int>(MarsDSP::GUI::Metrics::kHeaderClusterGap)
+                  + static_cast<int>(MarsDSP::GUI::Metrics::kHistoryButtonSize)
+                  + static_cast<int>(MarsDSP::GUI::Metrics::kHistoryButtonGap)
+                  + static_cast<int>(MarsDSP::GUI::Metrics::kHistoryButtonSize)
+              <= MarsDSP::GUI::Metrics::kHeaderHalfClear);
+
         if (! anyFail)
-            std::println("band closure (97 steps, sum + card content): PASS");
+            std::println("band closure (9 bands to 932, 6 cards, rows, slack, header): PASS");
     }
 
     // ----------------------------------------------------------------
@@ -448,7 +465,7 @@ int runAll()
                          s, kFontConsts[ci].name, h, MarsDSP::GUI::Metrics::kFontFloorPx);
             }
         }
-        std::println("font floor (14 constants x 3 scales): PASS");
+        std::println("font floor ({} constants x 3 scales): PASS", kNumFontConsts);
     }
 
     // ----------------------------------------------------------------

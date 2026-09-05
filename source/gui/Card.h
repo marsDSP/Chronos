@@ -4,46 +4,40 @@
 #define CHRONOS_CARD_H
 
 #include <JuceHeader.h>
-#include "SubTabStrip.h"
 #include "Colours.h"
 #include "Metrics.h"
 #include "AccentConsumer.h"
 #include "EnablementConsumer.h"
 #include <memory>
-#include <vector>
 
 namespace MarsDSP::GUI {
 
-// A rounded card that holds a subtab strip and swappable content panels.
+// A rounded card with a painted title row and one content child.
+// The card border keeps the tint law. Accent, metrics, and enablement
+// push to the content child.
 class Card : public Component {
 public:
-    Card();
+    explicit Card(const String& title);
     ~Card() override = default;
 
-    // Set the accent colour for the card border and the subtab strip.
+    // Set the content child. Replaces any prior child.
+    void setContent(std::unique_ptr<Component> panel);
+
+    // Set the accent colour for the card border and the content child.
     void setAccentColour(Colour c);
 
-    // Set the scale metrics for the card layout.
+    // Set the scale metrics for the card layout and the content child.
     void setMetrics(const Metrics& m);
 
-    // Push the enablement state to every content panel that reads it.
+    // Push the enablement state to the content child when it reads it.
     void setEnablement(const EnablementState& state);
-
-    // Add one content panel under a subtab title.
-    void addContent(const String& tabName, std::unique_ptr<Component> panel);
-
-    // Set the visible content panel index. Clamps to the panel count.
-    void setSelectedContent(int index);
-
-    // The visible content panel index.
-    int getSelectedIndex() const;
 
     void paint(Graphics& g) override;
     void resized() override;
 
 private:
-    SubTabStrip subTabs_;
-    std::vector<std::unique_ptr<Component>> contents_;
+    String title_;
+    std::unique_ptr<Component> content_;
     Colour accent_ { Colours::accentDelayDigital };
     Metrics metrics_;
 

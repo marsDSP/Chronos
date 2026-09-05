@@ -71,7 +71,7 @@ const Row kRows[] = {
     { "delaySync true",          "TimePanel time knobs and both readouts" },
     { "delaySync false",         "TimePanel division box" },
     { "delaySync false + timeLink true", "right time knob and readout" },
-    { "enableDiffuser false",    "the four diffuser knobs" },
+    { "enableDiffuser false",    "DiffuserPad and the two diffuser knobs" },
     { "adaaOrder 0",             "DrivePanel drive knob" },
     { "bypass true",             "tap band and card row children" },
 };

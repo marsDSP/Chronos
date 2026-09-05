@@ -63,6 +63,12 @@ public:
     int getEditorWidth() const { return static_cast<int>(editorState_.getProperty("editorWidth", 760)); }
     void setEditorWidth(int w) { editorState_.setProperty("editorWidth", w, nullptr); }
 
+    // The layout revision marks the side-tree schema. The editor reads
+    // the stored width only when the revision matches, so a session from
+    // an older layout opens at the default width.
+    int getEditorLayoutRev() const { return editorState_.getProperty("layoutRev", 0); }
+    void setEditorLayoutRev(int rev) { editorState_.setProperty("layoutRev", rev, nullptr); }
+
     //==============================================================================
     int getNumPrograms() override;
     int getCurrentProgram() override;

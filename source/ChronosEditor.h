@@ -18,6 +18,7 @@
 #include "gui/controls/TimeLockButton.h"
 #include "gui/controls/TimeDisplay.h"
 #include "gui/tap/TapDisplay.h"
+#include "gui/DiffuserPad.h"
 
 // The main plugin editor component.
 // The editor shows one window with a tap display and a row of cards.
@@ -55,10 +56,15 @@ private:
     MarsDSP::GUI::TapDisplay tapDisplay_;
     MarsDSP::GUI::Header header_;
     MarsDSP::GUI::Footer footer_;
-    MarsDSP::GUI::Card timeCard_;
-    MarsDSP::GUI::Card repeatsCard_;
-    MarsDSP::GUI::Card characterCard_;
-    MarsDSP::GUI::Card outputCard_;
+    MarsDSP::GUI::Card timeCard_      { "TIME" };
+    MarsDSP::GUI::Card repeatsCard_   { "REPEATS" };
+    MarsDSP::GUI::Card diffuserCard_  { "DIFFUSER" };
+    MarsDSP::GUI::Card driveCard_     { "DRIVE" };
+    MarsDSP::GUI::Card filterCard_    { "FILTER" };
+    MarsDSP::GUI::Card levelCard_     { "LEVEL" };
+
+    // The bypass scrim covers the tap band and the card area.
+    Rectangle<int> cardAreaBounds_;
 
     // The audio thread stores delay-mode and bypass here. A timer polls
     // these values on the message thread and applies the visual update.
