@@ -280,8 +280,8 @@ void PDLKnob::applyEditorText_()
 void PDLKnob::paint(Graphics &g)
 {
     const auto m = metrics_;
-    const float availW = static_cast<float>(getWidth()) - m.pxf(2.0f);
-    const float baseH = m.font(11.0f);
+    const float availW = static_cast<float>(getWidth()) - m.pxf(Metrics::kKnobLabelInset);
+    const float baseH = m.font(Metrics::kKnobLabelFont);
     const int labelBandH = m.px(Metrics::kLabelBandH);
     const Rectangle<float> labelArea = getLocalBounds().removeFromTop(labelBandH).toFloat();
 
@@ -329,8 +329,10 @@ void PDLKnob::paint(Graphics &g)
         return;
     }
 
-    // Step 3: reduce the font height by up to 15%.
-    f = Fonts::font(Fonts::Weight::Medium, baseH * 0.85f);
+    // Step 3: reduce the font height. Hold the result at or above the
+    // minimum design height, so the shrink never makes text illegible.
+    const float shrunkH = m.font(std::max(Metrics::kKnobLabelFont * 0.85f, Metrics::kFontMinDU));
+    f = Fonts::font(Fonts::Weight::Medium, shrunkH);
     if (Fonts::textWidth(f, text) <= availW)
     {
         drawCentered(text, f);
@@ -338,7 +340,7 @@ void PDLKnob::paint(Graphics &g)
     }
 
     // Step 4: wrap the full label to two lines.
-    f = Fonts::font(Fonts::Weight::Medium, baseH * 0.85f);
+    f = Fonts::font(Fonts::Weight::Medium, shrunkH);
     g.setFont(f);
     const int sep = labelText_.indexOf(" ");
     if (sep >= 0)

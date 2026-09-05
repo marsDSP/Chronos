@@ -177,12 +177,20 @@ namespace MarsDSP::GUI::Knobs {
             Image rectangle2;
         };
 
-        static constexpr int kCacheCap = 6;
+        // The cap holds every visible diameter at both knob maxima on a
+        // mixed-DPI setup.
+        static constexpr int kCacheCap = 12;
         static constexpr int kRebuildMs = 150;
 
         // Pending diameters to rebuild. Fixed-size: no allocation in paint.
         std::array<int, kCacheCap> pending_ {};
         int pendingCount_ = 0;
+
+        // The count of rebuild batches. Debug builds read it in the
+        // resize acceptance.
+#if JUCE_DEBUG
+        int rebuildBatches_ = 0;
+#endif
 
         std::vector<CachedFrames> cache_;
         std::vector<Component::SafePointer<Slider>> sliders_;
@@ -194,6 +202,8 @@ namespace MarsDSP::GUI::Knobs {
         }
 
         // Add a diameter to the pending set and restart the debounce timer.
+        // A full pending set never restarts the timer: the next fire
+        // drains it, so a saturated queue cannot spin.
         void requestRebuild_(const int diameter)
         {
             for (int i = 0; i < pendingCount_; ++i)
@@ -204,10 +214,9 @@ namespace MarsDSP::GUI::Knobs {
             {
                 pending_[static_cast<std::size_t>(pendingCount_)] = diameter;
                 ++pendingCount_;
+                stopTimer();
+                startTimer(kRebuildMs);
             }
-
-            stopTimer();
-            startTimer(kRebuildMs);
         }
 
         // Resample every pending diameter into the cache. Evict the least
@@ -215,6 +224,9 @@ namespace MarsDSP::GUI::Knobs {
         // every registered slider.
         void rebuildPending_()
         {
+#if JUCE_DEBUG
+            ++rebuildBatches_;
+#endif
             for (int i = 0; i < pendingCount_; ++i)
             {
                 const int diameter = pending_[static_cast<std::size_t>(i)];
@@ -376,7 +388,7 @@ namespace MarsDSP::GUI::Knobs {
 
         LawSlider slider;
         String labelText_;
-        Colour labelColour_ { Colours::textDim };
+        Colour labelColour_ { Colours::textMuted };
         Colour accentColour_ { Colours::accentDelayDigital };
         Metrics metrics_;
         PedalKnob& lnfRef_;

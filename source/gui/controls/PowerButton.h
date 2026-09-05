@@ -117,7 +117,7 @@ namespace MarsDSP::GUI
         bool isMusicalNote_ = false;
         bool isLock_ = false;
         Colour onColour_ = Colours::textBright;
-        Colour offColour_ = Colours::textDim;
+        Colour offColour_ = Colours::textMuted;
         Metrics metrics_;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PowerButton)

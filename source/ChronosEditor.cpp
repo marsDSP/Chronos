@@ -99,7 +99,7 @@ public:
     timeLDisplay.setHelpText("Drag to adjust the left delay time.");
     timeRDisplay.setHelpText("Drag to adjust the right delay time.");
 
-    timeLinkButton.setColours(coreAccent(proc), GUIColours::textDim);
+    timeLinkButton.setColours(coreAccent(proc), GUIColours::textMuted);
     timeLinkButton.setTooltip("Link the left and right delay times.");
     timeLinkButton.setTitle("Time Link");
     timeLinkButton.setHelpText("Link the left and right delay times.");
@@ -108,7 +108,7 @@ public:
         addAndMakeVisible(timeLinkButton);
 
     syncButton.setMusicalNote(true);
-    syncButton.setColours(coreAccent(proc), GUIColours::textDim);
+    syncButton.setColours(coreAccent(proc), GUIColours::textMuted);
     syncButton.setTooltip("Sync the delay time to the host tempo.");
     syncButton.setTitle("Tempo Sync");
     syncButton.setHelpText("Sync the delay time to the host tempo.");
@@ -173,12 +173,12 @@ public:
         timeRDisplay.setBounds(x + cellWPx + gapPx, y, cellWPx, readoutH);
 
         y += readoutH + rowGap;
-        const int btnSize = m.px(24.0f);
-        const int btnGap = m.px(4.0f);
+        const int btnSize = m.px(Metrics::kToggleSize);
+        const int btnGap = m.px(Metrics::kToggleGap);
         int sx = 0;
         timeLinkButton.setBounds(sx, y, btnSize, btnSize);  sx += btnSize + btnGap;
         syncButton.setBounds(sx, y, btnSize, btnSize);       sx += btnSize + btnGap;
-        divisionBox.setBounds(sx, y + m.px(1.0f), getWidth() - sx, selH);
+        divisionBox.setBounds(sx, y + m.px(Metrics::kSelectorNudge), getWidth() - sx, selH);
     }
 
     void setAccentColour(Colour c) override
@@ -523,7 +523,7 @@ public:
           modDepthKnob("DIFF MOD", proc.getAPVTS(), diffModDepthParamID, knobLnf),
           modRateKnob("DIFF RATE", proc.getAPVTS(), diffModRateHzParamID, knobLnf)
     {
-        enableButton.setColours(coreAccent(proc), GUIColours::textDim);
+        enableButton.setColours(coreAccent(proc), GUIColours::textMuted);
         enableButton.setTooltip("Enable the diffuser section.");
         enableButton.setTitle("Diffuser Enable");
         enableButton.setHelpText("Enable the diffuser section.");
@@ -550,7 +550,7 @@ public:
         const float g = m.pxf(static_cast<float>(Metrics::kKnobGutter));
         const int rowGap = m.px(static_cast<float>(Metrics::kInterRowGap));
         const int enableH = m.px(Metrics::kEnableRowH);
-        const int enableGap = m.px(8.0f);
+        const int enableGap = m.px(Metrics::kEnableGap);
 
         // Row 0: the enable button. Rows 1 and 2: the two knob rows.
         const float knobH = h - static_cast<float>(enableH) - static_cast<float>(enableGap)
@@ -565,7 +565,7 @@ public:
         const int blockH = enableH + enableGap + cellH + rowGap + cellH;
         int y = roundToInt((h - static_cast<float>(blockH)) * 0.5f);
 
-        const int btnSize = m.px(24.0f);
+        const int btnSize = m.px(Metrics::kToggleSize);
         enableButton.setBounds(getWidth() - btnSize, y, btnSize, btnSize);
         y += enableH + enableGap;
 

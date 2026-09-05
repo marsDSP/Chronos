@@ -17,10 +17,11 @@ struct Colours {
     static inline const Colour footerBackground { 0xFF161618 };
     static inline const Colour rulerText        { 0xFF9A9A9A };
 
-    // Text colours
+    // Text colours. textMuted clears the 4.5 to 1 contrast ratio on
+    // every declared surface, so it carries the dim text role.
     static inline const Colour textPrimary { 0xFFABABAB };
     static inline const Colour textBright  { 0xFFD0D0D0 };
-    static inline const Colour textDim     { 0xFF666666 };
+    static inline const Colour textMuted   { 0xFF8E8E8E };
 
     // Delay core accent colours. One is live at a time, set by delayMode.
     static inline const Colour accentDelayDigital { 0xFFFF8557 };

@@ -98,7 +98,7 @@ void PresetBar::paint(Graphics& g)
             p.lineTo(cx + sz, cy);
             p.lineTo(cx - sz, cy + sz);
         }
-        g.setColour(hover ? Colours::textPrimary : Colours::textDim);
+        g.setColour(hover ? Colours::textPrimary : Colours::textMuted);
         g.strokePath(p, PathStrokeType(m.stroke(Metrics::kIconStroke),
                     PathStrokeType::curved, PathStrokeType::rounded));
     };
@@ -112,7 +112,7 @@ void PresetBar::paint(Graphics& g)
         const float lineW = static_cast<float>(menuArea_.getWidth()) * 0.4f;
         const float gap = static_cast<float>(menuArea_.getHeight()) * 0.14f;
         const float lineSw = m.stroke(Metrics::kIconStroke);
-        g.setColour(hoveredRegion_ == 4 ? Colours::textPrimary : Colours::textDim);
+        g.setColour(hoveredRegion_ == 4 ? Colours::textPrimary : Colours::textMuted);
         for (int i = -1; i <= 1; ++i)
             g.drawLine(cx - lineW * 0.5f, cy + static_cast<float>(i) * gap,
                        cx + lineW * 0.5f, cy + static_cast<float>(i) * gap, lineSw);

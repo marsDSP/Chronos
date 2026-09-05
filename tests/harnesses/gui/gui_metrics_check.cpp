@@ -24,13 +24,74 @@ const char* g_section = "(startup)";
 #define FAIL(...) \
     do { std::print("FAIL [{}] ", g_section); std::println(__VA_ARGS__); std::exit(1); } while (0)
 
-// The relative luminance of an sRGB colour.
+// Linearise one sRGB channel. The WCAG 2.x transfer function.
+float lineariseChannel(const float c)
+{
+    return (c <= 0.04045f) ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f);
+}
+
+// The WCAG relative luminance of an sRGB colour.
 float luminance(juce::Colour c)
 {
-    return 0.2126f * static_cast<float>(c.getRed())
-         + 0.7152f * static_cast<float>(c.getGreen())
-         + 0.0722f * static_cast<float>(c.getBlue());
+    return 0.2126f * lineariseChannel(c.getFloatRed())
+         + 0.7152f * lineariseChannel(c.getFloatGreen())
+         + 0.0722f * lineariseChannel(c.getFloatBlue());
 }
+
+// The WCAG contrast ratio between two colours. The ratio is 1 at equal
+// luminance and 21 at full black against full white.
+float contrast(juce::Colour a, juce::Colour b)
+{
+    const float la = luminance(a);
+    const float lb = luminance(b);
+    const float hi = std::max(la, lb);
+    const float lo = std::min(la, lb);
+    return (hi + 0.05f) / (lo + 0.05f);
+}
+
+// The declared font constants, for the floor assertion.
+struct FontConst { const char* name; float du; };
+const FontConst kFontConsts[] = {
+    { "wordmark",   MarsDSP::GUI::Metrics::kWordmarkFont },
+    { "knobLabel",  MarsDSP::GUI::Metrics::kKnobLabelFont },
+    { "footer",     MarsDSP::GUI::Metrics::kFooterFont },
+    { "tapLabel",   MarsDSP::GUI::Metrics::kTapLabelFont },
+    { "tapReadout", MarsDSP::GUI::Metrics::kTapReadoutFont },
+    { "label",      MarsDSP::GUI::Metrics::kLabelFont },
+    { "combo",      MarsDSP::GUI::Metrics::kComboFont },
+    { "menu",       MarsDSP::GUI::Metrics::kMenuFont },
+    { "tooltip",    MarsDSP::GUI::Metrics::kTooltipFont },
+    { "segment",    MarsDSP::GUI::Metrics::kSegmentFont },
+    { "subTab",     MarsDSP::GUI::Metrics::kSubTabFont },
+    { "readout",    MarsDSP::GUI::Metrics::kReadoutFont },
+    { "ruler",      MarsDSP::GUI::Metrics::kRulerFont },
+    { "presetBar",  MarsDSP::GUI::Metrics::kPresetBarFont },
+};
+constexpr int kNumFontConsts = static_cast<int>(std::size(kFontConsts));
+
+// The declared text and icon colour pairs, for the contrast assertion.
+struct ColourPair { const char* fgName; juce::Colour fg; const char* bgName; juce::Colour bg; float minRatio; };
+const ColourPair kTextPairs[] = {
+    { "textPrimary", MarsDSP::GUI::Colours::textPrimary, "background",       MarsDSP::GUI::Colours::background,       4.5f },
+    { "textBright",  MarsDSP::GUI::Colours::textBright,  "background",       MarsDSP::GUI::Colours::background,       4.5f },
+    { "textMuted",   MarsDSP::GUI::Colours::textMuted,   "background",       MarsDSP::GUI::Colours::background,       4.5f },
+    { "textMuted",   MarsDSP::GUI::Colours::textMuted,   "panelBackground",  MarsDSP::GUI::Colours::panelBackground,  4.5f },
+    { "textMuted",   MarsDSP::GUI::Colours::textMuted,   "headerBackground", MarsDSP::GUI::Colours::headerBackground, 4.5f },
+    { "textMuted",   MarsDSP::GUI::Colours::textMuted,   "footerBackground", MarsDSP::GUI::Colours::footerBackground, 4.5f },
+    { "textBright",  MarsDSP::GUI::Colours::textBright,  "panelBackground",  MarsDSP::GUI::Colours::panelBackground,  4.5f },
+    { "textPrimary", MarsDSP::GUI::Colours::textPrimary, "headerBackground", MarsDSP::GUI::Colours::headerBackground, 4.5f },
+    { "textBright",  MarsDSP::GUI::Colours::textBright,  "headerBackground", MarsDSP::GUI::Colours::headerBackground, 4.5f },
+    { "textPrimary", MarsDSP::GUI::Colours::textPrimary, "footerBackground", MarsDSP::GUI::Colours::footerBackground, 4.5f },
+    { "rulerText",   MarsDSP::GUI::Colours::rulerText,   "background",       MarsDSP::GUI::Colours::background,       4.5f },
+};
+constexpr int kNumTextPairs = static_cast<int>(std::size(kTextPairs));
+
+const ColourPair kIconPairs[] = {
+    { "textMuted",   MarsDSP::GUI::Colours::textMuted,   "panelBackground",  MarsDSP::GUI::Colours::panelBackground,  3.0f },
+    { "textMuted",   MarsDSP::GUI::Colours::textMuted,   "headerBackground", MarsDSP::GUI::Colours::headerBackground, 3.0f },
+    { "textPrimary", MarsDSP::GUI::Colours::textPrimary, "background",       MarsDSP::GUI::Colours::background,       3.0f },
+};
+constexpr int kNumIconPairs = static_cast<int>(std::size(kIconPairs));
 
 // The nine tint coefficients in spec order.
 struct CoeffSet { const char* name; float coeff; };
@@ -352,6 +413,59 @@ int runAll()
         }
         if (! anyFail)
             std::println("band closure (97 steps, sum + card content): PASS");
+    }
+
+    // ----------------------------------------------------------------
+    // 7. Font floor: every declared font constant renders at or above
+    //    kFontFloorPx at kScaleMin, 1.0, and kScaleMax.
+    // ----------------------------------------------------------------
+    g_section = "font_floor";
+    {
+        const float scales[] = {
+            MarsDSP::GUI::Metrics::kScaleMin,
+            1.0f,
+            MarsDSP::GUI::Metrics::kScaleMax
+        };
+
+        for (const float s : scales)
+        {
+            MarsDSP::GUI::Metrics m;
+            m.s = s;
+            for (int ci = 0; ci < kNumFontConsts; ++ci)
+            {
+                const float h = m.font(kFontConsts[ci].du);
+                if (h < MarsDSP::GUI::Metrics::kFontFloorPx)
+                    FAIL("s={:.2f} font {} = {} below the floor {}",
+                         s, kFontConsts[ci].name, h, MarsDSP::GUI::Metrics::kFontFloorPx);
+            }
+        }
+        std::println("font floor (14 constants x 3 scales): PASS");
+    }
+
+    // ----------------------------------------------------------------
+    // 8. Contrast: every declared text pair clears 4.5 to 1 and every
+    //    declared icon pair clears 3.0 to 1.
+    // ----------------------------------------------------------------
+    g_section = "contrast";
+    {
+        for (int i = 0; i < kNumTextPairs; ++i)
+        {
+            const auto& p = kTextPairs[i];
+            const float ratio = contrast(p.fg, p.bg);
+            if (ratio < p.minRatio)
+                FAIL("text {} on {}: ratio {} below {}",
+                     p.fgName, p.bgName, ratio, p.minRatio);
+        }
+        for (int i = 0; i < kNumIconPairs; ++i)
+        {
+            const auto& p = kIconPairs[i];
+            const float ratio = contrast(p.fg, p.bg);
+            if (ratio < p.minRatio)
+                FAIL("icon {} on {}: ratio {} below {}",
+                     p.fgName, p.bgName, ratio, p.minRatio);
+        }
+        std::println("contrast ({} text pairs, {} icon pairs): PASS",
+                     kNumTextPairs, kNumIconPairs);
     }
 
     return 0;

@@ -91,7 +91,7 @@ public:
 
 private:
     Colour onColour_ = Colours::accentDelayDigital;
-    Colour offColour_ = Colours::textDim;
+    Colour offColour_ = Colours::textMuted;
     Metrics metrics_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TimeLockButton)

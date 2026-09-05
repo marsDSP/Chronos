@@ -48,10 +48,10 @@ void Footer::paint(Graphics& g)
     g.setColour(Colours::panelBorder);
     g.drawHorizontalLine(0, 0.0f, static_cast<float>(getWidth()));
 
-    g.setColour(Colours::textDim);
-    g.setFont(Fonts::font(Fonts::Weight::Regular, metrics_.font(10.0f)));
+    g.setColour(Colours::textMuted);
+    g.setFont(Fonts::font(Fonts::Weight::Regular, metrics_.font(Metrics::kFooterFont)));
 
-    const auto bounds = getLocalBounds().reduced(metrics_.px(12.0f), 0);
+    const auto bounds = getLocalBounds().reduced(metrics_.px(Metrics::kFooterSideMargin), 0);
     g.drawText(statusText_, bounds, Justification::centredLeft, true);
     g.drawText("v" + versionText_, bounds, Justification::centredRight, true);
 }

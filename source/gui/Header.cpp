@@ -14,7 +14,7 @@ Header::Header(ChronosProcessor& proc)
     addAndMakeVisible(wordmark_);
     addAndMakeVisible(presetBar_);
 
-    bypassButton_.setColours(Colours::accentDelayDigital, Colours::textDim);
+    bypassButton_.setColours(Colours::accentDelayDigital, Colours::textMuted);
     bypassButton_.setTooltip("Bypass the delay processing.");
     bypassButton_.setTitle("Bypass");
     bypassButton_.setHelpText("Bypass the delay processing.");
@@ -48,8 +48,8 @@ void Header::paint(Graphics& g)
 void Header::resized()
 {
     const int h = getHeight();
-    const int left = metrics_.px(14.0f);
-    const int right = getWidth() - metrics_.px(14.0f);
+    const int left = metrics_.px(Metrics::kHeaderSideMargin);
+    const int right = getWidth() - metrics_.px(Metrics::kHeaderSideMargin);
     const int bypassSize = metrics_.px(Metrics::kHeaderBypassSize);
 
     // Centre the preset bar in the band.
@@ -60,8 +60,8 @@ void Header::resized()
     presetBar_.setBounds(barX, barY, barW, barH);
 
     // Wordmark fills the left gap up to the bar.
-    wordmark_.setFont(Fonts::font(Fonts::Weight::Semibold, metrics_.font(15.0f)));
-    wordmark_.setBounds(left, 0, barX - left - metrics_.px(8.0f), h);
+    wordmark_.setFont(Fonts::font(Fonts::Weight::Semibold, metrics_.font(Metrics::kWordmarkFont)));
+    wordmark_.setBounds(left, 0, barX - left - metrics_.px(Metrics::kWordmarkGap), h);
 
     bypassButton_.setBounds(right - bypassSize, (h - bypassSize) / 2, bypassSize, bypassSize);
 }

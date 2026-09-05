@@ -18,16 +18,18 @@ namespace MarsDSP::GUI
         static constexpr int kDesignHeight = 640;
         static constexpr double kDesignAspect = 1.5625;
 
-        // Scale clamp range (section 4.1).
-        static constexpr float kScaleMin = 0.64f;
+        // Scale clamp range (section 4.1). The minimum derives from the
+        // font floor: the smallest declared font lands on the floor at
+        // the smallest scale.
+        static constexpr float kScaleMin = 0.80f;
         static constexpr float kScaleMax = 1.60f;
 
         // Window envelope (section 4.2), design units.
         static constexpr int kDefaultWidth = 760;
         static constexpr int kDefaultHeight = 486;
-        static constexpr int kMinWidth = 640;
+        static constexpr int kMinWidth = 800;
         static constexpr int kMaxWidth = 1600;
-        static constexpr int kMinHeight = 410;
+        static constexpr int kMinHeight = 512;
         static constexpr int kMaxHeight = 1024;
 
         // Band geometry (section 4.3), design units.
@@ -51,6 +53,37 @@ namespace MarsDSP::GUI
 
         // The header bypass button (section 4.6), design units.
         static constexpr float kHeaderBypassSize = 22.0f;
+
+        // Font heights (section 4.7), design units. Every one stays at
+        // or above kFontMinDU, so the floor is a backstop and not a
+        // layout hazard.
+        static constexpr float kWordmarkFont    = 15.0f;
+        static constexpr float kKnobLabelFont   = 11.0f;
+        static constexpr float kFooterFont      = 10.0f;
+        static constexpr float kTapLabelFont    = 10.0f;
+        static constexpr float kTapReadoutFont  = 10.0f;
+        static constexpr float kLabelFont       = 13.0f;
+        static constexpr float kComboFont       = 12.0f;
+        static constexpr float kMenuFont        = 14.0f;
+        static constexpr float kTooltipFont     = 11.0f;
+        static constexpr float kSegmentFont     = 10.0f;
+        static constexpr float kSubTabFont      = 10.0f;
+        static constexpr float kReadoutFont     = 13.0f;
+
+        // Element dimensions (section 4.7), design units.
+        static constexpr float kHeaderSideMargin   = 14.0f;
+        static constexpr float kWordmarkGap        = 8.0f;
+        static constexpr float kKnobLabelInset     = 2.0f;
+        static constexpr float kFooterSideMargin   = 12.0f;
+        static constexpr float kTapLabelGapMin     = 8.0f;
+        static constexpr float kMenuHighlightCorner = 3.0f;
+        static constexpr float kSubTabButtonW      = 90.0f;
+        static constexpr float kSubTabButtonGap    = 6.0f;
+        static constexpr float kSubTabButtonH      = 24.0f;
+        static constexpr float kToggleSize         = 24.0f;
+        static constexpr float kToggleGap          = 4.0f;
+        static constexpr float kSelectorNudge      = 1.0f;
+        static constexpr float kEnableGap          = 8.0f;
 
         // Card geometry (section 4.4), design units.
         static constexpr int kCardGutter = 8;
@@ -97,9 +130,15 @@ namespace MarsDSP::GUI
         static constexpr float kRulerLabelGap      = 7.0f;
         static constexpr float kMajorTick          = 6.0f;
         static constexpr float kMinorTick          = 4.0f;
-        static constexpr float kRulerFont           = 9.0f;
+        static constexpr float kRulerFont           = 10.0f;
         static constexpr float kSelectorRowH       = 24.0f;
         static constexpr float kEnableRowH         = 22.0f;
+
+        // The legibility floor (section 4.7). No glyph renders below the
+        // floor at any scale, and no declared font drops below the
+        // minimum design height.
+        static constexpr float kFontFloorPx = 8.0f;
+        static constexpr float kFontMinDU   = 10.0f;
 
         // Interaction constants (section 4.6).
         // The wheel and the arrow keys step in proportion space.
@@ -119,6 +158,25 @@ namespace MarsDSP::GUI
         static_assert(kEnableRowH >= static_cast<float>(kHitTargetMin));
         static_assert(kReadoutBandH >= kHitTargetMin);
 
+        // The three legibility constants cannot drift apart.
+        static_assert(kFontMinDU * kScaleMin >= kFontFloorPx);
+
+        // No declared font drops below the minimum design height.
+        static_assert(kWordmarkFont   >= kFontMinDU);
+        static_assert(kKnobLabelFont  >= kFontMinDU);
+        static_assert(kFooterFont     >= kFontMinDU);
+        static_assert(kTapLabelFont   >= kFontMinDU);
+        static_assert(kTapReadoutFont >= kFontMinDU);
+        static_assert(kLabelFont      >= kFontMinDU);
+        static_assert(kComboFont      >= kFontMinDU);
+        static_assert(kMenuFont       >= kFontMinDU);
+        static_assert(kTooltipFont    >= kFontMinDU);
+        static_assert(kSegmentFont    >= kFontMinDU);
+        static_assert(kSubTabFont     >= kFontMinDU);
+        static_assert(kReadoutFont    >= kFontMinDU);
+        static_assert(kRulerFont      >= kFontMinDU);
+        static_assert(kPresetBarFont  >= kFontMinDU);
+
         // The scale factor, clamped to [kScaleMin, kScaleMax].
         float s = 1.0f;
 
@@ -136,8 +194,9 @@ namespace MarsDSP::GUI
         // Keep a design value as a float pixel value.
         [[nodiscard]] float pxf(const float v) const noexcept { return v * s; }
 
-        // Scale a font height. Never round.
-        [[nodiscard]] float font(const float v) const noexcept { return v * s; }
+        // Scale a font height. Never round. Hold every glyph at or above
+        // the floor, so no text renders illegible at any scale.
+        [[nodiscard]] float font(const float v) const noexcept { return std::max(kFontFloorPx, v * s); }
 
     // Scale a stroke width. Hold a hairline above zero.
     float stroke(float v) const noexcept { return std::max(1.0f, v * s); }

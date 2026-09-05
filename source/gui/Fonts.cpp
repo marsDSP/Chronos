@@ -17,12 +17,19 @@ namespace {
 
 // Hold one typeface pointer per weight. Build the cache once.
 struct TypefaceCache {
+    // The text width cache. Keyed on typeface, height, and string, in
+    // least-recently-used order. Paint runs on the message thread, and
+    // the assertion in textWidth holds the rule.
+    struct TextEntry { String typefaceName; float height; String text; float width; };
+    static constexpr std::size_t kTextCacheCap = 256;
+
     Typeface::Ptr regular;
     Typeface::Ptr medium;
     Typeface::Ptr semibold;
 
     struct DigitEntry { String typefaceName; float height; float advance; };
     mutable std::vector<DigitEntry> digitAdvances;
+    mutable std::vector<TextEntry> textWidths;
 
     TypefaceCache()
     {
@@ -104,9 +111,37 @@ String shortLabel(const String& full)
 
 float textWidth(const Font& font, const String& text)
 {
+    JUCE_ASSERT_MESSAGE_THREAD
+
+    const auto& c = cache();
+    const String tfName = font.getTypefaceName();
+    const float h = font.getHeight();
+
+    // Consult the cache. A hit moves the entry to the back, so the
+    // oldest entry is the least recently used.
+    for (std::size_t i = 0; i < c.textWidths.size(); ++i)
+    {
+        const auto& e = c.textWidths[i];
+        if (e.height == h && e.text == text && e.typefaceName == tfName)
+        {
+            if (i + 1 < c.textWidths.size())
+            {
+                auto entry = std::move(c.textWidths[i]);
+                c.textWidths.erase(c.textWidths.begin() + static_cast<std::ptrdiff_t>(i));
+                c.textWidths.push_back(std::move(entry));
+            }
+            return c.textWidths.back().width;
+        }
+    }
+
     GlyphArrangement ga;
     ga.addLineOfText(font, text, 0.0f, 0.0f);
-    return ga.getBoundingBox(0, -1, true).getWidth();
+    const float width = ga.getBoundingBox(0, -1, true).getWidth();
+
+    c.textWidths.push_back({ tfName, h, text, width });
+    if (c.textWidths.size() > TypefaceCache::kTextCacheCap)
+        c.textWidths.erase(c.textWidths.begin());
+    return width;
 }
 
 float digitAdvance(const Font& font)

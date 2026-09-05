@@ -83,7 +83,7 @@ public:
         g.drawRoundedRectangle(bounds.reduced(sw / 2), corner, sw);
 
         const String text = TimeDisplayFormatter::getDelayTimeText(slider_, syncActive_, divisionIndex_);
-        const Font f = Fonts::font(Fonts::Weight::Semibold, m.font(13.0f));
+        const Font f = Fonts::font(Fonts::Weight::Semibold, m.font(Metrics::kReadoutFont));
         Fonts::drawFixedAdvanceText(g, f, text, bounds, accentColour_.withMultipliedAlpha(inertA));
     }
 

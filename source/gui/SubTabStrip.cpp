@@ -36,9 +36,9 @@ void SubTabStrip::SubTabButton::paintButton(Graphics& g,
     else if (shouldDrawButtonAsHighlighted)
         g.setColour(Colours::textPrimary);
     else
-        g.setColour(Colours::textDim);
+        g.setColour(Colours::textMuted);
 
-    g.setFont(Fonts::font(Fonts::Weight::Medium, metrics_.font(10.0f)));
+    g.setFont(Fonts::font(Fonts::Weight::Medium, metrics_.font(Metrics::kSubTabFont)));
     g.drawText(getButtonText().toUpperCase(), bounds, Justification::centred, false);
 }
 
@@ -102,9 +102,9 @@ void SubTabStrip::resized()
         return;
 
     const auto bounds = getLocalBounds();
-    const int buttonWidth = metrics_.px(90.0f);
-    const int gap = metrics_.px(6.0f);
-    const int buttonH = metrics_.px(24.0f);
+    const int buttonWidth = metrics_.px(Metrics::kSubTabButtonW);
+    const int gap = metrics_.px(Metrics::kSubTabButtonGap);
+    const int buttonH = metrics_.px(Metrics::kSubTabButtonH);
     const int n = static_cast<int>(buttons_.size());
     const int totalWidth = n * buttonWidth + (n - 1) * gap;
     int startX = (bounds.getWidth() - totalWidth) / 2;

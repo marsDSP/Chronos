@@ -14,7 +14,7 @@ LookAndFeel::LookAndFeel()
     setColour(ComboBox::backgroundColourId, Colours::dropdownBg);
     setColour(ComboBox::outlineColourId, Colours::dropdownBorder);
     setColour(ComboBox::textColourId, Colours::textPrimary);
-    setColour(ComboBox::arrowColourId, Colours::textDim);
+    setColour(ComboBox::arrowColourId, Colours::textMuted);
     setColour(PopupMenu::backgroundColourId, Colours::panelBackground);
     setColour(PopupMenu::textColourId, Colours::textPrimary);
     setColour(PopupMenu::highlightedBackgroundColourId, Colours::headerBackground);
@@ -31,17 +31,17 @@ void LookAndFeel::setMetrics(const Metrics& m)
 
 Font LookAndFeel::getLabelFont(Label&)
 {
-    return Fonts::font(Fonts::Weight::Regular, metrics_.font(13.0f));
+    return Fonts::font(Fonts::Weight::Regular, metrics_.font(Metrics::kLabelFont));
 }
 
 Font LookAndFeel::getComboBoxFont(ComboBox&)
 {
-    return Fonts::font(Fonts::Weight::Regular, metrics_.font(12.0f));
+    return Fonts::font(Fonts::Weight::Regular, metrics_.font(Metrics::kComboFont));
 }
 
 Font LookAndFeel::getPopupMenuFont()
 {
-    return Fonts::font(Fonts::Weight::Regular, metrics_.font(14.0f));
+    return Fonts::font(Fonts::Weight::Regular, metrics_.font(Metrics::kMenuFont));
 }
 
 void LookAndFeel::drawRotarySlider(Graphics& g,
@@ -133,7 +133,7 @@ void LookAndFeel::drawComboBox(Graphics& g,
                       arrowX + 4.0f, arrowY - 2.0f,
                       arrowX, arrowY + 3.0f);
 
-    g.setColour(Colours::textDim);
+    g.setColour(Colours::textMuted);
     g.fillPath(arrow);
 }
 
@@ -174,7 +174,7 @@ void LookAndFeel::drawPopupMenuBackground(Graphics& g, const int width, const in
 
 void LookAndFeel::drawTooltip(Graphics& g, const String& text, int width, int height)
 {
-    const Font f = Fonts::font(Fonts::Weight::Regular, metrics_.font(11.0f));
+    const Font f = Fonts::font(Fonts::Weight::Regular, metrics_.font(Metrics::kTooltipFont));
 
     g.fillAll(findColour(TooltipWindow::backgroundColourId));
 
@@ -214,7 +214,7 @@ void LookAndFeel::drawPopupMenuItem(Graphics& g,
     }
 
     auto r = area.reduced(2);
-    const float highlightCorner = m.pxf(3.0f);
+    const float highlightCorner = m.pxf(Metrics::kMenuHighlightCorner);
     if (isHighlighted && isActive)
     {
         g.setColour(Colours::headerBackground);
@@ -223,7 +223,7 @@ void LookAndFeel::drawPopupMenuItem(Graphics& g,
     }
     else
     {
-        g.setColour(isActive ? Colours::textBright : Colours::textDim);
+        g.setColour(isActive ? Colours::textBright : Colours::textMuted);
     }
 
     r.removeFromLeft(m.px(Metrics::kMenuItemInset));

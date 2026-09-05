@@ -55,10 +55,10 @@ namespace MarsDSP::GUI
                 g.fillRoundedRectangle(bounds, corner);
                 g.setColour(Colours::panelBorder);
                 g.drawRoundedRectangle(bounds.reduced(sw / 2), corner, sw);
-                g.setColour(shouldDrawButtonAsHighlighted ? Colours::textPrimary : Colours::textDim);
+                g.setColour(shouldDrawButtonAsHighlighted ? Colours::textPrimary : Colours::textMuted);
             }
 
-            const auto font = Fonts::font(Fonts::Weight::Medium, m.font(10.0f));
+            const auto font = Fonts::font(Fonts::Weight::Medium, m.font(Metrics::kSegmentFont));
             g.setFont(font);
             g.drawText(getButtonText().toUpperCase(), bounds, Justification::centred, false);
         }

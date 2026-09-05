@@ -493,7 +493,7 @@ void TapDisplay::paint(Graphics& g)
             g.setColour(accent.withAlpha(0.04f));
             g.fillRect(plotBounds);
             g.setColour(accent.withAlpha(0.6f));
-            g.setFont(Fonts::font(Fonts::Weight::Medium, metrics_.font(10.0f)));
+            g.setFont(Fonts::font(Fonts::Weight::Medium, metrics_.font(Metrics::kTapLabelFont)));
             g.drawText("L/R LINK", plotBounds.reduced(4.0f).toNearestInt(), Justification::topLeft, false);
         }
         else if (hoverUpper)
@@ -501,7 +501,7 @@ void TapDisplay::paint(Graphics& g)
             g.setColour(accent.withAlpha(0.05f));
             g.fillRect(plotBounds.withBottom(centerY));
             g.setColour(accent.withAlpha(0.6f));
-            g.setFont(Fonts::font(Fonts::Weight::Medium, metrics_.font(10.0f)));
+            g.setFont(Fonts::font(Fonts::Weight::Medium, metrics_.font(Metrics::kTapLabelFont)));
             g.drawText("LEFT TIME", plotBounds.reduced(4.0f).toNearestInt(), Justification::topLeft, false);
         }
         else
@@ -509,7 +509,7 @@ void TapDisplay::paint(Graphics& g)
             g.setColour(accent.withAlpha(0.05f));
             g.fillRect(plotBounds.withTop(centerY));
             g.setColour(accent.withAlpha(0.6f));
-            g.setFont(Fonts::font(Fonts::Weight::Medium, metrics_.font(10.0f)));
+            g.setFont(Fonts::font(Fonts::Weight::Medium, metrics_.font(Metrics::kTapLabelFont)));
             g.drawText("RIGHT TIME", plotBounds.reduced(4.0f).toNearestInt(), Justification::bottomLeft, false);
         }
     }
@@ -530,7 +530,7 @@ void TapDisplay::paint(Graphics& g)
     const float baselineY = tickTop + majorTickLen + metrics_.pxf(Metrics::kRulerLabelGap)
                         + Fonts::kCapHeightRatio * metrics_.font(Metrics::kRulerFont);
     const int baselineYi = roundToInt(baselineY);
-    const float minLabelGap = metrics_.pxf(8.0f);
+    const float minLabelGap = metrics_.pxf(Metrics::kTapLabelGapMin);
     g.setFont(rulerFont);
     g.setColour(Colours::rulerText);
 
@@ -608,7 +608,7 @@ void TapDisplay::paint(Graphics& g)
         }
 
         g.setColour(accent);
-        g.setFont(Fonts::font(Fonts::Weight::Medium, metrics_.font(10.0f)));
+        g.setFont(Fonts::font(Fonts::Weight::Medium, metrics_.font(Metrics::kTapReadoutFont)));
         const float readoutW = metrics_.pxf(Metrics::kHoverReadoutW);
         float rx = cursorX + 6.0f;
         if (rx + readoutW > displayBounds.getRight())
