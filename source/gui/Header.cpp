@@ -50,7 +50,7 @@ void Header::resized()
     const int h = getHeight();
     const int left = metrics_.px(14.0f);
     const int right = getWidth() - metrics_.px(14.0f);
-    const int bypassSize = metrics_.px(20.0f);
+    const int bypassSize = metrics_.px(Metrics::kHeaderBypassSize);
 
     // Centre the preset bar in the band.
     const int barW = metrics_.px(static_cast<float>(Metrics::kPresetBarW));

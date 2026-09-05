@@ -45,9 +45,12 @@ namespace MarsDSP::GUI
         // Preset bar geometry (section 4.7), design units.
         static constexpr int kPresetBarW = 320;
         static constexpr int kPresetBarH = 26;
-        static constexpr int kPresetBarArrow = 18;
+        static constexpr int kPresetBarArrow = 20;
         static constexpr int kPresetBarMenu = 22;
         static constexpr float kPresetBarFont = 12.0f;
+
+        // The header bypass button (section 4.6), design units.
+        static constexpr float kHeaderBypassSize = 22.0f;
 
         // Card geometry (section 4.4), design units.
         static constexpr int kCardGutter = 8;
@@ -97,6 +100,24 @@ namespace MarsDSP::GUI
         static constexpr float kRulerFont           = 9.0f;
         static constexpr float kSelectorRowH       = 24.0f;
         static constexpr float kEnableRowH         = 22.0f;
+
+        // Interaction constants (section 4.6).
+        // The wheel and the arrow keys step in proportion space.
+        static constexpr double kWheelStepCoarse = 0.02;
+        static constexpr double kWheelStepFine = 0.004;
+        // The idle time that closes a wheel gesture burst.
+        static constexpr int kWheelGestureMs = 250;
+        // The smallest interactive dimension, design units.
+        static constexpr int kHitTargetMin = 16;
+
+        // Every interactive dimension clears the hit target.
+        static_assert(kPresetBarArrow >= kHitTargetMin);
+        static_assert(kPresetBarMenu >= kHitTargetMin);
+        static_assert(kHeaderBypassSize >= static_cast<float>(kHitTargetMin));
+        static_assert(kKnobMin >= kHitTargetMin);
+        static_assert(kSelectorRowH >= static_cast<float>(kHitTargetMin));
+        static_assert(kEnableRowH >= static_cast<float>(kHitTargetMin));
+        static_assert(kReadoutBandH >= kHitTargetMin);
 
         // The scale factor, clamped to [kScaleMin, kScaleMax].
         float s = 1.0f;

@@ -37,6 +37,7 @@ public:
     void mouseExit(const MouseEvent& e) override;
     void mouseDoubleClick(const MouseEvent& e) override;
     void mouseWheelMove(const MouseEvent& e, const MouseWheelDetails& wheel) override;
+    bool keyPressed(const KeyPress& key) override;
 
     // Set the scale metrics for the label fonts.
     void setMetrics(const Metrics& m);

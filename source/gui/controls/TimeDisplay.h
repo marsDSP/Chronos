@@ -12,9 +12,10 @@
 namespace MarsDSP::GUI {
 
 // A readout component that displays and edits delay time.
-class TimeDisplay : public Component, public SettableTooltipClient, private Slider::Listener {
+class TimeDisplay : public Component, public SettableTooltipClient,
+                    private Slider::Listener, private Timer {
 public:
-    TimeDisplay() = default;
+    TimeDisplay() { setWantsKeyboardFocus(true); }
     ~TimeDisplay() override
     {
         if (slider_ != nullptr)
@@ -90,6 +91,8 @@ public:
     {
         // An inert readout takes no drag.
         if (! isEnabled()) return;
+        // Close a wheel burst before the drag opens its own gesture.
+        endWheelGesture_();
         if (slider_ == nullptr) return;
         dragStartValue_ = slider_->getValue();
         lastDragY_ = e.position.y;
@@ -122,6 +125,31 @@ public:
         dragParam_ = nullptr;
     }
 
+    bool keyPressed(const KeyPress& key) override
+    {
+        // An inert readout takes no key.
+        if (! isEnabled() || param_ == nullptr)
+            return false;
+
+        double dir = 0.0;
+        if (key == KeyPress::rightKey || key == KeyPress::upKey)        dir = 1.0;
+        else if (key == KeyPress::leftKey || key == KeyPress::downKey)  dir = -1.0;
+        if (dir == 0.0)
+            return false;
+
+        // The same proportion law as the wheel.
+        const bool fine = key.getModifiers().isShiftDown();
+        const double step = dir * (fine ? Metrics::kWheelStepFine : Metrics::kWheelStepCoarse);
+        double prop = slider_->valueToProportionOfLength(slider_->getValue());
+        prop = std::clamp(prop + step, 0.0, 1.0);
+
+        param_->beginChangeGesture();
+        param_->setValueNotifyingHost(static_cast<float>(prop));
+        param_->endChangeGesture();
+        repaint();
+        return true;
+    }
+
     void mouseWheelMove(const MouseEvent& e, const MouseWheelDetails& wheel) override
     {
         // An inert readout takes no wheel input.
@@ -129,17 +157,38 @@ public:
         if (slider_ == nullptr || param_ == nullptr) return;
 
         const bool fine = e.mods.isShiftDown();
-        const double step = fine ? 0.004 : 0.02;
+        const double step = fine ? Metrics::kWheelStepFine : Metrics::kWheelStepCoarse;
         double prop = slider_->valueToProportionOfLength(slider_->getValue());
         prop = std::clamp(prop + wheel.deltaY * step, 0.0, 1.0);
 
-        // One gesture pair per event.
-        param_->beginChangeGesture();
+        // One gesture per burst. The idle timer closes it.
+        if (wheelGestureParam_ == nullptr)
+        {
+            param_->beginChangeGesture();
+            wheelGestureParam_ = param_;
+        }
         param_->setValueNotifyingHost(static_cast<float>(prop));
-        param_->endChangeGesture();
+        startTimer(Metrics::kWheelGestureMs);
     }
 
 private:
+    void timerCallback() override
+    {
+        stopTimer();
+        endWheelGesture_();
+    }
+
+    // Close the wheel burst. mouseDown calls this before its own gesture.
+    void endWheelGesture_()
+    {
+        stopTimer();
+        if (wheelGestureParam_ != nullptr)
+        {
+            wheelGestureParam_->endChangeGesture();
+            wheelGestureParam_ = nullptr;
+        }
+    }
+
     void sliderValueChanged(Slider*) override { repaint(); }
 
     Slider* slider_ = nullptr;
@@ -147,6 +196,8 @@ private:
     RangedAudioParameter* param_ = nullptr;
     // mouseDown stores the gesture target. mouseUp closes the gesture.
     RangedAudioParameter* dragParam_ = nullptr;
+    // The open wheel burst. The idle timer closes it.
+    RangedAudioParameter* wheelGestureParam_ = nullptr;
     float lastDragY_ = 0.0f;
     double dragStartValue_ = 0.0;
     bool syncActive_ = false;

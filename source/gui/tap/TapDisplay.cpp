@@ -107,6 +107,8 @@ std::vector<int> collisionFilteredIndices(const std::vector<float>& xs,
 TapDisplay::TapDisplay(ChronosProcessor& processor)
     : processorRef_(processor)
 {
+    // Arrow keys step the delay time and the division.
+    setWantsKeyboardFocus(true);
 }
 
 TapDisplay::~TapDisplay()
@@ -833,6 +835,56 @@ void TapDisplay::mouseWheelMove(const MouseEvent& e, const MouseWheelDetails& wh
         p->setValueNotifyingHost(next);
         p->endChangeGesture();
     }
+}
+
+// Step the same parameters the wheel acts on. Up and right increase.
+// One bracket pair per press.
+bool TapDisplay::keyPressed(const KeyPress& key)
+{
+    if (! isEnabled())
+        return false;
+
+    double dir = 0.0;
+    if (key == KeyPress::rightKey || key == KeyPress::upKey)        dir = 1.0;
+    else if (key == KeyPress::leftKey || key == KeyPress::downKey)  dir = -1.0;
+    if (dir == 0.0)
+        return false;
+
+    const bool fine = key.getModifiers().isShiftDown();
+    auto& apvts = processorRef_.getAPVTS();
+
+    if (processorRef_.getParameters().getRawDelaySync())
+    {
+        auto* pDiv = apvts.getParameter(delayDivisionParamID.getParamID());
+        if (pDiv == nullptr)
+            return false;
+        const int cur = processorRef_.getParameters().getRawDelayDivision();
+        const int newIdx = std::clamp(cur + ((dir > 0.0) ? 1 : -1), 0, 19);
+        if (newIdx == cur)
+            return true;
+        pDiv->beginChangeGesture();
+        pDiv->setValueNotifyingHost(
+            pDiv->getNormalisableRange().convertTo0to1(static_cast<float>(newIdx)));
+        pDiv->endChangeGesture();
+        repaint();
+        return true;
+    }
+
+    // The linked keyboard writes the left channel. The unlinked
+    // keyboard writes the right channel.
+    auto* p = processorRef_.getParameters().getRawTimeLink()
+        ? apvts.getParameter(delayTimeParamID.getParamID())
+        : apvts.getParameter(delayTimeRParamID.getParamID());
+    if (p == nullptr)
+        return false;
+
+    const double step = dir * (fine ? Metrics::kWheelStepFine : Metrics::kWheelStepCoarse);
+    const double prop = std::clamp(p->getValue() + step, 0.0, 1.0);
+    p->beginChangeGesture();
+    p->setValueNotifyingHost(static_cast<float>(prop));
+    p->endChangeGesture();
+    repaint();
+    return true;
 }
 
 void TapDisplay::resized()

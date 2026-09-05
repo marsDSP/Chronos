@@ -8,6 +8,7 @@
 #include "Fonts.h"
 #include "Metrics.h"
 #include <array>
+#include <functional>
 #include <vector>
 #include <limits>
 
@@ -286,6 +287,35 @@ namespace MarsDSP::GUI::Knobs {
         }
     }
 
+    // A slider whose arrow keys step in proportion space, so the skew
+    // applies at the low end. The owner supplies the write. The vendored
+    // Slider has no keyboard step override, and its built-in step is
+    // linear in value space.
+    class LawSlider : public Slider {
+    public:
+        LawSlider() = default;
+
+        // Step the parameter by direction (-1 or +1). Return true when handled.
+        std::function<bool(double direction, bool fine)> onKeyboardStep;
+
+        bool keyPressed (const KeyPress& k) override
+        {
+            if (! isEnabled())
+                return false;
+
+            double dir = 0.0;
+            if (k == KeyPress::rightKey || k == KeyPress::upKey)        dir = 1.0;
+            else if (k == KeyPress::leftKey || k == KeyPress::downKey)  dir = -1.0;
+            if (dir == 0.0)
+                return Slider::keyPressed (k);
+
+            if (onKeyboardStep != nullptr && onKeyboardStep (dir, k.getModifiers().isShiftDown()))
+                return true;
+
+            return Slider::keyPressed (k);
+        }
+    };
+
     class PDLKnob : public Component,
                     private Slider::Listener,
             private Timer
@@ -320,13 +350,16 @@ namespace MarsDSP::GUI::Knobs {
         // Mouse listener callbacks for the slider.
         void mouseEnter(const MouseEvent &e) override;
         void mouseExit(const MouseEvent &e) override;
+        void mouseDown(const MouseEvent &e) override;
         void mouseWheelMove(const MouseEvent &e, const MouseWheelDetails &wheel) override;
-        void mouseDoubleClick(const MouseEvent &e) override;
 
         // Repaint at the new alpha when the enablement changes.
         void enablementChanged() override;
 
     private:
+        // What the single component timer is counting down to.
+        enum class TimerMode { None, Hold, WheelGesture };
+
         void sliderValueChanged(Slider *) override { repaint(); }
         void sliderDragStarted(Slider *) override;
         void sliderDragEnded(Slider *) override;
@@ -336,7 +369,12 @@ namespace MarsDSP::GUI::Knobs {
         void showValueEditor_();
         void applyEditorText_();
 
-        Slider slider;
+        // One wheel burst opens one gesture. The idle timer closes it.
+        void startWheelGestureTimer_();
+        void endWheelGesture_();
+        bool keyboardStep_(double direction, bool fine);
+
+        LawSlider slider;
         String labelText_;
         Colour labelColour_ { Colours::textDim };
         Colour accentColour_ { Colours::accentDelayDigital };
@@ -349,6 +387,8 @@ namespace MarsDSP::GUI::Knobs {
         bool showValue_ = false;
         bool hovered_ = false;
         bool dragging_ = false;
+        TimerMode timerMode_ = TimerMode::None;
+        bool wheelGestureOpen_ = false;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PDLKnob)
     };

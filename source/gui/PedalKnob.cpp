@@ -29,8 +29,18 @@ PDLKnob::PDLKnob(const String &labelText,
     // Let the shift key swap into velocity mode for fine adjust.
     slider.setVelocityModeParameters(0.5, 1, 0.0, true, ModifierKeys::shiftModifier);
 
-    // Handle the wheel on this component so the step is one parameter interval.
+    // Handle the wheel on this component so the step is the proportion law.
     slider.setScrollWheelEnabled(false);
+
+    // The knob owns the right-click. The slider popup would double up.
+    slider.setPopupMenuEnabled(false);
+
+    // Arrow keys step the parameter through the owner's proportion law.
+    slider.setWantsKeyboardFocus(true);
+    slider.onKeyboardStep = [this](double dir, bool fine)
+    {
+        return keyboardStep_(dir, fine);
+    };
 
     // Observe the slider through the Listener interface. Do not use onValueChange.
     slider.addListener(this);
@@ -54,6 +64,8 @@ PDLKnob::PDLKnob(const String &labelText,
 
 PDLKnob::~PDLKnob()
 {
+    // Close an open wheel burst so no host touch dangles.
+    endWheelGesture_();
     slider.removeListener(this);
     slider.removeMouseListener(this);
     slider.setLookAndFeel(nullptr);
@@ -61,6 +73,8 @@ PDLKnob::~PDLKnob()
 
 void PDLKnob::sliderDragStarted(Slider *)
 {
+    // A drag takes over from a wheel burst on the same parameter.
+    endWheelGesture_();
     dragging_ = true;
     stopTimer();
     showValue_ = true;
@@ -109,53 +123,120 @@ void PDLKnob::mouseWheelMove(const MouseEvent &e, const MouseWheelDetails &wheel
     if (! isEnabled())
         return;
 
+    // Move in proportion space, so the skew applies at the low end.
     const bool fine = e.mods.isShiftDown();
-    const double range = slider.getMaximum() - slider.getMinimum();
-    double interval = slider.getInterval();
-    if (interval <= 0.0)
-        interval = range * 0.01;
-    const double step = fine ? interval * 0.1 : interval;
-    const double dir = (std::abs(wheel.deltaX) > std::abs(wheel.deltaY)) ? -wheel.deltaX : wheel.deltaY;
-    const double newVal = std::clamp(slider.getValue() + dir * step,
-                                     slider.getMinimum(), slider.getMaximum());
-    if (std::abs(newVal - slider.getValue()) < 1e-12)
+    const double step = fine ? Metrics::kWheelStepFine : Metrics::kWheelStepCoarse;
+    double prop = slider.valueToProportionOfLength(slider.getValue());
+    prop = std::clamp(prop + wheel.deltaY * step, 0.0, 1.0);
+
+    // Snap to the interval, so an integer parameter lands on integers.
+    double newVal = slider.proportionOfLengthToValue(prop);
+    const double interval = slider.getInterval();
+    if (interval > 0.0)
+    {
+        const double min = slider.getMinimum();
+        newVal = min + std::round((newVal - min) / interval) * interval;
+        prop = slider.valueToProportionOfLength(newVal);
+    }
+
+    auto* param = apvtsRef_.getParameter(paramID_);
+    if (param == nullptr)
         return;
 
-    if (auto *param = apvtsRef_.getParameter(paramID_))
+    // One gesture per burst. The idle timer closes it.
+    if (! wheelGestureOpen_)
     {
         param->beginChangeGesture();
-        slider.setValue(newVal, sendNotificationSync);
-        param->endChangeGesture();
+        wheelGestureOpen_ = true;
     }
-    else
-    {
-        slider.setValue(newVal, sendNotificationSync);
-    }
+    param->setValueNotifyingHost(static_cast<float>(prop));
+    startWheelGestureTimer_();
 }
 
-void PDLKnob::mouseDoubleClick(const MouseEvent &e)
+void PDLKnob::mouseDown(const MouseEvent &e)
 {
-    // An inert knob takes no text entry.
-    if (! isEnabled())
+    // A right-click on the body or the label band opens the value entry.
+    if (! e.mods.isPopupMenu() || ! isEnabled())
+        return;
+    if (e.eventComponent != this && e.eventComponent != &slider)
         return;
 
-    // A double-click on the label band opens inline text entry.
-    const auto m = metrics_;
-    const int labelBandH = m.px(Metrics::kLabelBandH);
-    if (e.position.y < static_cast<float>(labelBandH))
-        showValueEditor_();
+    PopupMenu m;
+    m.addItem(1, "Enter value");
+    const auto safe = SafePointer<PDLKnob>(this);
+    m.showMenuAsync(PopupMenu::Options().withTargetComponent(this),
+        [safe](int r) { if (safe != nullptr && r == 1) safe->showValueEditor_(); });
 }
 
 void PDLKnob::timerCallback()
 {
-    showValue_ = false;
     stopTimer();
+    if (timerMode_ == TimerMode::WheelGesture)
+    {
+        endWheelGesture_();
+        return;
+    }
+    showValue_ = false;
     repaint();
+}
+
+// One wheel burst opens one gesture. Each event restarts the idle
+// timer, so a fast scroll records one automation touch.
+void PDLKnob::startWheelGestureTimer_()
+{
+    timerMode_ = TimerMode::WheelGesture;
+    startTimer(Metrics::kWheelGestureMs);
+}
+
+void PDLKnob::endWheelGesture_()
+{
+    timerMode_ = TimerMode::None;
+    if (! wheelGestureOpen_)
+        return;
+    wheelGestureOpen_ = false;
+    if (auto* param = apvtsRef_.getParameter(paramID_))
+        param->endChangeGesture();
+    showValue_ = false;
+    repaint();
+}
+
+// Step the parameter in proportion space. One bracket pair per press.
+bool PDLKnob::keyboardStep_(const double direction, const bool fine)
+{
+    if (! isEnabled())
+        return false;
+    auto* param = apvtsRef_.getParameter(paramID_);
+    if (param == nullptr)
+        return false;
+
+    const double step = direction * (fine ? Metrics::kWheelStepFine : Metrics::kWheelStepCoarse);
+    double prop = slider.valueToProportionOfLength(slider.getValue());
+    prop = std::clamp(prop + step, 0.0, 1.0);
+
+    // Snap to the interval, so an integer parameter lands on integers.
+    double newVal = slider.proportionOfLengthToValue(prop);
+    const double interval = slider.getInterval();
+    if (interval > 0.0)
+    {
+        const double min = slider.getMinimum();
+        newVal = min + std::round((newVal - min) / interval) * interval;
+    }
+
+    param->beginChangeGesture();
+    param->setValueNotifyingHost(
+        static_cast<float>(slider.valueToProportionOfLength(newVal)));
+    param->endChangeGesture();
+    repaint();
+    return true;
 }
 
 void PDLKnob::startHoldTimer()
 {
+    // A wheel burst keeps the timer. The hold waits.
+    if (wheelGestureOpen_)
+        return;
     showValue_ = true;
+    timerMode_ = TimerMode::Hold;
     startTimer(kValueHoldMs);
 }
 
