@@ -7,7 +7,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
 #include <vector>
 
 namespace MarsDSP::GUI {
@@ -94,6 +93,99 @@ std::vector<int> collisionFilteredIndices(const std::vector<float>& xs,
     }
     return idx;
 }
+
+class MonotoneSpline
+{
+public:
+    void addKnot(const float x, const float y)
+    {
+        xs_.push_back(x);
+        ys_.push_back(y);
+    }
+
+    [[nodiscard]] int numKnots() const noexcept { return static_cast<int>(xs_.size()); }
+    [[nodiscard]] float x(const int i) const noexcept { return xs_[static_cast<std::size_t>(i)]; }
+    [[nodiscard]] float y(const int i) const noexcept { return ys_[static_cast<std::size_t>(i)]; }
+    [[nodiscard]] float tangent(const int i) const noexcept { return ms_[static_cast<std::size_t>(i)]; }
+
+    // Precompute the per-knot tangents. Call once after the last addKnot.
+    void build()
+    {
+        const int n = numKnots();
+        ms_.assign(static_cast<std::size_t>(std::max(n, 0)), 0.0f);
+        if (n < 2)
+            return;
+
+        std::vector<float> d(static_cast<std::size_t>(n - 1));
+        for (int k = 0; k < n - 1; ++k)
+        {
+            const float dx = x(k + 1) - x(k);
+            d[static_cast<std::size_t>(k)] = (dx > 1e-6f) ? (y(k + 1) - y(k)) / dx : 0.0f;
+        }
+
+        ms_[0] = d[0];
+        ms_[static_cast<std::size_t>(n - 1)] = d[static_cast<std::size_t>(n - 2)];
+        for (int k = 1; k < n - 1; ++k)
+        {
+            const float dPrev = d[static_cast<std::size_t>(k - 1)];
+            const float dNext = d[static_cast<std::size_t>(k)];
+            ms_[static_cast<std::size_t>(k)] = (dPrev * dNext <= 0.0f) ? 0.0f : (dPrev + dNext) * 0.5f;
+        }
+
+        // The Fritsch-Carlson clamp: rescale each segment's tangent pair so
+        // the curve stays within [min(yk, yk+1), max(yk, yk+1)] — no overshoot.
+        for (int k = 0; k < n - 1; ++k)
+        {
+            const float dk = d[static_cast<std::size_t>(k)];
+            if (std::fabs(dk) < 1e-9f)
+            {
+                ms_[static_cast<std::size_t>(k)] = 0.0f;
+                ms_[static_cast<std::size_t>(k + 1)] = 0.0f;
+                continue;
+            }
+            const float a = ms_[static_cast<std::size_t>(k)] / dk;
+            const float b = ms_[static_cast<std::size_t>(k + 1)] / dk;
+            const float mag = a * a + b * b;
+            if (mag > 9.0f)
+            {
+                const float tau = 3.0f / std::sqrt(mag);
+                ms_[static_cast<std::size_t>(k)] = tau * a * dk;
+                ms_[static_cast<std::size_t>(k + 1)] = tau * b * dk;
+            }
+        }
+    }
+
+    // Evaluate at px. Clamps to the first/last knot outside the domain.
+    [[nodiscard]] float evaluate(const float px) const noexcept
+    {
+        const int n = numKnots();
+        if (n == 0)
+            return 0.0f;
+        if (n == 1 || px <= x(0))
+            return y(0);
+        if (px >= x(n - 1))
+            return y(n - 1);
+
+        int k = 0;
+        while (k < n - 2 && px > x(k + 1))
+            ++k;
+
+        const float x0 = x(k);
+        const float x1 = x(k + 1);
+        const float dx = std::max(1e-6f, x1 - x0);
+        const float t = (px - x0) / dx;
+        const float t2 = t * t;
+        const float t3 = t2 * t;
+        const float h00 = 2.0f * t3 - 3.0f * t2 + 1.0f;
+        const float h10 = t3 - 2.0f * t2 + t;
+        const float h01 = -2.0f * t3 + 3.0f * t2;
+        const float h11 = t3 - t2;
+        return h00 * y(k) + h10 * dx * tangent(k) + h01 * y(k + 1) + h11 * dx * tangent(k + 1);
+    }
+
+private:
+    std::vector<float> xs_, ys_, ms_;
+};
 
 } // namespace
 
@@ -399,13 +491,12 @@ void TapDisplay::paint(Graphics& g)
         const float sigma1 = diffusionModel_->sigma1Seconds(diffusion, diffuserSize);
         const float baseAlpha = Metrics::kHaloAlpha * haloFade_ * diffusion;
 
-
-        struct HaloTap { float x; float gain; float reachPx; float invTwoSigmaSq; };
+        struct HaloKnot { float x; float gain; float reachPx; };
+        constexpr float kMinDx = 0.01f;
 
         const auto drawHaloLane = [&](const std::vector<TapTracker::TrackedTap>& taps, const bool leftLane)
         {
-            std::vector<HaloTap> blobs;
-            float minSigmaPx = std::numeric_limits<float>::max();
+            std::vector<HaloKnot> knots;
             for (const auto& tap : taps)
             {
                 if (tap.dry || tap.key < 1)
@@ -413,73 +504,79 @@ void TapDisplay::paint(Graphics& g)
                 const float gain = std::clamp(std::fabs(tap.displayedGain), 0.0f, 1.0f);
                 if (gain <= 0.001f)
                     continue;
-                const float sigmaPx = sigma1 * std::sqrt(static_cast<float>(tap.key)) * pxPerSecond;
-                const float reachPx = Metrics::kHaloSigmas * sigmaPx;
-                if (2.0f * reachPx < 1.0f)
-                    continue;
                 const float timeNorm = std::clamp(tap.displayedTime / totalTime, 0.0f, 1.0f);
                 const float modOffsetPx = metrics_.pxf(tracker_.modOffset(leftLane, tap.key));
-                minSigmaPx = std::min(minSigmaPx, sigmaPx);
-                blobs.push_back({ plotBounds.getX() + timeNorm * plotBounds.getWidth() + modOffsetPx,
-                                  gain, reachPx, 0.5f / (sigmaPx * sigmaPx) });
+                const float reachPx = Metrics::kHaloSigmas * sigma1
+                                     * std::sqrt(static_cast<float>(tap.key)) * pxPerSecond;
+                knots.push_back({ plotBounds.getX() + timeNorm * plotBounds.getWidth() + modOffsetPx,
+                                  gain, reachPx });
             }
-            if (blobs.empty())
+            if (knots.empty())
                 return;
-            std::sort(blobs.begin(), blobs.end(),
-                      [](const HaloTap& a, const HaloTap& b) { return a.x < b.x; });
+            std::sort(knots.begin(), knots.end(),
+                      [](const HaloKnot& a, const HaloKnot& b) { return a.x < b.x; });
 
-            // The wash spans the outer repeats plus their Gaussian tails.
-            const float x0 = std::max(plotBounds.getX(), blobs.front().x - blobs.front().reachPx);
-            const float x1 = std::min(plotBounds.getRight(), blobs.back().x + blobs.back().reachPx);
+            // Guarantee strictly increasing x: the mod-jitter offset can
+            // otherwise push two adjacent repeats to (near-)equal x.
+            for (std::size_t i = 1; i < knots.size(); ++i)
+                knots[i].x = std::max(knots[i].x, knots[i - 1].x + kMinDx);
+
+            // Taper to zero before the first repeat and after the last, so
+            // the curve rises from and falls to silence instead of
+            // starting or ending on a hard edge. The taper distance is the
+            // same physically-modelled spread the halo has always used.
+            MonotoneSpline spline;
+            spline.addKnot(knots.front().x - std::max(knots.front().reachPx, kMinDx), 0.0f);
+            for (const auto& k : knots)
+                spline.addKnot(k.x, k.gain);
+            spline.addKnot(knots.back().x + std::max(knots.back().reachPx, kMinDx), 0.0f);
+            spline.build();
+
+            // The visible column range, clamped to the plot.
+            const float x0 = std::max(plotBounds.getX(), spline.x(0));
+            const float x1 = std::min(plotBounds.getRight(), spline.x(spline.numKnots() - 1));
             const int xi0 = static_cast<int>(std::floor(x0));
             const int xi1 = static_cast<int>(std::ceil(x1));
-            const int cols = xi1 - xi0 + 1;
-            if (cols < 2)
+            if (xi1 - xi0 < 1)
                 return;
 
-
-            std::vector<float> colGain(static_cast<std::size_t>(cols));
-            std::vector<float> colAlpha(static_cast<std::size_t>(cols));
-            for (int i = 0; i < cols; ++i)
-            {
-                const float x = static_cast<float>(xi0 + i);
-                float w = 0.0f, gw = 0.0f;
-                for (const auto& b : blobs)
-                {
-                    const float dx = x - b.x;
-                    if (std::fabs(dx) > b.reachPx)
-                        continue;
-                    const float wn = std::exp(-dx * dx * b.invTwoSigmaSq);
-                    w += wn;
-                    gw += b.gain * wn;
-                }
-                const float gain = (w > 1e-6f) ? (gw / w) : 0.0f;
-                colGain[static_cast<std::size_t>(i)] = gain;
-                colAlpha[static_cast<std::size_t>(i)] =
-                    std::clamp(baseAlpha * std::sqrt(gain) * std::min(w, 1.0f), 0.0f, 1.0f);
-            }
-
-            // The top edge, one vertex per column, closed back along the centre.
+            // The top edge: one cubic Bezier per spline segment, an exact
+            // conversion from the Hermite tangents, so the curve is never
+            // approximated by short straight lines.
             const float dir = leftLane ? -1.0f : 1.0f;
+            const auto toY = [&](const float gain) { return centerY + dir * gain * maxLaneHeight; };
+
             Path wash;
-            wash.startNewSubPath(static_cast<float>(xi0), centerY);
-            for (int i = 0; i < cols; ++i)
-                wash.lineTo(static_cast<float>(xi0 + i),
-                            centerY + dir * colGain[static_cast<std::size_t>(i)] * maxLaneHeight);
-            wash.lineTo(static_cast<float>(xi1), centerY);
+            wash.startNewSubPath(spline.x(0), toY(spline.y(0)));
+            for (int k = 0; k < spline.numKnots() - 1; ++k)
+            {
+                const float sx0 = spline.x(k);
+                const float sx1 = spline.x(k + 1);
+                const float segDx = sx1 - sx0;
+                const float c1y = spline.y(k) + spline.tangent(k) * segDx / 3.0f;
+                const float c2y = spline.y(k + 1) - spline.tangent(k + 1) * segDx / 3.0f;
+                wash.cubicTo(sx0 + segDx / 3.0f, toY(c1y), sx1 - segDx / 3.0f, toY(c2y),
+                            sx1, toY(spline.y(k + 1)));
+            }
             wash.closeSubPath();
 
-            ColourGradient shade(accent.withAlpha(colAlpha.front()),
+            // The column alpha follows the sqrt of the same spline (sqrt,
+            // not linear, so the late quiet repeats keep their visibility
+            // instead of vanishing) and rides a horizontal gradient with
+            // one stop per column, so no shading step is ever visible.
+            const auto alphaAt = [&](const float x)
+            {
+                return std::clamp(baseAlpha * std::sqrt(std::max(0.0f, spline.evaluate(x))), 0.0f, 1.0f);
+            };
+            ColourGradient shade(accent.withAlpha(alphaAt(static_cast<float>(xi0))),
                                  Point<float>(static_cast<float>(xi0), centerY),
-                                 accent.withAlpha(colAlpha.back()),
+                                 accent.withAlpha(alphaAt(static_cast<float>(xi1))),
                                  Point<float>(static_cast<float>(xi1), centerY), false);
-            constexpr int kMaxStops = 256;
-            const int sigmaStride = std::max(1, static_cast<int>(minSigmaPx * 0.5f));
-            const int stride = std::max(1, std::min((cols + kMaxStops - 1) / kMaxStops, sigmaStride));
-            const auto invSpan = 1.0 / static_cast<double>(cols - 1);
-            for (int i = stride; i < cols - 1; i += stride)
+            const int cols = xi1 - xi0 + 1;
+            const auto invSpan = 1.0 / static_cast<double>(std::max(1, cols - 1));
+            for (int i = 1; i < cols - 1; ++i)
                 shade.addColour(static_cast<double>(i) * invSpan,
-                                accent.withAlpha(colAlpha[static_cast<std::size_t>(i)]));
+                                accent.withAlpha(alphaAt(static_cast<float>(xi0 + i))));
 
             g.setGradientFill(shade);
             g.fillPath(wash);
