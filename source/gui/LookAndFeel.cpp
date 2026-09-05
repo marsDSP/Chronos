@@ -15,7 +15,7 @@ LookAndFeel::LookAndFeel()
     setColour(ComboBox::outlineColourId, Colours::dropdownBorder);
     setColour(ComboBox::textColourId, Colours::textPrimary);
     setColour(ComboBox::arrowColourId, Colours::textMuted);
-    setColour(PopupMenu::backgroundColourId, Colours::panelBackground);
+    setColour(PopupMenu::backgroundColourId, Colours::background);
     setColour(PopupMenu::textColourId, Colours::textPrimary);
     setColour(PopupMenu::highlightedBackgroundColourId, Colours::headerBackground);
     setColour(PopupMenu::highlightedTextColourId, Colours::textBright);
@@ -165,7 +165,7 @@ void LookAndFeel::drawPopupMenuBackground(Graphics& g, const int width, const in
     const float sw = m.stroke(Metrics::kHairline);
     const float half = sw / 2;
 
-    g.setColour(Colours::panelBackground);
+    g.setColour(Colours::background);
     g.fillRoundedRectangle(Rectangle<float>(static_cast<float>(width), static_cast<float>(height)), corner);
 
     g.setColour(Colours::panelBorder);

@@ -358,6 +358,10 @@ void PresetBar::showMenu_()
         addBankSubmenu(bankName, entries, false);
     }
 
+    // Use the editor's look and feel so the menu inherits the charcoal
+    // background and the Clash Grotesk font from the plugin LnF.
+    menu.setLookAndFeel(&getLookAndFeel());
+
     const auto safe = SafePointer<PresetBar>(this);
     menu.showMenuAsync(PopupMenu::Options().withTargetComponent(this),
         [safe](int result) { if (safe != nullptr) safe->handleMenuResult_(result); });
