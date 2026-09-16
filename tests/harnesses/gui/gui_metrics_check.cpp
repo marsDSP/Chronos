@@ -391,10 +391,19 @@ int runAll()
                 MarsDSP::GUI::Metrics::fromWidth(
                     static_cast<int>(static_cast<float>(MarsDSP::GUI::Metrics::kDesignWidth) * s));
 
-            // The px sum must match px(592) within the px rounding tolerance.
+            // The bands walk in design units. Each band height is the
+            // pixel difference of the two cumulative boundaries, the way
+            // the editor lays them out, so the sum is the window height.
+            int cumDU = 0;
+            int cumPx = 0;
             int sum = 0;
             for (int bi = 0; bi < kNumBands; ++bi)
-                sum += m.px(kBands[bi].du);
+            {
+                cumDU += kBands[bi].du;
+                const int next = m.px(static_cast<float>(cumDU));
+                sum += next - cumPx;
+                cumPx = next;
+            }
             const int target = m.px(static_cast<float>(MarsDSP::GUI::Metrics::kDesignHeight));
             if (std::abs(sum - target) > 2)
             {

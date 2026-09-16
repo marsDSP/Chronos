@@ -59,7 +59,7 @@ public:
     void setEditorOpen(bool open) noexcept { editorOpen_.store(open, std::memory_order_relaxed); }
 
     // The editor state side tree. It never enters the parameter tree,
-    // so a preset cannot carry window geometry or sub-tab selection.
+    // so a preset cannot carry window geometry or page selection.
     // The editor reads and writes it on the message thread only.
     ValueTree& getEditorState() noexcept { return editorState_; }
 
@@ -67,10 +67,22 @@ public:
     void setEditorWidth(int w) { editorState_.setProperty("editorWidth", w, nullptr); }
 
     // The layout revision marks the side-tree schema. The editor reads
-    // the stored width only when the revision matches, so a session from
-    // an older layout opens at the default width.
+    // the stored width only when the revision is at least the width
+    // law's revision, so a session from an older layout opens at the
+    // default width.
     int getEditorLayoutRev() const { return editorState_.getProperty("layoutRev", 0); }
     void setEditorLayoutRev(int rev) { editorState_.setProperty("layoutRev", rev, nullptr); }
+
+    // The selected page of each paged card. Side 0 is the left card and
+    // side 1 is the right card. An absent property reads page 0.
+    int getEditorPage(int side) const
+    {
+        return static_cast<int>(editorState_.getProperty(side == 0 ? "pageLeft" : "pageRight", 0));
+    }
+    void setEditorPage(int side, int page)
+    {
+        editorState_.setProperty(side == 0 ? "pageLeft" : "pageRight", page, nullptr);
+    }
 
     //==============================================================================
     int getNumPrograms() override;

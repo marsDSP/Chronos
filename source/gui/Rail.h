@@ -21,7 +21,7 @@ public:
     ~Rail() override = default;
 
     // Set the content child. Replaces any prior child.
-    void setContent(std::unique_ptr<Component> panel);
+    void setPanel(std::unique_ptr<Component> panel);
 
     // Set the accent colour for the rail border and the content child.
     void setAccentColour(Colour c);

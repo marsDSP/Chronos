@@ -666,7 +666,7 @@ int main()
 
     // ----------------------------------------------------------------
     // 10. A preset carries no geometry. The session side tree holds a
-    //     1600 width and a non-default tab; the saved file has neither,
+    //     1600 width and a non-default page; the saved file has neither,
     //     and a load into a side tree at 800 leaves it at 800.
     // ----------------------------------------------------------------
     g_section = "no-geometry";
@@ -676,7 +676,7 @@ int main()
         pm.getStore().setRootDirectory (tempRoot);
 
         proc.editorSide.setProperty ("editorWidth", 1600, nullptr);
-        proc.editorSide.setProperty ("timeTab", 1, nullptr);
+        proc.editorSide.setProperty ("pageLeft", 1, nullptr);
 
         CHECK (pm.saveAs ("Geom", "a", "c"));
         const auto file = store.presetFile ({}, "Geom");
@@ -689,12 +689,12 @@ int main()
         PresetManager pmB (procB, procB.apvts);
         pmB.getStore().setRootDirectory (tempRoot);
         procB.editorSide.setProperty ("editorWidth", 800, nullptr);
-        procB.editorSide.setProperty ("timeTab", 0, nullptr);
+        procB.editorSide.setProperty ("pageLeft", 0, nullptr);
 
         CHECK (pmB.loadPreset (file));
         pmB.clearModified();
         CHECK (static_cast<int> (procB.editorSide.getProperty ("editorWidth")) == 800);
-        CHECK (static_cast<int> (procB.editorSide.getProperty ("timeTab")) == 0);
+        CHECK (static_cast<int> (procB.editorSide.getProperty ("pageLeft")) == 0);
     }
 
     // Clean up the temporary directory.

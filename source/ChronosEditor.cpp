@@ -681,7 +681,7 @@ ChronosEditor::ChronosEditor(ChronosProcessor& p)
     rightCard_.addPage("FILTER", std::make_unique<FilterPanel>(processorRef, knobLnf_));
     addAndMakeVisible(rightCard_);
 
-    rail_.setContent(std::make_unique<RailPanel>(processorRef, knobLnf_));
+    rail_.setPanel(std::make_unique<RailPanel>(processorRef, knobLnf_));
     addAndMakeVisible(rail_);
 
     const auto rawMode = processorRef.getParameters().getRawDelayMode();
@@ -698,6 +698,8 @@ ChronosEditor::ChronosEditor(ChronosProcessor& p)
     processorRef.getAPVTS().addParameterListener(timeLinkParamID.getParamID(), this);
     processorRef.getAPVTS().addParameterListener(enableDiffuserParamID.getParamID(), this);
     processorRef.getAPVTS().addParameterListener(adaaOrderParamID.getParamID(), this);
+    processorRef.getAPVTS().addParameterListener(hpfFreqParamID.getParamID(), this);
+    processorRef.getAPVTS().addParameterListener(lpfFreqParamID.getParamID(), this);
 
     paramPoll_ = std::make_unique<LambdaTimer>([this] { pollParameterChanges_(); }, 10);
 
@@ -713,13 +715,31 @@ ChronosEditor::ChronosEditor(ChronosProcessor& p)
                                           / static_cast<float>(Metrics::kDesignAspect));
     setResizeLimits(Metrics::kMinWidth, Metrics::kMinHeight, initMaxW, initMaxH);
 
-    // Read the stored width only when the layout revision matches. A
-    // session from an older layout opens at the default width.
+    // Read the stored width when the layout revision is at least the
+    // width law's revision. A session from an older layout opens at the
+    // default width.
     const int layoutRev = processorRef.getEditorLayoutRev();
-    const int storedW = (layoutRev == 7) ? processorRef.getEditorWidth() : Metrics::kDefaultWidth;
+    const int storedW = (layoutRev >= 7) ? processorRef.getEditorWidth() : Metrics::kDefaultWidth;
     const int w = std::clamp(storedW, Metrics::kMinWidth, initMaxW);
     const int h = juce::roundToInt(static_cast<float>(w) / static_cast<float>(Metrics::kDesignAspect));
     setSize(w, h);
+
+    // The page selection lives in the side tree, never in a preset. An
+    // absent property reads page 0, and the index clamps into range.
+    leftCard_.onPageChanged = [this](int page)
+    {
+        processorRef.setEditorPage(0, page);
+        processorRef.setEditorLayoutRev(8);
+    };
+    rightCard_.onPageChanged = [this](int page)
+    {
+        processorRef.setEditorPage(1, page);
+        processorRef.setEditorLayoutRev(8);
+    };
+    leftCard_.setSelectedPage(std::clamp(processorRef.getEditorPage(0),
+                                         0, leftCard_.getPageCount() - 1));
+    rightCard_.setSelectedPage(std::clamp(processorRef.getEditorPage(1),
+                                          0, rightCard_.getPageCount() - 1));
 
     // Wire the preset bar Zoom submenu to the editor's screen-aware resizer.
     header_.getPresetBar().setResizeControls(
@@ -728,6 +748,7 @@ ChronosEditor::ChronosEditor(ChronosProcessor& p)
           [this] { return getWidth(); } });
 
     updateEnablement_();
+    updatePageMarks_();
 
     // Wire the undo and redo buttons to the history.
     auto& history = processorRef.getEditHistory();
@@ -768,6 +789,8 @@ ChronosEditor::~ChronosEditor()
     processorRef.getAPVTS().removeParameterListener(timeLinkParamID.getParamID(), this);
     processorRef.getAPVTS().removeParameterListener(enableDiffuserParamID.getParamID(), this);
     processorRef.getAPVTS().removeParameterListener(adaaOrderParamID.getParamID(), this);
+    processorRef.getAPVTS().removeParameterListener(hpfFreqParamID.getParamID(), this);
+    processorRef.getAPVTS().removeParameterListener(lpfFreqParamID.getParamID(), this);
     setLookAndFeel(nullptr);
 }
 
@@ -818,18 +841,38 @@ void ChronosEditor::parameterChanged(const String& parameterID, const float newV
         pendingDelayMode_.store(juce::roundToInt(newValue), std::memory_order_relaxed);
     else if (parameterID == bypassParamID.getParamID())
         pendingBypass_.store((juce::roundToInt(newValue) != 0) ? 1 : 0, std::memory_order_relaxed);
+    else if (parameterID == hpfFreqParamID.getParamID())
+        pendingHpf_.store(newValue, std::memory_order_relaxed);
+    else if (parameterID == lpfFreqParamID.getParamID())
+        pendingLpf_.store(newValue, std::memory_order_relaxed);
 
     if (parameterID == delaySyncParamID.getParamID()
         || parameterID == timeLinkParamID.getParamID()
         || parameterID == enableDiffuserParamID.getParamID()
         || parameterID == adaaOrderParamID.getParamID()
-        || parameterID == bypassParamID.getParamID())
+        || parameterID == bypassParamID.getParamID()
+        || parameterID == hpfFreqParamID.getParamID()
+        || parameterID == lpfFreqParamID.getParamID())
         triggerAsyncUpdate();
 }
 
 void ChronosEditor::handleAsyncUpdate()
 {
     updateEnablement_();
+    updatePageMarks_();
+}
+
+void ChronosEditor::updatePageMarks_()
+{
+    // The filter mark reads the normalised cutoffs. The filter is
+    // engaged when either cutoff leaves its neutral end.
+    bool filterEngaged = false;
+    if (auto* hpf = processorRef.getAPVTS().getParameter(hpfFreqParamID.getParamID()))
+        if (auto* lpf = processorRef.getAPVTS().getParameter(lpfFreqParamID.getParamID()))
+            filterEngaged = hpf->getValue() > 0.0f || lpf->getValue() < 1.0f;
+
+    leftCard_.setPageMark(1, processorRef.getParameters().getRawEnableDiffuser());
+    rightCard_.setPageMark(1, filterEngaged);
 }
 
 void ChronosEditor::updateEnablement_()
@@ -916,35 +959,53 @@ void ChronosEditor::resized()
     const int side = m.px(Metrics::kSideMargin);
     const int gutter = m.px(Metrics::kCardGutter);
 
-    int y = m.px(Metrics::kTopPad);
-    const int headerH = m.px(Metrics::kHeaderH);
-    header_.setBounds(0, y, w, headerH);
-    y += headerH + m.px(Metrics::kGapHeader);
+    // Walk the eleven bands. Each band height is the pixel difference of
+    // the two cumulative boundaries, so the bands fill the window with
+    // no rounding drift.
+    int cumDU = 0;
+    int cumPx = 0;
+    const auto band = [&cumDU, &cumPx, &m](const int du)
+    {
+        cumDU += du;
+        const int next = m.px(static_cast<float>(cumDU));
+        const int h = next - cumPx;
+        cumPx = next;
+        return h;
+    };
 
-    const int tapH = m.px(Metrics::kTapH);
+    int y = band(Metrics::kTopPad);
+    const int headerH = band(Metrics::kHeaderH);
+    header_.setBounds(0, y, w, headerH);
+    y += headerH + band(Metrics::kGapHeader);
+
+    const int tapH = band(Metrics::kTapH);
     tapDisplay_.setBounds(side, y, w - 2 * side, tapH);
-    y += tapH + m.px(Metrics::kGapTap);
+    y += tapH + band(Metrics::kGapTap);
 
     // The one card row: two paged cards over the two columns.
     const int colW = (w - 2 * side - gutter) / 2;
-    const int cardRowH = m.px(Metrics::kCardRowH);
+    const int cardRowH = band(Metrics::kCardRowH);
     const int cardY = y;
     leftCard_.setBounds(side, cardY, colW, cardRowH);
     rightCard_.setBounds(side + colW + gutter, cardY, colW, cardRowH);
+    y += cardRowH + band(Metrics::kGapCards);
 
     // The output rail between the card row and the status footer.
-    const int railH = m.px(Metrics::kRailH);
-    const int railY = cardY + cardRowH + m.px(Metrics::kGapCards);
+    const int railH = band(Metrics::kRailH);
+    const int railY = y;
     rail_.setBounds(side, railY, w - 2 * side, railH);
 
     // The bypass scrim covers the card row and the rail.
     cardRowBounds_ = Rectangle<int>(side, cardY, w - 2 * side, cardRowH);
     railBounds_ = Rectangle<int>(side, railY, w - 2 * side, railH);
 
-    y = railY + railH + m.px(Metrics::kGapRail);
+    y += railH + band(Metrics::kGapRail);
 
-    const int footerH = m.px(Metrics::kFooterH);
+    const int footerH = band(Metrics::kFooterH);
     footer_.setBounds(0, y, w, footerH);
+
+    // The bottom pad closes the walk at the window height.
+    juce::ignoreUnused(band(Metrics::kBottomPad));
 
     // Rebind the interactive size cap to the display the window is on, so
     // dragging can never push the window larger than the current screen.
@@ -964,7 +1025,7 @@ void ChronosEditor::timerCallback()
     // One write per settle, into the side tree. The parameter tree
     // never carries window geometry.
     processorRef.setEditorWidth(getWidth());
-    processorRef.setEditorLayoutRev(7);
+    processorRef.setEditorLayoutRev(8);
 }
 
 int ChronosEditor::currentScreenMaxWidth_() const

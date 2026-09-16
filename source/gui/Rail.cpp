@@ -3,7 +3,7 @@
 
 namespace MarsDSP::GUI {
 
-void Rail::setContent(std::unique_ptr<Component> panel)
+void Rail::setPanel(std::unique_ptr<Component> panel)
 {
     if (content_ != nullptr)
         removeChildComponent(content_.get());

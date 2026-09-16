@@ -12,6 +12,7 @@ using namespace juce;
 
 #include "ChronosParameters.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <print>
@@ -85,6 +86,18 @@ MemoryBlock saveState (AudioProcessorValueTreeState& a, const ValueTree& editorS
     MemoryBlock block;
     AudioProcessor::copyXmlToBinary (*s.createXml(), block);
     return block;
+}
+
+// The editor's page read. An absent property reads page 0, and the
+// stored index clamps into the page range. This mirrors the editor
+// constructor read without linking the editor.
+int editorPageRead (const ValueTree& side, const int sideIndex, const int pageCount)
+{
+    if (pageCount <= 0)
+        return 0;
+    const char* name = (sideIndex == 0) ? "pageLeft" : "pageRight";
+    const int page = static_cast<int> (side.getProperty (name, 0));
+    return std::clamp (page, 0, pageCount - 1);
 }
 
 // Load a state block into the APVTS. Mirrors the processor path: extract
@@ -190,9 +203,10 @@ int main()
     }
 
     // ----------------------------------------------------------------
-    // Editor side tree: the width and the tab indices ride on the
-    // serialised root under the EDITOR tag, never on the parameter
-    // tree. A version-5 file without the child loads unchanged.
+    // Editor side tree: the width, the layout revision, and the two
+    // page indices ride on the serialised root under the EDITOR tag,
+    // never on the parameter tree. A version-5 file without the child
+    // loads unchanged.
     // ----------------------------------------------------------------
     g_section = "editor-side-tree";
     {
@@ -202,25 +216,51 @@ int main()
 
         setDenorm (a, "delayTime", 1234.0f);
 
-        side.setProperty ("editorWidth", 1600, nullptr);
-        side.setProperty ("timeTab", 1, nullptr);
-        side.setProperty ("characterTab", 1, nullptr);
+        side.setProperty ("editorWidth", 832, nullptr);
+        side.setProperty ("layoutRev", 8, nullptr);
+        side.setProperty ("pageLeft", 1, nullptr);
+        side.setProperty ("pageRight", 1, nullptr);
 
         const MemoryBlock save1 = saveState (a, side);
 
         // Perturb the side tree, then reload. The saved values return.
         side.setProperty ("editorWidth", 800, nullptr);
-        side.setProperty ("timeTab", 0, nullptr);
+        side.setProperty ("layoutRev", 7, nullptr);
+        side.setProperty ("pageLeft", 0, nullptr);
+        side.setProperty ("pageRight", 0, nullptr);
         loadState (a, save1, side);
 
-        CHECK (static_cast<int> (side.getProperty ("editorWidth")) == 1600);
-        CHECK (static_cast<int> (side.getProperty ("timeTab")) == 1);
-        CHECK (static_cast<int> (side.getProperty ("characterTab")) == 1);
+        CHECK (static_cast<int> (side.getProperty ("editorWidth")) == 832);
+        CHECK (static_cast<int> (side.getProperty ("layoutRev")) == 8);
+        CHECK (static_cast<int> (side.getProperty ("pageLeft")) == 1);
+        CHECK (static_cast<int> (side.getProperty ("pageRight")) == 1);
 
-        // The parameter tree carries no EDITOR child and no width
+        // The parameter tree carries no EDITOR child and no side
         // property at any point in the session.
         CHECK (! a.state.getChildWithName (kEditorTag).isValid());
         CHECK (! a.state.hasProperty ("editorWidth"));
+        CHECK (! a.state.hasProperty ("layoutRev"));
+        CHECK (! a.state.hasProperty ("pageLeft"));
+        CHECK (! a.state.hasProperty ("pageRight"));
+
+        // A rev G7 side tree (layoutRev 7, no page property) reads
+        // page 0 for both cards through the clamp rule.
+        {
+            ValueTree g7Side { kEditorTag };
+            g7Side.setProperty ("editorWidth", 832, nullptr);
+            g7Side.setProperty ("layoutRev", 7, nullptr);
+            CHECK (editorPageRead (g7Side, 0, 2) == 0);
+            CHECK (editorPageRead (g7Side, 1, 2) == 0);
+        }
+
+        // An out-of-range stored page clamps into the page range.
+        {
+            ValueTree wideSide { kEditorTag };
+            wideSide.setProperty ("pageLeft", 5, nullptr);
+            wideSide.setProperty ("pageRight", -3, nullptr);
+            CHECK (editorPageRead (wideSide, 0, 2) == 1);
+            CHECK (editorPageRead (wideSide, 1, 2) == 0);
+        }
 
         // The serialised session carries the EDITOR child once.
         const auto again = saveState (a, side);

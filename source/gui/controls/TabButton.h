@@ -43,9 +43,12 @@ namespace MarsDSP::GUI
             repaint();
         }
 
-        // Set the mark state. An inactive tab shows the dot.
+        // Set the mark state. An inactive tab shows the dot. The tab
+        // repaints only on a change.
         void setMarked(bool marked)
         {
+            if (marked_ == marked)
+                return;
             marked_ = marked;
             repaint();
         }

@@ -52,6 +52,9 @@ private:
     // Read the five mode parameters and make every inert control inert.
     void updateEnablement_();
 
+    // Read the raw parameters and mark the engaged hidden pages.
+    void updatePageMarks_();
+
     // Update the undo and redo buttons from the history state.
     void updateHistoryButtons_();
 
@@ -81,6 +84,9 @@ private:
     // these values on the message thread and applies the visual update.
     std::atomic<int> pendingDelayMode_ { -1 };
     std::atomic<int> pendingBypass_ { -1 };
+    // The mark listeners store the normalised cutoffs here.
+    std::atomic<float> pendingHpf_ { -1.0f };
+    std::atomic<float> pendingLpf_ { -1.0f };
     int lastDelayMode_ { -1 };
     bool lastBypass_ { false };
     std::unique_ptr<juce::Timer> paramPoll_;
