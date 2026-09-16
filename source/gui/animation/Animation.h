@@ -13,7 +13,8 @@ inline float sin1(float phase) {
     phase = 0.5f - phase;
     const float phase2 = phase * phase;
     const float phase4 = phase2 * phase2;
-    const float coefficient4 = phase4 * 12.228473185021549602f - phase2 * 38.12119956657129365f +
+    const float coefficient4 = phase4 * 12.228473185021549602f - phase2 *
+                                        38.12119956657129365f +
                                         67.04364396354298358f;
     const float stage = coefficient4 * phase4 - phase2 * 64.834670562974805234f + 25.13273028802431777f;
     return stage * phase * (0.25f - phase2);
@@ -59,8 +60,8 @@ public:
             t_ = targeting ? 1.0f : 0.0f;
     }
 
-    bool isTargeting() const { return targeting_; }
-    bool isAnimating() const { return targeting_ ? t_ < 1.0f : t_ > 0.0f; }
+    [[nodiscard]] bool isTargeting() const { return targeting_; }
+    [[nodiscard]] bool isAnimating() const { return targeting_ ? t_ < 1.0f : t_ > 0.0f; }
 
     void setSourceValue(T value) { source_ = value; }
     void setTargetValue(T value) { target_ = value; }

@@ -10,6 +10,7 @@
 #include "gui/Metrics.h"
 #include "gui/LookAndFeel.h"
 #include "gui/Card.h"
+#include "gui/Rail.h"
 #include "gui/Header.h"
 #include "gui/Footer.h"
 #include "gui/PedalKnob.h"
@@ -68,15 +69,13 @@ private:
     MarsDSP::GUI::TapDisplay tapDisplay_;
     MarsDSP::GUI::Header header_;
     MarsDSP::GUI::Footer footer_;
-    MarsDSP::GUI::Card timeCard_      { "TIME" };
-    MarsDSP::GUI::Card repeatsCard_   { "REPEATS" };
-    MarsDSP::GUI::Card diffuserCard_  { "DIFFUSER" };
-    MarsDSP::GUI::Card driveCard_     { "DRIVE" };
-    MarsDSP::GUI::Card filterCard_    { "FILTER" };
-    MarsDSP::GUI::Card levelCard_     { "LEVEL" };
+    MarsDSP::GUI::Card leftCard_;
+    MarsDSP::GUI::Card rightCard_;
+    MarsDSP::GUI::Rail rail_;
 
-    // The bypass scrim covers the tap band and the card area.
-    Rectangle<int> cardAreaBounds_;
+    // The bypass scrim covers the tap band, the card row, and the rail.
+    Rectangle<int> cardRowBounds_;
+    Rectangle<int> railBounds_;
 
     // The audio thread stores delay-mode and bypass here. A timer polls
     // these values on the message thread and applies the visual update.

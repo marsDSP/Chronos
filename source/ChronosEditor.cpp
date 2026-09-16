@@ -368,7 +368,7 @@ private:
     MarsDSP::GUI::SegmentButtons delayModeSeg_;
 };
 
-// 3. DIFFUSER card.
+// 3. DIFFUSER page of the left card.
 class DiffuserPanel final : public Component, public AccentConsumer, public MetricsConsumer,
                             public EnablementConsumer {
 public:
@@ -405,29 +405,30 @@ public:
 
         const float g = m.pxf(static_cast<float>(Metrics::kKnobGutter));
         const int gapPx = roundToInt(g);
-        const int enableH = m.px(Metrics::kEnableRowH);
-        const int enableGap = m.px(Metrics::kEnableGap);
         const int padH = m.px(static_cast<float>(Metrics::kPadH));
         const int knobRowH = m.px(static_cast<float>(Metrics::kKnobRowH));
         const int interRowGap = m.px(static_cast<float>(Metrics::kInterRowGap));
         const int btnSize = m.px(Metrics::kToggleSize);
+        const int labelBand = m.px(static_cast<float>(Metrics::kLabelBandH));
+        const int labelGap = m.px(static_cast<float>(Metrics::kKnobLabelGap));
 
-        // Row 1: the enable button, centred.
+        // Row 1: the pad.
         int y = 0;
-        enableButton.setBounds((getWidth() - btnSize) / 2, y, btnSize, btnSize);
-
-        // Row 2: the pad.
-        y += enableH + enableGap;
         pad_.setBounds(0, y, getWidth(), padH);
 
-        // Row 3: two knobs.
+        // Row 2: three equal cells. The power sits in the first cell,
+        // centred on the knob body.
         y += padH + interRowGap;
-        const int cellW2 = roundToInt((w - g) / 2.0f);
-        const float d2 = knobDiameterPx(m, w, static_cast<float>(knobRowH), 2, false);
-        const int cellH2 = knobCellHeightPx(m, roundToInt(d2));
-        int x = 0;
-        modDepthKnob.setBounds(x, y, cellW2, cellH2);  x += cellW2 + gapPx;
-        modRateKnob.setBounds(x, y, cellW2, cellH2);
+        const int cellW = roundToInt((w - 2.0f * g) / 3.0f);
+        const float d2 = knobDiameterPx(m, w, static_cast<float>(knobRowH), 3, false);
+        const int d2Px = roundToInt(d2);
+        const int cellH2 = knobCellHeightPx(m, d2Px);
+
+        enableButton.setBounds((cellW - btnSize) / 2,
+                               y + labelBand + labelGap + (d2Px - btnSize) / 2,
+                               btnSize, btnSize);
+        modDepthKnob.setBounds(cellW + gapPx, y, cellW, cellH2);
+        modRateKnob.setBounds(2 * (cellW + gapPx), y, cellW, cellH2);
     }
 
     void setAccentColour(Colour c) override
@@ -468,69 +469,7 @@ private:
     std::unique_ptr<AudioProcessorValueTreeState::ButtonAttachment> enableAttach;
 };
 
-// 4. DRIVE card.
-class DrivePanel final : public Component, public AccentConsumer, public MetricsConsumer,
-                         public EnablementConsumer {
-public:
-    explicit DrivePanel(ChronosProcessor& proc, PedalKnob& knobLnf)
-        : driveKnob("DRIVE", proc.getAPVTS(), driveParamID, knobLnf),
-          adaaSeg_(proc.getAPVTS(), adaaOrderParamID.getParamID(),
-                   StringArray{"Off", "1st", "2nd"}, coreAccent(proc), false,
-                   MarsDSP::GUI::kAntiAliasLabels, MarsDSP::GUI::kAntiAliasTooltips)
-    {
-        addAndMakeVisible(driveKnob);
-        addAndMakeVisible(adaaSeg_);
-        driveKnob.setTooltip("Set the output saturator drive. Range 0 to 24 decibels.");
-    }
-
-    void resized() override
-    {
-        const auto m = metrics_;
-        const float w = static_cast<float>(getWidth());
-
-        const float g = m.pxf(static_cast<float>(Metrics::kKnobGutter));
-        const int gapPx = roundToInt(g);
-        const int knobRowH = m.px(static_cast<float>(Metrics::kKnobRowH));
-        const int selH = m.px(Metrics::kSelectorRowH);
-
-        // One row: the drive knob at the left, the segment filling the rest.
-        const int cellWPx = roundToInt((w - g) / 2.0f);
-        const float d = knobDiameterPx(m, w, static_cast<float>(knobRowH), 2, false);
-        const int cellH = knobCellHeightPx(m, roundToInt(d));
-
-        driveKnob.setBounds(0, 0, cellWPx, cellH);
-
-        // The segment is selector-row tall, centred on the knob cell.
-        const int segY = (cellH - selH) / 2;
-        adaaSeg_.setBounds(cellWPx + gapPx, segY, cellWPx, selH);
-    }
-
-    void setAccentColour(Colour c) override
-    {
-        adaaSeg_.setAccentColour(c);
-        driveKnob.setAccentColour(c);
-    }
-
-    void setMetrics(const Metrics& m) override
-    {
-        metrics_ = m;
-        driveKnob.setMetrics(m);
-        adaaSeg_.setMetrics(m);
-        resized();
-    }
-
-    void setControlsEnabled(const EnablementState& state) override
-    {
-        driveKnob.setEnabled(! state.driveSatOff);
-    }
-
-private:
-    Metrics metrics_;
-    PDLKnob driveKnob;
-    MarsDSP::GUI::SegmentButtons adaaSeg_;
-};
-
-// 5. FILTER card.
+// 4. FILTER page of the right card.
 class FilterPanel final : public Component, public AccentConsumer, public MetricsConsumer {
 public:
     explicit FilterPanel(ChronosProcessor& proc, PedalKnob& knobLnf)
@@ -595,17 +534,25 @@ private:
     MarsDSP::GUI::SegmentButtons modeSeg_;
 };
 
-// 6. LEVEL card.
-class LevelPanel final : public Component, public AccentConsumer, public MetricsConsumer {
+// 5. The output rail. Absorbs the DRIVE and LEVEL panels.
+class RailPanel final : public Component, public AccentConsumer, public MetricsConsumer,
+                        public EnablementConsumer {
 public:
-    explicit LevelPanel(ChronosProcessor& proc, PedalKnob& knobLnf)
-        : mixKnob("MIX", proc.getAPVTS(), mixParamID, knobLnf),
+    explicit RailPanel(ChronosProcessor& proc, PedalKnob& knobLnf)
+        : driveKnob("DRIVE", proc.getAPVTS(), driveParamID, knobLnf),
+          mixKnob("MIX", proc.getAPVTS(), mixParamID, knobLnf),
           gainKnob("GAIN", proc.getAPVTS(), gainParamID, knobLnf),
-          bitsKnob("BIT DEPTH", proc.getAPVTS(), bitsParamID, knobLnf)
+          bitsKnob("BIT DEPTH", proc.getAPVTS(), bitsParamID, knobLnf),
+          adaaSeg_(proc.getAPVTS(), adaaOrderParamID.getParamID(),
+                   StringArray{"Off", "1st", "2nd"}, coreAccent(proc), false,
+                   MarsDSP::GUI::kAntiAliasLabels, MarsDSP::GUI::kAntiAliasTooltips)
     {
+        addAndMakeVisible(driveKnob);
         addAndMakeVisible(mixKnob);
         addAndMakeVisible(gainKnob);
         addAndMakeVisible(bitsKnob);
+        addAndMakeVisible(adaaSeg_);
+        driveKnob.setTooltip("Set the output saturator drive. Range 0 to 24 decibels.");
         mixKnob.setTooltip("Set the dry to wet blend. Range 0 to 100 percent.");
         gainKnob.setTooltip("Set the output gain. Range minus 24 to 12 decibels.");
         bitsKnob.setTooltip("Set the output bit depth. Range 4 to 32 bits.");
@@ -615,28 +562,54 @@ public:
             gainKnob.setArcOrigin(static_cast<float>(p->getNormalisableRange().convertTo0to1(0.0f)));
     }
 
+    void paint(Graphics& g) override
+    {
+        // The hairline divider between the segment and the level knobs.
+        const auto m = metrics_;
+        const int vpad = m.px(static_cast<float>(Metrics::kRailVPad));
+        const int x = dividerX(m, getWidth());
+        const float hairW = m.pxf(Metrics::kHairline);
+        g.setColour(GUIColours::panelBorder);
+        g.fillRect(static_cast<float>(x), static_cast<float>(vpad), hairW,
+                   static_cast<float>(getHeight() - 2 * vpad));
+    }
+
     void resized() override
     {
         const auto m = metrics_;
-        const float w = static_cast<float>(getWidth());
+        const int w = getWidth();
 
-        const float g = m.pxf(static_cast<float>(Metrics::kKnobGutter));
-        const int gapPx = roundToInt(g);
-        const int knobRowH = m.px(static_cast<float>(Metrics::kKnobRowH));
-        const int cellWPx = roundToInt((w - 2.0f * g) / 3.0f);
+        const int gutter = m.px(static_cast<float>(Metrics::kKnobGutter));
+        const int segW = m.px(static_cast<float>(Metrics::kRailSegW));
+        const int segH = m.px(Metrics::kSelectorRowH);
+        const int dividerGap = m.px(static_cast<float>(Metrics::kRailDividerGap));
+        const int hairW = m.px(Metrics::kHairline);
+        const int labelBand = m.px(static_cast<float>(Metrics::kLabelBandH));
+        const int labelGap = m.px(static_cast<float>(Metrics::kKnobLabelGap));
 
-        const float d = knobDiameterPx(m, w, static_cast<float>(knobRowH), 3, false);
-        const int cellH = knobCellHeightPx(m, roundToInt(d));
+        // The row height bounds the knob diameter at the rail size.
+        const int rowH = m.px(static_cast<float>(Metrics::kLabelBandH
+                                                  + Metrics::kKnobLabelGap + Metrics::kRailKnob));
+        const float d = knobDiameterPx(m, static_cast<float>(w), static_cast<float>(rowH), 4, false);
+        const int dPx = roundToInt(d);
+        const int cellH = knobCellHeightPx(m, dPx);
+        const int cellW = knobCellWidthPx(m, w);
 
-        int y = 0;
+        // The knob row. The segment and the divider sit between the cells.
         int x = 0;
-        mixKnob.setBounds(x, y, cellWPx, cellH);    x += cellWPx + gapPx;
-        gainKnob.setBounds(x, y, cellWPx, cellH);   x += cellWPx + gapPx;
-        bitsKnob.setBounds(x, y, cellWPx, cellH);
+        driveKnob.setBounds(x, 0, cellW, cellH);              x += cellW + gutter;
+        adaaSeg_.setBounds(x, labelBand + labelGap + (dPx - segH) / 2, segW, segH);
+        x += segW + dividerGap;
+        x += hairW + dividerGap + gutter;
+        mixKnob.setBounds(x, 0, cellW, cellH);                x += cellW + gutter;
+        gainKnob.setBounds(x, 0, cellW, cellH);               x += cellW + gutter;
+        bitsKnob.setBounds(x, 0, cellW, cellH);
     }
 
     void setAccentColour(Colour c) override
     {
+        adaaSeg_.setAccentColour(c);
+        driveKnob.setAccentColour(c);
         mixKnob.setAccentColour(c);
         gainKnob.setAccentColour(c);
         bitsKnob.setAccentColour(c);
@@ -645,17 +618,47 @@ public:
     void setMetrics(const Metrics& m) override
     {
         metrics_ = m;
+        driveKnob.setMetrics(m);
         mixKnob.setMetrics(m);
         gainKnob.setMetrics(m);
         bitsKnob.setMetrics(m);
+        adaaSeg_.setMetrics(m);
         resized();
     }
 
+    void setControlsEnabled(const EnablementState& state) override
+    {
+        driveKnob.setEnabled(! state.driveSatOff);
+    }
+
 private:
+    // The shared knob cell width in pixels: four cells, the segment, the
+    // divider gaps, the hairline, and four gutters fill the content.
+    static int knobCellWidthPx(const Metrics& m, const int w)
+    {
+        const float g = m.pxf(static_cast<float>(Metrics::kKnobGutter));
+        const float seg = m.pxf(static_cast<float>(Metrics::kRailSegW));
+        const float gap = m.pxf(static_cast<float>(Metrics::kRailDividerGap));
+        const float hair = m.pxf(Metrics::kHairline);
+        return roundToInt((static_cast<float>(w) - seg - 2.0f * gap - hair - 4.0f * g) / 4.0f);
+    }
+
+    // The x of the hairline divider in pixels.
+    static int dividerX(const Metrics& m, const int w)
+    {
+        const int cellW = knobCellWidthPx(m, w);
+        const int gutter = m.px(static_cast<float>(Metrics::kKnobGutter));
+        const int segW = m.px(static_cast<float>(Metrics::kRailSegW));
+        const int gap = m.px(static_cast<float>(Metrics::kRailDividerGap));
+        return cellW + gutter + segW + gap;
+    }
+
     Metrics metrics_;
+    PDLKnob driveKnob;
     PDLKnob mixKnob;
     PDLKnob gainKnob;
     PDLKnob bitsKnob;
+    MarsDSP::GUI::SegmentButtons adaaSeg_;
 };
 
 } // namespace
@@ -670,23 +673,16 @@ ChronosEditor::ChronosEditor(ChronosProcessor& p)
     addAndMakeVisible(footer_);
     addAndMakeVisible(tapDisplay_);
 
-    timeCard_.setContent(std::make_unique<TimePanel>(processorRef, knobLnf_));
-    addAndMakeVisible(timeCard_);
+    leftCard_.addPage("TIME", std::make_unique<TimePanel>(processorRef, knobLnf_));
+    leftCard_.addPage("DIFFUSER", std::make_unique<DiffuserPanel>(processorRef, knobLnf_));
+    addAndMakeVisible(leftCard_);
 
-    repeatsCard_.setContent(std::make_unique<RepeatsPanel>(processorRef, knobLnf_));
-    addAndMakeVisible(repeatsCard_);
+    rightCard_.addPage("REPEATS", std::make_unique<RepeatsPanel>(processorRef, knobLnf_));
+    rightCard_.addPage("FILTER", std::make_unique<FilterPanel>(processorRef, knobLnf_));
+    addAndMakeVisible(rightCard_);
 
-    diffuserCard_.setContent(std::make_unique<DiffuserPanel>(processorRef, knobLnf_));
-    addAndMakeVisible(diffuserCard_);
-
-    driveCard_.setContent(std::make_unique<DrivePanel>(processorRef, knobLnf_));
-    addAndMakeVisible(driveCard_);
-
-    filterCard_.setContent(std::make_unique<FilterPanel>(processorRef, knobLnf_));
-    addAndMakeVisible(filterCard_);
-
-    levelCard_.setContent(std::make_unique<LevelPanel>(processorRef, knobLnf_));
-    addAndMakeVisible(levelCard_);
+    rail_.setContent(std::make_unique<RailPanel>(processorRef, knobLnf_));
+    addAndMakeVisible(rail_);
 
     const auto rawMode = processorRef.getParameters().getRawDelayMode();
     updateCoreAccentColour_(static_cast<float>(rawMode));
@@ -747,23 +743,17 @@ ChronosEditor::ChronosEditor(ChronosProcessor& p)
 
     header_.setExplicitFocusOrder(1);
     tapDisplay_.setExplicitFocusOrder(2);
-    timeCard_.setExplicitFocusOrder(3);
-    repeatsCard_.setExplicitFocusOrder(4);
-    diffuserCard_.setExplicitFocusOrder(5);
-    driveCard_.setExplicitFocusOrder(6);
-    filterCard_.setExplicitFocusOrder(7);
-    levelCard_.setExplicitFocusOrder(8);
-    footer_.setExplicitFocusOrder(9);
+    leftCard_.setExplicitFocusOrder(3);
+    rightCard_.setExplicitFocusOrder(4);
+    rail_.setExplicitFocusOrder(5);
+    footer_.setExplicitFocusOrder(6);
 
     tapDisplay_.setTitle("Tap Display");
     tapDisplay_.setTooltip("Drag the plot to set the delay time. Double-click to reset.");
     tapDisplay_.setHelpText("Drag the plot to set the delay time. Double-click to reset.");
-    timeCard_.setTitle("Time");
-    repeatsCard_.setTitle("Repeats");
-    diffuserCard_.setTitle("Diffuser");
-    driveCard_.setTitle("Drive");
-    filterCard_.setTitle("Filter");
-    levelCard_.setTitle("Level");
+    leftCard_.setTitle("Time and Diffuser");
+    rightCard_.setTitle("Repeats and Filter");
+    rail_.setTitle("Output Rail");
     footer_.setTitle("Footer");
 }
 
@@ -852,21 +842,15 @@ void ChronosEditor::updateEnablement_()
     state.enableDiffuser = params.getRawEnableDiffuser();
     state.driveSatOff = (params.getADAAOrder() == 0);
 
-    timeCard_.setEnablement(state);
-    repeatsCard_.setEnablement(state);
-    diffuserCard_.setEnablement(state);
-    driveCard_.setEnablement(state);
-    filterCard_.setEnablement(state);
-    levelCard_.setEnablement(state);
+    leftCard_.setEnablement(state);
+    rightCard_.setEnablement(state);
+    rail_.setEnablement(state);
 
     const bool live = ! params.getBypass();
     tapDisplay_.setEnabled(live);
-    timeCard_.setEnabled(live);
-    repeatsCard_.setEnabled(live);
-    diffuserCard_.setEnabled(live);
-    driveCard_.setEnabled(live);
-    filterCard_.setEnabled(live);
-    levelCard_.setEnabled(live);
+    leftCard_.setEnabled(live);
+    rightCard_.setEnabled(live);
+    rail_.setEnabled(live);
 }
 
 void ChronosEditor::updateCoreAccentColour_(const float delayModeVal)
@@ -876,12 +860,9 @@ void ChronosEditor::updateCoreAccentColour_(const float delayModeVal)
                                  : MarsDSP::GUI::Colours::accentDelayDigital;
     tapDisplay_.setAccentColour(col);
     header_.setAccentColour(col);
-    timeCard_.setAccentColour(col);
-    repeatsCard_.setAccentColour(col);
-    diffuserCard_.setAccentColour(col);
-    driveCard_.setAccentColour(col);
-    filterCard_.setAccentColour(col);
-    levelCard_.setAccentColour(col);
+    leftCard_.setAccentColour(col);
+    rightCard_.setAccentColour(col);
+    rail_.setAccentColour(col);
 }
 
 void ChronosEditor::pollParameterChanges_()
@@ -913,7 +894,8 @@ void ChronosEditor::paintOverChildren(Graphics& g)
 
     g.setColour(MarsDSP::GUI::Colours::background.withAlpha(MarsDSP::GUI::kBypassScrimAlpha));
     g.fillRect(tapDisplay_.getBounds());
-    g.fillRect(cardAreaBounds_);
+    g.fillRect(cardRowBounds_);
+    g.fillRect(railBounds_);
 }
 
 void ChronosEditor::resized()
@@ -926,12 +908,9 @@ void ChronosEditor::resized()
     header_.setMetrics(m);
     footer_.setMetrics(m);
     tapDisplay_.setMetrics(m);
-    timeCard_.setMetrics(m);
-    repeatsCard_.setMetrics(m);
-    diffuserCard_.setMetrics(m);
-    driveCard_.setMetrics(m);
-    filterCard_.setMetrics(m);
-    levelCard_.setMetrics(m);
+    leftCard_.setMetrics(m);
+    rightCard_.setMetrics(m);
+    rail_.setMetrics(m);
 
     const int w = getWidth();
     const int side = m.px(Metrics::kSideMargin);
@@ -946,40 +925,23 @@ void ChronosEditor::resized()
     tapDisplay_.setBounds(side, y, w - 2 * side, tapH);
     y += tapH + m.px(Metrics::kGapTap);
 
-    // The two-column grid.
+    // The one card row: two paged cards over the two columns.
     const int colW = (w - 2 * side - gutter) / 2;
-    const int row1H = m.px(Metrics::kRow1H);
-    const int row2H = m.px(Metrics::kRow2H);
-
+    const int cardRowH = m.px(Metrics::kCardRowH);
     const int cardY = y;
-    const int leftX = side;
-    const int rightX = side + colW + gutter;
+    leftCard_.setBounds(side, cardY, colW, cardRowH);
+    rightCard_.setBounds(side + colW + gutter, cardY, colW, cardRowH);
 
-    // Row 1: TIME and REPEATS.
-    const int timeH = m.px(Metrics::kTimeCardH);
-    timeCard_.setBounds(leftX, cardY, colW, timeH);
-    repeatsCard_.setBounds(rightX, cardY, colW, row1H);
+    // The output rail between the card row and the status footer.
+    const int railH = m.px(Metrics::kRailH);
+    const int railY = cardY + cardRowH + m.px(Metrics::kGapCards);
+    rail_.setBounds(side, railY, w - 2 * side, railH);
 
-    // Row 2: DIFFUSER and the DRIVE/FILTER/LEVEL stack.
-    const int row2Y = cardY + row1H + gutter;
-    diffuserCard_.setBounds(leftX, row2Y, colW, row2H);
+    // The bypass scrim covers the card row and the rail.
+    cardRowBounds_ = Rectangle<int>(side, cardY, w - 2 * side, cardRowH);
+    railBounds_ = Rectangle<int>(side, railY, w - 2 * side, railH);
 
-    int stackY = row2Y;
-    const int driveH = m.px(Metrics::kDriveCardH);
-    driveCard_.setBounds(rightX, stackY, colW, driveH);
-    stackY += driveH + gutter;
-
-    const int filterH = m.px(Metrics::kFilterCardH);
-    filterCard_.setBounds(rightX, stackY, colW, filterH);
-    stackY += filterH + gutter;
-
-    const int levelH = m.px(Metrics::kLevelCardH);
-    levelCard_.setBounds(rightX, stackY, colW, levelH);
-
-    // The bypass scrim covers the full card area.
-    cardAreaBounds_ = Rectangle<int>(side, cardY, w - 2 * side, m.px(Metrics::kCardAreaH));
-
-    y = row2Y + row2H + m.px(Metrics::kGapCards);
+    y = railY + railH + m.px(Metrics::kGapRail);
 
     const int footerH = m.px(Metrics::kFooterH);
     footer_.setBounds(0, y, w, footerH);

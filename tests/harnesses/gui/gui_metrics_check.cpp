@@ -1,5 +1,5 @@
 /**
- * Metrics, tint, tick, and band harness for rev G7 (spec appendix B).
+ * Metrics, tint, tick, and band harness.
  * Host-free: links Colours.h, Metrics.h, and the tick generator only.
  * It does not open an editor.
  */
@@ -137,7 +137,7 @@ float knobDiameterPx(const MarsDSP::GUI::Metrics& m,
                       m.pxf(static_cast<float>(MarsDSP::GUI::Metrics::kKnobMax)));
 }
 
-// The nine band heights of section 4.1, in order.
+// The eleven band heights, in order.
 struct BandSet { const char* name; int du; };
 const BandSet kBands[] = {
     { "topPad",    MarsDSP::GUI::Metrics::kTopPad },
@@ -145,23 +145,23 @@ const BandSet kBands[] = {
     { "gapHeader", MarsDSP::GUI::Metrics::kGapHeader },
     { "tap",       MarsDSP::GUI::Metrics::kTapH },
     { "gapTap",    MarsDSP::GUI::Metrics::kGapTap },
-    { "cardArea",  MarsDSP::GUI::Metrics::kCardAreaH },
+    { "cardRow",   MarsDSP::GUI::Metrics::kCardRowH },
     { "gapCards",  MarsDSP::GUI::Metrics::kGapCards },
+    { "rail",      MarsDSP::GUI::Metrics::kRailH },
+    { "gapRail",   MarsDSP::GUI::Metrics::kGapRail },
     { "footer",    MarsDSP::GUI::Metrics::kFooterH },
     { "bottomPad", MarsDSP::GUI::Metrics::kBottomPad },
 };
 constexpr int kNumBands = static_cast<int>(std::size(kBands));
 
-// The six declared card heights (section 4.1).
-const BandSet kCardHeights[] = {
-    { "time",     MarsDSP::GUI::Metrics::kTimeCardH },
-    { "repeats",  MarsDSP::GUI::Metrics::kRepeatsCardH },
-    { "drive",    MarsDSP::GUI::Metrics::kDriveCardH },
-    { "filter",   MarsDSP::GUI::Metrics::kFilterCardH },
-    { "level",    MarsDSP::GUI::Metrics::kLevelCardH },
-    { "diffuser", MarsDSP::GUI::Metrics::kDiffuserCardH },
+// The four declared page heights.
+const BandSet kPageHeights[] = {
+    { "time",     MarsDSP::GUI::Metrics::kTimePageH },
+    { "repeats",  MarsDSP::GUI::Metrics::kRepeatsPageH },
+    { "filter",   MarsDSP::GUI::Metrics::kFilterPageH },
+    { "diffuser", MarsDSP::GUI::Metrics::kDiffuserPageH },
 };
-constexpr int kNumCardHeights = static_cast<int>(std::size(kCardHeights));
+constexpr int kNumPageHeights = static_cast<int>(std::size(kPageHeights));
 
 // Design constants swept in the px non-decreasing check.
 const float kDesignConsts[] = {
@@ -170,8 +170,10 @@ const float kDesignConsts[] = {
     static_cast<float>(MarsDSP::GUI::Metrics::kGapHeader),
     static_cast<float>(MarsDSP::GUI::Metrics::kTapH),
     static_cast<float>(MarsDSP::GUI::Metrics::kGapTap),
-    static_cast<float>(MarsDSP::GUI::Metrics::kCardAreaH),
+    static_cast<float>(MarsDSP::GUI::Metrics::kCardRowH),
     static_cast<float>(MarsDSP::GUI::Metrics::kGapCards),
+    static_cast<float>(MarsDSP::GUI::Metrics::kRailH),
+    static_cast<float>(MarsDSP::GUI::Metrics::kGapRail),
     static_cast<float>(MarsDSP::GUI::Metrics::kFooterH),
     static_cast<float>(MarsDSP::GUI::Metrics::kBottomPad),
     static_cast<float>(MarsDSP::GUI::Metrics::kSideMargin),
@@ -365,19 +367,20 @@ int runAll()
     }
 
     // ----------------------------------------------------------------
-    // 6. Band closure: 9 bands sum to px(932), card sums, row/col, slack.
+    // 6. Band closure: 11 bands sum to px(592), pages, rail, zoom, slack.
     // ----------------------------------------------------------------
     g_section = "band_closure";
     {
         bool anyFail = false;
 
-        // The design-unit band heights must sum to 932 exactly.
+        // The design-unit band heights must sum to the design height exactly.
         int sumDU = 0;
         for (int bi = 0; bi < kNumBands; ++bi)
             sumDU += kBands[bi].du;
         if (sumDU != MarsDSP::GUI::Metrics::kDesignHeight)
         {
-            FAIL("band design-unit sum {} != 932 (regression)", sumDU);
+            FAIL("band design-unit sum {} != {} (regression)", sumDU,
+                 MarsDSP::GUI::Metrics::kDesignHeight);
             anyFail = true;
         }
 
@@ -388,39 +391,91 @@ int runAll()
                 MarsDSP::GUI::Metrics::fromWidth(
                     static_cast<int>(static_cast<float>(MarsDSP::GUI::Metrics::kDesignWidth) * s));
 
-            // The px sum must match px(932) within the px rounding tolerance.
+            // The px sum must match px(592) within the px rounding tolerance.
             int sum = 0;
             for (int bi = 0; bi < kNumBands; ++bi)
                 sum += m.px(kBands[bi].du);
             const int target = m.px(static_cast<float>(MarsDSP::GUI::Metrics::kDesignHeight));
             if (std::abs(sum - target) > 2)
             {
-                FAIL("s={:.2f} band px sum {} != px(932)={} (diff {})", s, sum, target, sum - target);
+                FAIL("s={:.2f} band px sum {} != px({})={} (diff {})", s, sum,
+                     MarsDSP::GUI::Metrics::kDesignHeight, target, sum - target);
                 anyFail = true;
             }
         }
 
-        // The six card heights.
-        for (int ci = 0; ci < kNumCardHeights; ++ci)
-            CHECK(kCardHeights[ci].du > 0);
+        // The four page heights are positive.
+        for (int ci = 0; ci < kNumPageHeights; ++ci)
+            CHECK(kPageHeights[ci].du > 0);
 
-        // Row 1 is the taller of the two cards in it.
-        CHECK(MarsDSP::GUI::Metrics::kRow1H
-              == std::max(MarsDSP::GUI::Metrics::kTimeCardH, MarsDSP::GUI::Metrics::kRepeatsCardH));
-        // Row 2 is the diffuser card.
-        CHECK(MarsDSP::GUI::Metrics::kRow2H == MarsDSP::GUI::Metrics::kDiffuserCardH);
-        // The card area is the two rows plus the gutter.
-        CHECK(MarsDSP::GUI::Metrics::kRow1H + MarsDSP::GUI::Metrics::kCardGutter
-                  + MarsDSP::GUI::Metrics::kRow2H
-              == MarsDSP::GUI::Metrics::kCardAreaH);
-        // The right column stacks to the diffuser card.
-        CHECK(MarsDSP::GUI::Metrics::kDriveCardH + MarsDSP::GUI::Metrics::kCardGutter
-                  + MarsDSP::GUI::Metrics::kFilterCardH + MarsDSP::GUI::Metrics::kCardGutter
-                  + MarsDSP::GUI::Metrics::kLevelCardH
-              == MarsDSP::GUI::Metrics::kDiffuserCardH);
-        // The slack in row 1 sits under the time card.
-        CHECK(MarsDSP::GUI::Metrics::kRow1H - MarsDSP::GUI::Metrics::kTimeCardH
+        // The card row height is the tallest page.
+        CHECK(MarsDSP::GUI::Metrics::kCardRowH
+              == std::max({MarsDSP::GUI::Metrics::kTimePageH, MarsDSP::GUI::Metrics::kRepeatsPageH,
+                           MarsDSP::GUI::Metrics::kFilterPageH, MarsDSP::GUI::Metrics::kDiffuserPageH}));
+        // The diffuser page fills its card exactly.
+        CHECK(MarsDSP::GUI::Metrics::kDiffuserPageH == MarsDSP::GUI::Metrics::kCardRowH);
+        // The slack under the time page stays inside the row bound.
+        CHECK(MarsDSP::GUI::Metrics::kCardRowH - MarsDSP::GUI::Metrics::kTimePageH
               <= MarsDSP::GUI::Metrics::kRowSlackMaxDU);
+        // The slack under the filter page stays inside the page bound.
+        CHECK(MarsDSP::GUI::Metrics::kCardRowH - MarsDSP::GUI::Metrics::kFilterPageH
+              <= MarsDSP::GUI::Metrics::kPageSlackMaxDU);
+        // The pad height derives from the row height.
+        CHECK(MarsDSP::GUI::Metrics::kPadH
+              == MarsDSP::GUI::Metrics::kCardRowH - MarsDSP::GUI::Metrics::kFrameOverhead
+                     - MarsDSP::GUI::Metrics::kInterRowGap - MarsDSP::GUI::Metrics::kKnobRowH);
+
+        // The rail height equals its sum.
+        CHECK(MarsDSP::GUI::Metrics::kRailH
+              == 2 * MarsDSP::GUI::Metrics::kCardBorderStroke
+                     + 2 * MarsDSP::GUI::Metrics::kRailVPad
+                     + MarsDSP::GUI::Metrics::kLabelBandH
+                     + MarsDSP::GUI::Metrics::kKnobLabelGap
+                     + MarsDSP::GUI::Metrics::kRailKnob);
+
+        // The rail knob cell clears the knob diameter plus the label insets.
+        const int railContent = MarsDSP::GUI::Metrics::kDesignWidth
+            - 2 * MarsDSP::GUI::Metrics::kSideMargin
+            - 2 * (MarsDSP::GUI::Metrics::kCardBorderStroke + MarsDSP::GUI::Metrics::kCardHPad);
+        {
+            const int cell = (railContent - MarsDSP::GUI::Metrics::kRailSegW
+                              - 2 * MarsDSP::GUI::Metrics::kRailDividerGap
+                              - static_cast<int>(MarsDSP::GUI::Metrics::kHairline)
+                              - 4 * MarsDSP::GUI::Metrics::kKnobGutter) / 4;
+            CHECK(cell >= MarsDSP::GUI::Metrics::kRailKnob
+                      + static_cast<int>(2 * MarsDSP::GUI::Metrics::kKnobLabelInset));
+        }
+
+        // The rail knob derivation lands on kRailKnob * s within 1 px.
+        {
+            const float scales[] = {
+                MarsDSP::GUI::Metrics::kScaleMin, 1.0f, MarsDSP::GUI::Metrics::kScaleMax
+            };
+            for (const float s : scales)
+            {
+                MarsDSP::GUI::Metrics m;
+                m.s = s;
+                const float contentW = static_cast<float>(railContent) * s;
+                const float rowH = static_cast<float>(m.px(static_cast<float>(
+                    MarsDSP::GUI::Metrics::kLabelBandH + MarsDSP::GUI::Metrics::kKnobLabelGap
+                    + MarsDSP::GUI::Metrics::kRailKnob)));
+                const float d = knobDiameterPx(m, contentW, rowH, 4, false);
+                const float target = static_cast<float>(MarsDSP::GUI::Metrics::kRailKnob) * s;
+                if (std::abs(d - target) > 1.0f)
+                {
+                    FAIL("s={:.2f} rail knob {} != {} within 1 px", s, d, target);
+                    anyFail = true;
+                }
+            }
+        }
+
+        // The zoom identities.
+        CHECK(MarsDSP::GUI::Metrics::kZoomWidth80 * 5 == MarsDSP::GUI::Metrics::kDesignWidth * 4);
+        CHECK(MarsDSP::GUI::Metrics::kZoomWidth160 * 5 == MarsDSP::GUI::Metrics::kDesignWidth * 8);
+        CHECK(MarsDSP::GUI::Metrics::kZoomWidth100 == MarsDSP::GUI::Metrics::kDesignWidth);
+        CHECK(MarsDSP::GUI::Metrics::kZoomWidth80 < MarsDSP::GUI::Metrics::kZoomWidth100);
+        CHECK(MarsDSP::GUI::Metrics::kZoomWidth100 < MarsDSP::GUI::Metrics::kZoomWidth125);
+        CHECK(MarsDSP::GUI::Metrics::kZoomWidth125 < MarsDSP::GUI::Metrics::kZoomWidth160);
 
         // The header reserves fit in the half the bar leaves clear.
         CHECK(static_cast<int>(MarsDSP::GUI::Metrics::kHeaderSideMargin)
@@ -436,7 +491,8 @@ int runAll()
               <= MarsDSP::GUI::Metrics::kHeaderHalfClear);
 
         if (! anyFail)
-            std::println("band closure (9 bands to 932, 6 cards, rows, slack, header): PASS");
+            std::println("band closure (11 bands to {}, pages, rail, zoom, slack, header): PASS",
+                         MarsDSP::GUI::Metrics::kDesignHeight);
     }
 
     // ----------------------------------------------------------------

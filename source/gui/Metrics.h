@@ -9,14 +9,14 @@
 namespace MarsDSP::GUI
 {
     // Scale metrics for the editor.
-    // One scale factor s derives every dimension from the 520 x 932 design box.
+    // One scale factor s derives every dimension from the 520 x 592 design box.
     // Components read dimensions through px, pxf, font, displayFont, and stroke.
     struct Metrics
     {
-        // Design box (section 4.1). The editor is 520 design units wide.
+        // Design box. The editor is 520 design units wide.
         static constexpr int kDesignWidth = 520;
-        static constexpr int kDesignHeight = 932;
-        static constexpr double kDesignAspect = 520.0 / 932.0;
+        static constexpr int kDesignHeight = 592;
+        static constexpr double kDesignAspect = 520.0 / 592.0;
 
         // Scale clamp range (section 4.1). The minimum derives from the
         // font floor: the smallest declared font lands on the floor at
@@ -24,7 +24,7 @@ namespace MarsDSP::GUI
         static constexpr float kScaleMin = 0.80f;
         static constexpr float kScaleMax = 1.60f;
 
-        // Window envelope (section 4.1), design units. The heights derive
+        // Window envelope, design units. The heights derive
         // from the widths through the aspect, with no literal.
         static constexpr int kMinWidth = 416;
         static constexpr int kDefaultWidth = 440;
@@ -33,21 +33,32 @@ namespace MarsDSP::GUI
         static constexpr int kDefaultHeight = (kDefaultWidth * kDesignHeight + kDesignWidth / 2) / kDesignWidth;
         static constexpr int kMaxHeight = (kMaxWidth * kDesignHeight + kDesignWidth / 2) / kDesignWidth;
 
-        // Band geometry (section 4.1), design units. The nine bands sum to 932.
+        // The zoom widths. The 80 and the 160 percent levels sit at the
+        // two ends of the window envelope.
+        static constexpr int kZoomWidth80 = kMinWidth;
+        static constexpr int kZoomWidth100 = kDesignWidth;
+        static constexpr int kZoomWidth125 = kDesignWidth * 5 / 4;
+        static constexpr int kZoomWidth160 = kMaxWidth;
+        static_assert(kZoomWidth80 * 5 == kDesignWidth * 4);
+        static_assert(kZoomWidth160 * 5 == kDesignWidth * 8);
+
+        // Band geometry, design units, top to bottom. The eleven bands
+        // topPad, header, gapHeader, tap, gapTap, cardRow, gapCards, rail,
+        // gapRail, footer, and bottomPad sum to 592.
         static constexpr int kTopPad = 2;
         static constexpr int kHeaderH = 40;
         static constexpr int kGapHeader = 4;
         static constexpr int kTapH = 170;
         static constexpr int kGapTap = 8;
-        static constexpr int kCardAreaH = 676;
+        static constexpr int kCardRowH = 270;
         static constexpr int kGapCards = 4;
+        static constexpr int kGapRail = 4;
         static constexpr int kFooterH = 26;
         static constexpr int kBottomPad = 2;
         static constexpr int kSideMargin = 12;
 
-        // The two grid rows (section 4.1), design units.
-        static constexpr int kRow1H = 270;
-        static constexpr int kRow2H = 398;
+        // The card grid gutter. One column pair spans the width between
+        // the two side margins.
         static constexpr int kCardGutter = 8;
 
         // Preset bar geometry (section 4.1), design units.
@@ -85,7 +96,7 @@ namespace MarsDSP::GUI
         // kDisplayFontMinDU.
         static constexpr float kWordmarkFont    = 15.0f;
         static constexpr float kKnobLabelFont   = 11.0f;
-        static constexpr float kCardTitleFont   = 11.0f;
+        static constexpr float kCardTitleFont   = 12.0f;
         static constexpr float kFooterFont      = 10.0f;
         static constexpr float kTapLabelFont    = 10.0f;
         static constexpr float kTapReadoutFont  = 13.0f;
@@ -128,14 +139,26 @@ namespace MarsDSP::GUI
         static constexpr int kSelectorRowH  = 24;
         static constexpr int kReadoutBandH  = 20;
         static constexpr int kLabelReadoutGap = 5;
-        static constexpr int kEnableRowH    = 24;
-        static constexpr int kEnableGap     = 8;
         static constexpr int kToggleSize    = 24;
         static constexpr int kToggleGap     = 4;
-        static constexpr int kPadH          = 240;
         static constexpr int kPadInset      = 8;
         static constexpr float kPadHandleR  = 6.0f;
         static constexpr float kDragDeadZone = 4.0f;
+
+        // The tab row geometry, design units. The tab underline and the
+        // mark dot use the live core accent.
+        static constexpr float kTabUnderline = 2.0f;
+        static constexpr float kTabDotR      = 2.0f;
+        static constexpr float kTabDotGap    = 4.0f;
+        static constexpr float kTabPadX      = 6.0f;
+        static constexpr int kTabGap         = 10;
+
+        // The output rail geometry, design units. The rail knob keeps the
+        // full knob contract at the small diameter.
+        static constexpr int kRailKnob        = 34;
+        static constexpr int kRailVPad        = 4;
+        static constexpr int kRailSegW        = 108;
+        static constexpr int kRailDividerGap  = 12;
 
         // The value arc geometry (section 4.4), design units.
         static constexpr float kKnobArcStroke = 2.5f;
@@ -158,33 +181,39 @@ namespace MarsDSP::GUI
         static constexpr float kPadCloudFrac  = 0.42f;
         static constexpr int   kHaloFadeMs    = 220;
         static constexpr int kRowSlackMaxDU = 12;
+        static constexpr int kPageSlackMaxDU = 120;
 
-        // Declared card heights (section 4.1). Each equals its breakdown sum.
+        // Declared page heights. Each equals its breakdown sum.
         static constexpr int kFrameOverhead  = 2 * kCardBorderStroke + kCardTitleH + kCardTitleGap + kCardBottomPad;
-        static constexpr int kTimeCardH      = kFrameOverhead
+        static constexpr int kTimePageH      = kFrameOverhead
                                                + kKnobRowH + kLabelReadoutGap + kReadoutBandH
                                                + kInterRowGap + kSelectorRowH + kInterRowGap + kKnobRowH;
-        static constexpr int kRepeatsCardH   = kFrameOverhead
+        static constexpr int kRepeatsPageH   = kFrameOverhead
                                                + kSelectorRowH + kInterRowGap + kKnobRowH
                                                + kInterRowGap + kKnobRowH + kInterRowGap + kSelectorRowH;
-        static constexpr int kDriveCardH     = kFrameOverhead + kKnobRowH;
-        static constexpr int kFilterCardH    = kFrameOverhead + kSelectorRowH + kInterRowGap + kKnobRowH;
-        static constexpr int kLevelCardH     = kFrameOverhead + kKnobRowH;
-        static constexpr int kDiffuserCardH  = kFrameOverhead
-                                               + kEnableRowH + kEnableGap + kPadH
-                                               + kInterRowGap + kKnobRowH;
+        static constexpr int kFilterPageH    = kFrameOverhead + kSelectorRowH + kInterRowGap + kKnobRowH;
 
-        // The right column stacks to the diffuser card height.
-        static_assert(kDriveCardH + kCardGutter + kFilterCardH + kCardGutter + kLevelCardH
-                      == kDiffuserCardH);
-        // Row 1 is the taller of the two cards in it.
-        static_assert(kRow1H == std::max(kTimeCardH, kRepeatsCardH));
-        // Row 2 is the diffuser card.
-        static_assert(kRow2H == kDiffuserCardH);
-        // The card area is the two rows plus the gutter between them.
-        static_assert(kRow1H + kCardGutter + kRow2H == kCardAreaH);
-        // The only slack in row 1 sits under the time card.
-        static_assert(kRow1H - kTimeCardH <= kRowSlackMaxDU);
+        // The pad height derives from the row height, so the diffuser
+        // page fills its card exactly.
+        static constexpr int kPadH = kCardRowH - kFrameOverhead - kInterRowGap - kKnobRowH;
+        static constexpr int kDiffuserPageH  = kFrameOverhead
+                                               + kPadH + kInterRowGap + kKnobRowH;
+
+        // The card row height equals the tallest page.
+        static_assert(kCardRowH == std::max({kTimePageH, kRepeatsPageH, kFilterPageH, kDiffuserPageH}));
+        // The diffuser page fills its card exactly.
+        static_assert(kDiffuserPageH == kCardRowH);
+        // The slack under the time page stays inside the row bound.
+        static_assert(kCardRowH - kTimePageH <= kRowSlackMaxDU);
+        // The slack under the filter page stays inside the page bound.
+        static_assert(kCardRowH - kFilterPageH <= kPageSlackMaxDU);
+        // The pad keeps a usable active height.
+        static_assert(kPadH >= 2 * static_cast<int>(kPadInset)
+                          + static_cast<int>(4 * kPadHandleR));
+
+        // The rail band height equals its breakdown sum.
+        static constexpr int kRailH = 2 * kCardBorderStroke + 2 * kRailVPad
+                                      + kLabelBandH + kKnobLabelGap + kRailKnob;
 
         static constexpr float kCornerSmall        = 4.0f;
         static constexpr float kCornerDisplay      = 5.0f;
@@ -247,9 +276,19 @@ namespace MarsDSP::GUI
         static_assert(kHistoryButtonSize >= static_cast<float>(kHitTargetMin));
         static_assert(kKnobMin >= kHitTargetMin);
         static_assert(kSelectorRowH >= kHitTargetMin);
-        static_assert(kEnableRowH >= kHitTargetMin);
         static_assert(kReadoutBandH >= kHitTargetMin);
         static_assert(kToggleSize >= kHitTargetMin);
+
+        // The rail content width between the border and the side pads.
+        static constexpr int kRailContentW = kDesignWidth - 2 * kSideMargin
+                                             - 2 * (kCardBorderStroke + kCardHPad);
+
+        // The shared rail knob cell width. The segment, the divider gaps,
+        // the hairline, and four gutters fill the rest of the rail content.
+        static constexpr int kRailCellW = (kRailContentW - kRailSegW - 2 * kRailDividerGap
+                                           - static_cast<int>(kHairline) - 4 * kKnobGutter) / 4;
+        static_assert(kRailKnob >= kKnobMin && kRailKnob >= kHitTargetMin);
+        static_assert(kRailCellW >= kRailKnob + static_cast<int>(2 * kKnobLabelInset));
 
         // The three legibility constants cannot drift apart.
         static_assert(kFontMinDU * kScaleMin >= kFontFloorPx);

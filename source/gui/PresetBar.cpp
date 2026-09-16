@@ -296,10 +296,10 @@ void PresetBar::showMenu_()
             const bool isActive = (currentW >= width - 2 && currentW <= width + 2);
             zoom.addItem(id, label, true, isActive);
         };
-        addZoom(kMenuZoom80,  "80%",  416);
-        addZoom(kMenuZoom100, "100%", 520);
-        addZoom(kMenuZoom125, "125%", 650);
-        addZoom(kMenuZoom160, "160%", 832);
+        addZoom(kMenuZoom80,  "80%",  Metrics::kZoomWidth80);
+        addZoom(kMenuZoom100, "100%", Metrics::kZoomWidth100);
+        addZoom(kMenuZoom125, "125%", Metrics::kZoomWidth125);
+        addZoom(kMenuZoom160, "160%", Metrics::kZoomWidth160);
         zoom.addSeparator();
         zoom.addItem(kMenuZoomFit, "Fit to Screen", true, false);
         menu.addSubMenu("Zoom", zoom);
@@ -433,10 +433,10 @@ void PresetBar::handleMenuResult_(int result)
         case kMenuExport:     doExport_(); break;
         case kMenuShowFolder: pm_.getStore().ensureRootDirectory();
                               pm_.getStore().getRootDirectory().revealToUser(); break;
-        case kMenuZoom80:     if (resizeControls_.resizeToWidth) resizeControls_.resizeToWidth(416); break;
-        case kMenuZoom100:    if (resizeControls_.resizeToWidth) resizeControls_.resizeToWidth(520); break;
-        case kMenuZoom125:    if (resizeControls_.resizeToWidth) resizeControls_.resizeToWidth(650); break;
-        case kMenuZoom160:    if (resizeControls_.resizeToWidth) resizeControls_.resizeToWidth(832); break;
+        case kMenuZoom80:     if (resizeControls_.resizeToWidth) resizeControls_.resizeToWidth(Metrics::kZoomWidth80); break;
+        case kMenuZoom100:    if (resizeControls_.resizeToWidth) resizeControls_.resizeToWidth(Metrics::kZoomWidth100); break;
+        case kMenuZoom125:    if (resizeControls_.resizeToWidth) resizeControls_.resizeToWidth(Metrics::kZoomWidth125); break;
+        case kMenuZoom160:    if (resizeControls_.resizeToWidth) resizeControls_.resizeToWidth(Metrics::kZoomWidth160); break;
         case kMenuZoomFit:    if (resizeControls_.fitToScreen)   resizeControls_.fitToScreen();   break;
         default: break;
     }
