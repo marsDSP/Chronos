@@ -20,6 +20,7 @@
 #include "gui/controls/TimeDisplay.h"
 #include "gui/tap/TapDisplay.h"
 #include "gui/DiffuserPad.h"
+#include "gui/HintRouter.h"
 
 // The main plugin editor component.
 // The editor shows one window with a tap display and a row of cards.
@@ -91,7 +92,8 @@ private:
     bool lastBypass_ { false };
     std::unique_ptr<juce::Timer> paramPoll_;
 
-    TooltipWindow tooltipWindow_;
+    // Hover tooltips show as a footer hint, never as a popup window.
+    MarsDSP::GUI::HintRouter hintRouter_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChronosEditor)
 };

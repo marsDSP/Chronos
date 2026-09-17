@@ -186,6 +186,10 @@ const float kDesignConsts[] = {
     static_cast<float>(MarsDSP::GUI::Metrics::kPresetBarArrow),
     static_cast<float>(MarsDSP::GUI::Metrics::kPresetBarMenu),
     static_cast<float>(MarsDSP::GUI::Metrics::kPresetBarFont),
+    static_cast<float>(MarsDSP::GUI::Metrics::kPadReadoutRowH),
+    static_cast<float>(MarsDSP::GUI::Metrics::kPadReadoutGap),
+    MarsDSP::GUI::Metrics::kCubeAxisLen,
+    MarsDSP::GUI::Metrics::kCubeRingR,
 };
 constexpr int kNumDesignConsts = static_cast<int>(std::size(kDesignConsts));
 
@@ -429,10 +433,16 @@ int runAll()
         // The slack under the filter page stays inside the page bound.
         CHECK(MarsDSP::GUI::Metrics::kCardRowH - MarsDSP::GUI::Metrics::kFilterPageH
               <= MarsDSP::GUI::Metrics::kPageSlackMaxDU);
-        // The pad height derives from the row height.
+        // The pad height derives from the row height: the cube pad owns
+        // the whole page, readout band included.
         CHECK(MarsDSP::GUI::Metrics::kPadH
-              == MarsDSP::GUI::Metrics::kCardRowH - MarsDSP::GUI::Metrics::kFrameOverhead
-                     - MarsDSP::GUI::Metrics::kInterRowGap - MarsDSP::GUI::Metrics::kKnobRowH);
+              == MarsDSP::GUI::Metrics::kCardRowH - MarsDSP::GUI::Metrics::kFrameOverhead);
+        // The cube keeps a usable height above the readout band.
+        CHECK(MarsDSP::GUI::Metrics::kPadH
+              >= 2 * MarsDSP::GUI::Metrics::kPadInset
+                     + 2 * MarsDSP::GUI::Metrics::kPadReadoutRowH
+                     + MarsDSP::GUI::Metrics::kPadReadoutGap
+                     + static_cast<int>(4 * MarsDSP::GUI::Metrics::kPadHandleR));
 
         // The rail height equals its sum.
         CHECK(MarsDSP::GUI::Metrics::kRailH

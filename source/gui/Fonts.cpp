@@ -177,17 +177,22 @@ float digitAdvance(const Font& font)
     return widest;
 }
 
+float fixedAdvanceWidth(const Font& font, const String& text)
+{
+    const float adv = digitAdvance(font);
+    float totalW = 0.0f;
+    for (const auto c : text)
+        totalW += (c >= '0' && c <= '9') ? adv : textWidth(font, String::charToString(c));
+    return totalW;
+}
+
 void drawFixedAdvanceText(Graphics& g, const Font& font, const String& text,
                           const Rectangle<float>& area, const Colour colour)
 {
     const float adv = digitAdvance(font);
     const float baselineY = area.getCentreY() + (font.getAscent() - font.getDescent()) * 0.5f;
 
-    float totalW = 0.0f;
-    for (const auto c : text)
-        totalW += (c >= '0' && c <= '9') ? adv : textWidth(font, String::charToString(c));
-
-    float x = area.getCentreX() - totalW * 0.5f;
+    float x = area.getCentreX() - fixedAdvanceWidth(font, text) * 0.5f;
     g.setFont(font);
     g.setColour(colour);
 

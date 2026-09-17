@@ -78,6 +78,10 @@ constexpr float kTapHoverFillAlpha  = 0.05f;
 constexpr float kTapHoverLinkAlpha  = 0.04f;
 constexpr float kTapCursorAlpha     = 0.6f;
 
+// Diffuser cube pad alphas (section 4.11).
+constexpr float kCubeSliceAlpha     = 0.14f;
+constexpr float kCubeHandleAlpha    = 0.8f;
+
 } // namespace MarsDSP::GUI
 
 #endif

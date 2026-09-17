@@ -145,6 +145,17 @@ namespace MarsDSP::GUI
         static constexpr float kPadHandleR  = 6.0f;
         static constexpr float kDragDeadZone = 4.0f;
 
+
+        static constexpr float kCubeFillFrac   = 0.85f;
+        static constexpr float kCubeDepthFrac  = 0.33f;
+        static constexpr float kCubeDashOn     = 4.0f;
+        static constexpr float kCubeDashOff    = 3.0f;
+        static constexpr float kCubeAxisLen    = 22.0f;
+        static constexpr float kCubeRingR      = 12.0f;
+        static constexpr float kCubeRingStroke = 1.5f;
+        static constexpr int kPadReadoutRowH   = 16;
+        static constexpr int kPadReadoutGap    = 6;
+
         // The tab row geometry, design units. The tab underline and the
         // mark dot use the live core accent.
         static constexpr float kTabUnderline = 2.0f;
@@ -178,7 +189,6 @@ namespace MarsDSP::GUI
         static constexpr float kHaloAlpha     = 0.55f;
         static constexpr float kHaloBarFade   = 0.6f;
         static constexpr float kHaloBlurRadius = 5.0f;
-        static constexpr float kPadCloudFrac  = 0.42f;
         static constexpr int   kHaloFadeMs    = 220;
         static constexpr int kRowSlackMaxDU = 12;
         static constexpr int kPageSlackMaxDU = 120;
@@ -193,11 +203,8 @@ namespace MarsDSP::GUI
                                                + kInterRowGap + kKnobRowH + kInterRowGap + kSelectorRowH;
         static constexpr int kFilterPageH    = kFrameOverhead + kSelectorRowH + kInterRowGap + kKnobRowH;
 
-        // The pad height derives from the row height, so the diffuser
-        // page fills its card exactly.
-        static constexpr int kPadH = kCardRowH - kFrameOverhead - kInterRowGap - kKnobRowH;
-        static constexpr int kDiffuserPageH  = kFrameOverhead
-                                               + kPadH + kInterRowGap + kKnobRowH;
+        static constexpr int kPadH = kCardRowH - kFrameOverhead;
+        static constexpr int kDiffuserPageH  = kFrameOverhead + kPadH;
 
         // The card row height equals the tallest page.
         static_assert(kCardRowH == std::max({kTimePageH, kRepeatsPageH, kFilterPageH, kDiffuserPageH}));
@@ -207,8 +214,8 @@ namespace MarsDSP::GUI
         static_assert(kCardRowH - kTimePageH <= kRowSlackMaxDU);
         // The slack under the filter page stays inside the page bound.
         static_assert(kCardRowH - kFilterPageH <= kPageSlackMaxDU);
-        // The pad keeps a usable active height.
-        static_assert(kPadH >= 2 * static_cast<int>(kPadInset)
+        // The pad keeps a usable cube height above the readout band.
+        static_assert(kPadH >= 2 * kPadInset + 2 * kPadReadoutRowH + kPadReadoutGap
                           + static_cast<int>(4 * kPadHandleR));
 
         // The rail band height equals its breakdown sum.
@@ -264,6 +271,18 @@ namespace MarsDSP::GUI
         // The wheel and the arrow keys step in proportion space.
         static constexpr double kWheelStepCoarse = 0.02;
         static constexpr double kWheelStepFine = 0.004;
+        // The wheel delta JUCE reports for one notch. JUCE does not
+        // normalise it across platforms: macOS 10/256 (a precise trackpad
+        // reports 0.5/256 per point, so about 20 points make a notch),
+        // Windows 0.5 * 120/256, Linux 50/256. Dividing a delta by it turns
+        // kWheelStepCoarse into a per-notch step, the arrow-key step.
+#if JUCE_MAC
+        static constexpr double kWheelNotchDelta = 10.0 / 256.0;
+#elif JUCE_WINDOWS
+        static constexpr double kWheelNotchDelta = 60.0 / 256.0;
+#else
+        static constexpr double kWheelNotchDelta = 50.0 / 256.0;
+#endif
         // The idle time that closes a wheel gesture burst.
         static constexpr int kWheelGestureMs = 250;
         // The smallest interactive dimension, design units.

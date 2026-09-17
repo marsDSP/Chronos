@@ -42,18 +42,43 @@ void Footer::timerCallback()
     refreshText_();
 }
 
+void Footer::setHint(const String& hint)
+{
+    if (hint == hint_)
+        return;
+    hint_ = hint;
+    repaint();
+}
+
 void Footer::paint(Graphics& g)
 {
     g.fillAll(Colours::footerBackground);
     g.setColour(Colours::panelBorder);
     g.drawHorizontalLine(0, 0.0f, static_cast<float>(getWidth()));
 
+    const Font f = Fonts::font(Fonts::Weight::Regular, metrics_.font(Metrics::kFooterFont));
+    g.setFont(f);
     g.setColour(Colours::textMuted);
-    g.setFont(Fonts::font(Fonts::Weight::Regular, metrics_.font(Metrics::kFooterFont)));
 
     const auto bounds = getLocalBounds().reduced(metrics_.px(Metrics::kFooterSideMargin), 0);
+    const String version = "v" + versionText_;
     g.drawText(statusText_, bounds, Justification::centredLeft, true);
-    g.drawText("v" + versionText_, bounds, Justification::centredRight, true);
+    g.drawText(version, bounds, Justification::centredRight, true);
+
+    if (hint_.isEmpty())
+        return;
+
+    // The hint takes the width the status and the version leave free,
+    // one side margin clear of each, and ellipsises past that.
+    const int gap = metrics_.px(Metrics::kFooterSideMargin);
+    auto area = bounds;
+    area.removeFromLeft(roundToInt(Fonts::textWidth(f, statusText_)) + gap);
+    area.removeFromRight(roundToInt(Fonts::textWidth(f, version)) + gap);
+    if (area.getWidth() <= 0)
+        return;
+
+    g.setColour(Colours::textPrimary);
+    g.drawText(hint_, area, Justification::centred, true);
 }
 
 void Footer::resized()

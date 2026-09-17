@@ -35,6 +35,9 @@ float textWidth(const Font& font, const String& text);
 // Cache the result so a changing value does not shift the string.
 float digitAdvance(const Font& font);
 
+// Measure text at the fixed digit advance, the width drawFixedAdvanceText draws.
+float fixedAdvanceWidth(const Font& font, const String& text);
+
 // Draw text with a fixed advance for digit glyphs so a value does not shift.
 // Center the result in the given area.
 void drawFixedAdvanceText(Graphics& g, const Font& font, const String& text,

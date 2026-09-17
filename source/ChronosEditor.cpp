@@ -13,8 +13,6 @@ using MarsDSP::GUI::AccentConsumer;
 using MarsDSP::GUI::MetricsConsumer;
 using MarsDSP::GUI::EnablementConsumer;
 using MarsDSP::GUI::EnablementState;
-// Tooltip delay in milliseconds (section 4.5).
-constexpr int kTooltipDelayMs = 700;
 
 // A timer that calls a function on the message thread at a fixed rate.
 class LambdaTimer : public juce::Timer {
@@ -368,18 +366,23 @@ private:
     MarsDSP::GUI::SegmentButtons delayModeSeg_;
 };
 
-// 3. DIFFUSER page of the left card.
+// 3. DIFFUSER page of the left card. The cube pad carries all four
+// continuous parameters and fills the page; the power sits in the pad's
+// top-left corner, the one the oblique cube leaves empty.
 class DiffuserPanel final : public Component, public AccentConsumer, public MetricsConsumer,
                             public EnablementConsumer {
 public:
-    explicit DiffuserPanel(ChronosProcessor& proc, PedalKnob& knobLnf)
-        : modDepthKnob("DIFF MOD", proc.getAPVTS(), diffModDepthParamID, knobLnf),
-          modRateKnob("DIFF RATE", proc.getAPVTS(), diffModRateHzParamID, knobLnf),
-          pad_(proc.getAPVTS(),
-               diffusionParamID.getParamID(),
+    explicit DiffuserPanel(ChronosProcessor& proc, PedalKnob&)
+        : pad_(proc.getAPVTS(),
                diffuserSizeParamID.getParamID(),
+               diffusionParamID.getParamID(),
+               diffModDepthParamID.getParamID(),
+               diffModRateHzParamID.getParamID(),
                enableDiffuserParamID.getParamID())
     {
+        addAndMakeVisible(pad_);
+
+        // Added after the pad so it paints on top of it.
         enableButton.setColours(coreAccent(proc), GUIColours::textMuted);
         enableButton.setTooltip("Enable the diffuser section.");
         enableButton.setTitle("Diffuser Enable");
@@ -387,56 +390,23 @@ public:
         enableAttach = std::make_unique<AudioProcessorValueTreeState::ButtonAttachment>(
             proc.getAPVTS(), enableDiffuserParamID.getParamID(), enableButton);
         addAndMakeVisible(enableButton);
-
-        addAndMakeVisible(pad_);
-        addAndMakeVisible(modDepthKnob);
-        addAndMakeVisible(modRateKnob);
-        modDepthKnob.setTooltip("Set the diffuser modulation depth. Range 0 to 1.5 milliseconds.");
-        modRateKnob.setTooltip("Set the diffuser modulation rate. Range 0.01 to 8 hertz.");
-
-        // Build the diffusion model from the host sample rate.
-        pad_.setSampleRate(proc.getSampleRate());
     }
 
     void resized() override
     {
         const auto m = metrics_;
-        const float w = static_cast<float>(getWidth());
-
-        const float g = m.pxf(static_cast<float>(Metrics::kKnobGutter));
-        const int gapPx = roundToInt(g);
         const int padH = m.px(static_cast<float>(Metrics::kPadH));
-        const int knobRowH = m.px(static_cast<float>(Metrics::kKnobRowH));
-        const int interRowGap = m.px(static_cast<float>(Metrics::kInterRowGap));
+        const int inset = m.px(static_cast<float>(Metrics::kPadInset));
         const int btnSize = m.px(Metrics::kToggleSize);
-        const int labelBand = m.px(static_cast<float>(Metrics::kLabelBandH));
-        const int labelGap = m.px(static_cast<float>(Metrics::kKnobLabelGap));
 
-        // Row 1: the pad.
-        int y = 0;
-        pad_.setBounds(0, y, getWidth(), padH);
-
-        // Row 2: three equal cells. The power sits in the first cell,
-        // centred on the knob body.
-        y += padH + interRowGap;
-        const int cellW = roundToInt((w - 2.0f * g) / 3.0f);
-        const float d2 = knobDiameterPx(m, w, static_cast<float>(knobRowH), 3, false);
-        const int d2Px = roundToInt(d2);
-        const int cellH2 = knobCellHeightPx(m, d2Px);
-
-        enableButton.setBounds((cellW - btnSize) / 2,
-                               y + labelBand + labelGap + (d2Px - btnSize) / 2,
-                               btnSize, btnSize);
-        modDepthKnob.setBounds(cellW + gapPx, y, cellW, cellH2);
-        modRateKnob.setBounds(2 * (cellW + gapPx), y, cellW, cellH2);
+        pad_.setBounds(0, 0, getWidth(), padH);
+        enableButton.setBounds(inset, inset, btnSize, btnSize);
     }
 
     void setAccentColour(Colour c) override
     {
         enableButton.setAccentColour(c);
         pad_.setAccentColour(c);
-        modDepthKnob.setAccentColour(c);
-        modRateKnob.setAccentColour(c);
     }
 
     void setMetrics(const Metrics& m) override
@@ -444,28 +414,18 @@ public:
         metrics_ = m;
         enableButton.setMetrics(m);
         pad_.setMetrics(m);
-        modDepthKnob.setMetrics(m);
-        modRateKnob.setMetrics(m);
         resized();
     }
 
     void setControlsEnabled(const EnablementState& state) override
     {
-        const bool live = state.enableDiffuser;
-        pad_.setEnabled(live);
-        modDepthKnob.setEnabled(live);
-        modRateKnob.setEnabled(live);
+        pad_.setEnabled(state.enableDiffuser);
     }
-
-    // Forward the host sample rate to the pad for the diffusion model.
-    void setSampleRate(double sr) { pad_.setSampleRate(sr); }
 
 private:
     Metrics metrics_;
-    MarsDSP::GUI::PowerButton enableButton;
     MarsDSP::GUI::DiffuserPad pad_;
-    PDLKnob modDepthKnob;
-    PDLKnob modRateKnob;
+    MarsDSP::GUI::PowerButton enableButton;
     std::unique_ptr<AudioProcessorValueTreeState::ButtonAttachment> enableAttach;
 };
 
@@ -665,9 +625,13 @@ private:
 
 ChronosEditor::ChronosEditor(ChronosProcessor& p)
     : AudioProcessorEditor(&p), processorRef(p), tapDisplay_(p), header_(p), footer_(p),
-      tooltipWindow_(this, kTooltipDelayMs)
+      hintRouter_([this](const String& hint) { footer_.setHint(hint); })
 {
     setLookAndFeel(&lnf_);
+
+    // Every hover tip lands in the footer. The router sees the events
+    // of every nested child.
+    addMouseListener(&hintRouter_, true);
 
     addAndMakeVisible(header_);
     addAndMakeVisible(footer_);
@@ -780,6 +744,7 @@ ChronosEditor::ChronosEditor(ChronosProcessor& p)
 
 ChronosEditor::~ChronosEditor()
 {
+    removeMouseListener(&hintRouter_);
     processorRef.setEditorOpen(false);
     paramPoll_.reset();
     stopTimer();

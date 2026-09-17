@@ -162,11 +162,17 @@ public:
 
         layout.add(std::make_unique<AudioParameterBool>(enableDiffuserParamID, "Diffuser", false));
 
+        // The two unit-range diffuser controls read as percent. Without a
+        // string function JUCE prints seven decimals for a zero interval.
+        const auto percentAttrs = Attrs()
+            .withStringFromValueFunction([](float v, int) { return String(roundToInt(v * 100.0f)) + " %"; })
+            .withValueFromStringFunction([](const String& t) { return t.getFloatValue() * 0.01f; });
+
         layout.add(std::make_unique<AudioParameterFloat>(diffusionParamID, "Diffusion",
-            NormalisableRange{0.0f, 1.0f, 0.0f, 2.63852f}, 0.55f));
+            NormalisableRange{0.0f, 1.0f, 0.0f, 2.63852f}, 0.55f, percentAttrs));
 
         layout.add(std::make_unique<AudioParameterFloat>(diffuserSizeParamID, "Diffuser Size",
-            NormalisableRange{0.0f, 1.0f}, 0.5f));
+            NormalisableRange{0.0f, 1.0f}, 0.5f, percentAttrs));
 
         layout.add(std::make_unique<AudioParameterFloat>(diffModDepthParamID, "Diffuser Mod",
             NormalisableRange{0.0f, 1.5f}, 0.30f,
