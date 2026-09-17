@@ -91,12 +91,40 @@ public:
     ValueTree editorSide { "EDITOR" };
 
 private:
-    static constexpr int kStateVersion = 5;
+    static constexpr int kStateVersion = 6;
 
     // Copy of the processor migration path so a preset file
     // loads through the same code as a host session recall.
     void migrateState_ (ValueTree& state, int fromVersion)
     {
+        // v6: the four free EQ bands, at their (flat) defaults when absent.
+        if (fromVersion < 6)
+        {
+            auto hasParam = [&state] (const String& id)
+            {
+                for (int i = 0; i < state.getNumChildren(); ++i)
+                    if (state.getChild (i).getProperty ("id").toString() == id)
+                        return true;
+                return false;
+            };
+            auto addParam = [&state] (const String& id, const float value)
+            {
+                ValueTree c ("PARAM");
+                c.setProperty ("id", id, nullptr);
+                c.setProperty ("value", value, nullptr);
+                state.addChild (c, -1, nullptr);
+            };
+            for (int i = 0; i < kNumEqBands; ++i)
+            {
+                const auto& ids = eqBandParamIDs[static_cast<std::size_t> (i)];
+                if (! hasParam (ids.on.getParamID()))   addParam (ids.on.getParamID(), kEqDefaultOn[i] ? 1.0f : 0.0f);
+                if (! hasParam (ids.type.getParamID())) addParam (ids.type.getParamID(), static_cast<float> (kEqDefaultType[i]));
+                if (! hasParam (ids.freq.getParamID())) addParam (ids.freq.getParamID(), kEqDefaultFreq[i]);
+                if (! hasParam (ids.gain.getParamID())) addParam (ids.gain.getParamID(), kEqDefaultGain);
+                if (! hasParam (ids.q.getParamID()))    addParam (ids.q.getParamID(), kEqDefaultQ);
+            }
+        }
+
         if (fromVersion < 5)
         {
             float delayTimeVal = 375.0f;
@@ -168,9 +196,10 @@ float getDenorm (const AudioProcessorValueTreeState& a, const char* id)
     return raw->load();
 }
 
-// The 27 preset parameter IDs. Bypass is not preset state, so the
-// round trip excludes it: a saved file carries no bypass child, and
-// a load leaves the live bypass value alone.
+// The 47 preset parameter IDs: the 27 core parameters and the four free
+// EQ bands. Bypass is not preset state, so the round trip excludes it: a
+// saved file carries no bypass child, and a load leaves the live bypass
+// value alone.
 static const char* const kParamIDs[] = {
     "gain",          "bits",          "delayTime",     "delayTimeR",
     "timeLink",      "delaySync",     "delayDivision",  "delayMode",
@@ -178,9 +207,25 @@ static const char* const kParamIDs[] = {
     "mix",           "drive",         "adaaOrder",      "feedback",
     "dampHz",        "loopCutHz",      "crossFeed",      "loopDrive",
     "loopSatOrder",   "delayModDepth",  "delayModRateHz", "enableDiffuser",
-    "diffusion",      "diffuserSize",   "diffModDepth",   "diffModRateHz"
+    "diffusion",      "diffuserSize",   "diffModDepth",   "diffModRateHz",
+    "eq1On", "eq1Type", "eq1Freq", "eq1Gain", "eq1Q",
+    "eq2On", "eq2Type", "eq2Freq", "eq2Gain", "eq2Q",
+    "eq3On", "eq3Type", "eq3Freq", "eq3Gain", "eq3Q",
+    "eq4On", "eq4Type", "eq4Freq", "eq4Gain", "eq4Q"
 };
 constexpr int kNumParams = static_cast<int> (std::size (kParamIDs));
+
+// The schema version that introduced a parameter. A fixture file for an
+// older version omits the parameters that did not exist yet, so the
+// migration path is the one under test.
+int introducedIn (const String& id)
+{
+    if (id.startsWith ("eq")) return 6;
+    if (id == "delayTimeR" || id == "timeLink") return 5;
+    if (id == "delayMode") return 4;
+    if (id == "filterMode") return 3;
+    return 1;
+}
 
 // Return a pseudo-random value for one parameter. The seed fixes the value per run.
 float randomDenorm (AudioProcessorValueTreeState& a, const char* id, int seed)
@@ -205,6 +250,10 @@ String buildVersionedXml (int version, const String& rootTag, bool outOfRange, b
 
     for (int i = 0; i < kNumParams; ++i)
     {
+        // A parameter newer than the file's schema is absent, as it would
+        // be in a real file of that version.
+        if (version > 0 && introducedIn (kParamIDs[i]) > version)
+            continue;
         float denorm = 0.5f;
         if (auto* p = probe.apvts.getParameter (kParamIDs[i]))
             denorm = p->getNormalisableRange().convertFrom0to1 (p->getDefaultValue());
@@ -343,14 +392,16 @@ int main()
     }
 
     // ----------------------------------------------------------------
-    // 3. Migration: a v1 through v4 preset file loads through the same
-    //    path as a host session recall of the same tree.
+    // 3. Migration: a v1 through v5 preset file, carrying only the
+    //    parameters that existed at that version, loads through the same
+    //    path as a host session recall of the same tree, and the added
+    //    parameters land on their defaults.
     // ----------------------------------------------------------------
     g_section = "migration";
     {
         const String rootTag = StubProcessor().apvts.state.getType().toString();
 
-        for (int version = 1; version <= 4; ++version)
+        for (int version = 1; version <= 5; ++version)
         {
             StubProcessor procA;
             StubProcessor procB;
@@ -379,6 +430,17 @@ int main()
                 if (std::fabs (a - b) > 1e-6f)
                     FAIL("v{} param {} mismatch: manager {} vs direct {}",
                          version, kParamIDs[i], a, b);
+
+                // A parameter the file did not carry sits at its default.
+                if (introducedIn (kParamIDs[i]) > version)
+                {
+                    auto* p = procB.apvts.getParameter (kParamIDs[i]);
+                    CHECK (p != nullptr);
+                    const float def = p->getNormalisableRange().convertFrom0to1 (p->getDefaultValue());
+                    if (std::fabs (b - def) > 1e-4f)
+                        FAIL("v{} param {} not at its default after migration: {} vs {}",
+                             version, kParamIDs[i], b, def);
+                }
             }
         }
     }

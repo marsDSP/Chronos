@@ -10,7 +10,7 @@
 namespace
 {
     // State schema version written into every saved state tree.
-    constexpr int kStateVersion = 5;
+    constexpr int kStateVersion = 6;
     // Cap on the repeat count for the tail length above self-oscillation.
     constexpr int kMaxTailRepeats = 240;
     // Ring-down margin in samples, added to the delay repeat tail.
@@ -120,7 +120,15 @@ void ChronosProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     const int numChannels = getTotalNumInputChannels() > 1 ? 2 : 1;
     engine.prepare(sampleRate, samplesPerBlock, numChannels);
     engine.reset();
+    engine.resetParams(buildParams_());
 
+    setLatencySamples(MarsDSP::Align::SaturatorAlign::kBudget);
+}
+
+// Build the block-rate engine parameters from the raw APVTS reads. One
+// builder serves prepare and process, so the two cannot drift apart.
+MarsDSP::ChronosEngine::Params ChronosProcessor::buildParams_() const
+{
     MarsDSP::ChronosEngine::Params p{};
     const auto [delL, delR] = computeDelaySamples_();
     p.delaySamplesL = delL;
@@ -131,6 +139,15 @@ void ChronosProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     p.hpfHz = parameters.getRawHpfHz();
     p.lpfHz = parameters.getRawLpfHz();
     p.filterMode = parameters.getRawFilterMode();
+    for (int i = 0; i < kNumEqBands; ++i)
+    {
+        auto& b = p.eq[static_cast<std::size_t>(i)];
+        b.on = parameters.getRawEqOn(i);
+        b.type = parameters.getRawEqType(i);
+        b.freqHz = parameters.getRawEqFreq(i);
+        b.gainDb = parameters.getRawEqGain(i);
+        b.q = parameters.getRawEqQ(i);
+    }
     p.bits = parameters.getRawBits();
     p.adaaOrder = parameters.getADAAOrder();
     p.feedback = parameters.getRawFeedback();
@@ -149,9 +166,7 @@ void ChronosProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     p.delayMode = parameters.getRawDelayMode();
     p.delayModDepth = parameters.getRawDelayModDepth();
     p.delayModRateHz = parameters.getRawDelayModRateHz();
-    engine.resetParams(p);
-
-    setLatencySamples(MarsDSP::Align::SaturatorAlign::kBudget);
+    return p;
 }
 
 std::pair<float, float> ChronosProcessor::computeDelaySamples_() const
@@ -220,35 +235,7 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
     const int numSamples = buffer.getNumSamples();
     if (numSamples <= 0) return;
 
-    MarsDSP::ChronosEngine::Params p{};
-    const auto [delL, delR] = computeDelaySamples_();
-    p.delaySamplesL = delL;
-    p.delaySamplesR = delR;
-    p.driveLin = parameters.getRawDriveLin();
-    p.mix = parameters.getRawMix();
-    p.gainLin = parameters.getRawGainLin();
-    p.hpfHz = parameters.getRawHpfHz();
-    p.lpfHz = parameters.getRawLpfHz();
-    p.filterMode = parameters.getRawFilterMode();
-    p.bits = parameters.getRawBits();
-    p.adaaOrder = parameters.getADAAOrder();
-    p.feedback = parameters.getRawFeedback();
-    p.dampHz = parameters.getRawDampHz();
-    p.loopCutHz = parameters.getRawLoopCutHz();
-    p.crossFeed = parameters.getRawCrossFeed();
-    p.loopDrive = parameters.getRawLoopDrive();
-    p.loopSatOrder = parameters.getRawLoopSatOrder();
-    p.diffusion = parameters.getRawDiffusion();
-    p.diffuserSize = parameters.getRawDiffuserSize();
-    p.diffModDepth = parameters.getRawDiffModDepth();
-    p.diffModRateHz = parameters.getRawDiffModRateHz();
-    p.enableDiffuser = parameters.getRawEnableDiffuser();
-    p.delaySync = parameters.getRawDelaySync();
-    p.delayDivision = parameters.getRawDelayDivision();
-    p.delayMode = parameters.getRawDelayMode();
-    p.delayModDepth = parameters.getRawDelayModDepth();
-    p.delayModRateHz = parameters.getRawDelayModRateHz();
-    engine.setParams(p);
+    engine.setParams(buildParams_());
 
     const std::array<float *, 2> io{
         buffer.getWritePointer(0),
@@ -256,6 +243,9 @@ void ChronosProcessor::processBlock(AudioBuffer<float> &buffer, [[maybe_unused]]
     };
 
     const bool editorOpen = editorOpen_.load(std::memory_order_relaxed);
+
+    // The spectrum feed runs only while an editor is open (H1).
+    engine.setSpectrumSink(editorOpen ? &spectrumFifo_ : nullptr);
 
     float rmsL = 0.0f;
     float rmsR = 0.0f;
@@ -338,10 +328,40 @@ void ChronosProcessor::setStateInformation(const void *data, int sizeInBytes)
 
 void ChronosProcessor::migrateState_(ValueTree &state, int fromVersion)
 {
+    // Schema version 6 added the four free EQ bands (eq1..eq4 On/Type/
+    // Freq/Gain/Q). A missing band takes its default, which is flat, so
+    // a v5 session sounds the same.
     // Schema version 5 added delayTimeR and timeLink parameters.
     // Schema version 4 added the delay mode parameter.
     // Schema version 3 added the output filter mode parameter.
     // The default Digital value needs no conversion.
+    if (fromVersion < 6)
+    {
+        auto hasParam = [&state](const String& id)
+        {
+            for (int i = 0; i < state.getNumChildren(); ++i)
+                if (state.getChild(i).getProperty("id").toString() == id)
+                    return true;
+            return false;
+        };
+        auto addParam = [&state](const String& id, const float value)
+        {
+            ValueTree c("PARAM");
+            c.setProperty("id", id, nullptr);
+            c.setProperty("value", value, nullptr);
+            state.addChild(c, -1, nullptr);
+        };
+        for (int i = 0; i < kNumEqBands; ++i)
+        {
+            const auto& ids = eqBandParamIDs[static_cast<std::size_t>(i)];
+            if (! hasParam(ids.on.getParamID()))   addParam(ids.on.getParamID(), kEqDefaultOn[i] ? 1.0f : 0.0f);
+            if (! hasParam(ids.type.getParamID())) addParam(ids.type.getParamID(), static_cast<float>(kEqDefaultType[i]));
+            if (! hasParam(ids.freq.getParamID())) addParam(ids.freq.getParamID(), kEqDefaultFreq[i]);
+            if (! hasParam(ids.gain.getParamID())) addParam(ids.gain.getParamID(), kEqDefaultGain);
+            if (! hasParam(ids.q.getParamID()))    addParam(ids.q.getParamID(), kEqDefaultQ);
+        }
+    }
+
     if (fromVersion < 5)
     {
         float delayTimeVal = 375.0f;

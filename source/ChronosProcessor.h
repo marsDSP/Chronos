@@ -52,6 +52,10 @@ public:
 
     [[nodiscard]] MarsDSP::Memory::SpscFifo<MarsDSP::GUI::TapFeedFrame, 256>& getTapFifo() noexcept { return tapFifo_; }
 
+    // The post-EQ wet spectrum feed for the FILTER page analyser. The
+    // audio thread writes while an editor is open; the display reads.
+    [[nodiscard]] MarsDSP::ChronosEngine::SpectrumFifo& getSpectrumFifo() noexcept { return spectrumFifo_; }
+
     [[nodiscard]] double getCachedBpm() const noexcept { return cachedBpm_.load(std::memory_order_relaxed); }
 
     // The editor sets this flag on open and clears it on close.
@@ -101,6 +105,7 @@ private:
 
     MarsDSP::ChronosEngine engine;
     MarsDSP::Memory::SpscFifo<MarsDSP::GUI::TapFeedFrame, 256> tapFifo_;
+    MarsDSP::ChronosEngine::SpectrumFifo spectrumFifo_;
 
     // The gesture-scoped undo and redo history. Declared before the
     // preset manager so the manager can record preset-load snapshots.
@@ -126,6 +131,9 @@ private:
 
     // Compute the delay pair in samples, using tempo sync when enabled.
     std::pair<float, float> computeDelaySamples_() const;
+
+    // Build the block-rate engine parameters from the raw APVTS reads.
+    MarsDSP::ChronosEngine::Params buildParams_() const;
 
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChronosProcessor)

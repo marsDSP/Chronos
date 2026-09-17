@@ -156,6 +156,18 @@ namespace MarsDSP::GUI
         static constexpr int kPadReadoutRowH   = 16;
         static constexpr int kPadReadoutGap    = 6;
 
+        // The FILTER page EQ display (section 4.12), design units. The
+        // plot is the display reduced by kPadInset; the frequency labels
+        // sit along its bottom and the dB labels down its right edge, both
+        // inside the plot by kEqLabelInset. Nodes are circles of kEqNodeR;
+        // a press within kEqHitRadius grabs one, and the wheel reaches the
+        // nearest band within kEqWheelReachPx of its column.
+        static constexpr float kEqNodeR        = 5.0f;
+        static constexpr float kEqCurveStroke  = 1.5f;
+        static constexpr float kEqHitRadius    = 10.0f;
+        static constexpr float kEqWheelReachPx = 30.0f;
+        static constexpr float kEqLabelInset   = 3.0f;
+
         // The tab row geometry, design units. The tab underline and the
         // mark dot use the live core accent.
         static constexpr float kTabUnderline = 2.0f;
@@ -201,7 +213,11 @@ namespace MarsDSP::GUI
         static constexpr int kRepeatsPageH   = kFrameOverhead
                                                + kSelectorRowH + kInterRowGap + kKnobRowH
                                                + kInterRowGap + kKnobRowH + kInterRowGap + kSelectorRowH;
-        static constexpr int kFilterPageH    = kFrameOverhead + kSelectorRowH + kInterRowGap + kKnobRowH;
+        // The EQ display height derives from the row height, so the filter
+        // page fills its card exactly: the mode segment on top, the plot
+        // below it.
+        static constexpr int kEqPlotH        = kCardRowH - kFrameOverhead - kSelectorRowH - kInterRowGap;
+        static constexpr int kFilterPageH    = kFrameOverhead + kSelectorRowH + kInterRowGap + kEqPlotH;
 
         static constexpr int kPadH = kCardRowH - kFrameOverhead;
         static constexpr int kDiffuserPageH  = kFrameOverhead + kPadH;
@@ -210,6 +226,10 @@ namespace MarsDSP::GUI
         static_assert(kCardRowH == std::max({kTimePageH, kRepeatsPageH, kFilterPageH, kDiffuserPageH}));
         // The diffuser page fills its card exactly.
         static_assert(kDiffuserPageH == kCardRowH);
+        // The filter page fills its card exactly.
+        static_assert(kFilterPageH == kCardRowH);
+        // The EQ plot keeps room for its labels and a node row.
+        static_assert(kEqPlotH >= 2 * kPadInset + kLabelBandH + static_cast<int>(4 * kEqNodeR));
         // The slack under the time page stays inside the row bound.
         static_assert(kCardRowH - kTimePageH <= kRowSlackMaxDU);
         // The slack under the filter page stays inside the page bound.

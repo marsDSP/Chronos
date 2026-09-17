@@ -6,20 +6,44 @@
 namespace MarsDSP::Presets {
 
 // The current state schema version. Factory presets ship at the current schema.
-static constexpr int kFactoryStateVersion = 5;
+static constexpr int kFactoryStateVersion = 6;
 
-// The 27 preset parameter IDs. Bypass is not preset state: the host
-// owns it, and a preset saved while bypassed must not recall bypassed.
-// Register one dirty listener per ID.
-static const ParameterID kParamIDs[] = {
-    gainParamID,          bitsParamID,         delayTimeParamID,    delayTimeRParamID,
-    timeLinkParamID,       delaySyncParamID,    delayDivisionParamID, delayModeParamID,
-    filterModeParamID,    hpfFreqParamID,      lpfFreqParamID,
-    mixParamID,            driveParamID,        adaaOrderParamID,     feedbackParamID,
-    dampHzParamID,         loopCutHzParamID,    crossFeedParamID,     loopDriveParamID,
-    loopSatOrderParamID,   delayModDepthParamID, delayModRateHzParamID, enableDiffuserParamID,
-    diffusionParamID,      diffuserSizeParamID,  diffModDepthParamID,  diffModRateHzParamID
-};
+// The 47 preset parameter IDs: the 27 core parameters plus the four free
+// EQ bands (5 each). Bypass is not preset state: the host owns it, and a
+// preset saved while bypassed must not recall bypassed. Register one
+// dirty listener per ID.
+static const std::vector<ParameterID>& presetParamIDs()
+{
+    static const std::vector<ParameterID> ids = []
+    {
+        std::vector<ParameterID> v = {
+            gainParamID,          bitsParamID,         delayTimeParamID,    delayTimeRParamID,
+            timeLinkParamID,       delaySyncParamID,    delayDivisionParamID, delayModeParamID,
+            filterModeParamID,    hpfFreqParamID,      lpfFreqParamID,
+            mixParamID,            driveParamID,        adaaOrderParamID,     feedbackParamID,
+            dampHzParamID,         loopCutHzParamID,    crossFeedParamID,     loopDriveParamID,
+            loopSatOrderParamID,   delayModDepthParamID, delayModRateHzParamID, enableDiffuserParamID,
+            diffusionParamID,      diffuserSizeParamID,  diffModDepthParamID,  diffModRateHzParamID
+        };
+        for (const auto& band : eqBandParamIDs)
+            for (const auto* pid : { &band.on, &band.type, &band.freq, &band.gain, &band.q })
+                v.push_back(*pid);
+        return v;
+    }();
+    return ids;
+}
+
+// The schema version that introduced a parameter. A file older than that
+// version may omit it: the processor migration fills the default. Every
+// other omission is a broken file (total recall).
+static int introducedInVersion_ (const String& id)
+{
+    if (id.startsWith("eq")) return 6;
+    if (id == delayTimeRParamID.getParamID() || id == timeLinkParamID.getParamID()) return 5;
+    if (id == delayModeParamID.getParamID()) return 4;
+    if (id == filterModeParamID.getParamID()) return 3;
+    return 1;
+}
 // The tag of the editor state side tree on a serialised root.
 static constexpr const char* kEditorTag = "EDITOR";
 
@@ -64,13 +88,13 @@ void PresetManager::parameterChanged(const String&, float)
 
 void PresetManager::registerParameterListeners_()
 {
-    for (const auto& pid : kParamIDs)
+    for (const auto& pid : presetParamIDs())
         apvtsRef_.addParameterListener(pid.getParamID(), this);
 }
 
 void PresetManager::unregisterParameterListeners_()
 {
-    for (const auto& pid : kParamIDs)
+    for (const auto& pid : presetParamIDs())
         apvtsRef_.removeParameterListener(pid.getParamID(), this);
 }
 
@@ -183,9 +207,15 @@ bool PresetManager::validatePresetXml_(const XmlElement& xml)
 
     // Total recall: every preset parameter must be present. A file that
     // omits one would otherwise load as a hybrid of the file and the
-    // live state.
-    for (const auto& pid : kParamIDs)
+    // live state. A parameter introduced after the file's schema version
+    // is the one exception: the migration fills its default. A file with
+    // no version attribute is held to the current schema.
+    const int fileVersion = xml.hasAttribute("version") ? xml.getIntAttribute("version")
+                                                        : kFactoryStateVersion;
+    for (const auto& pid : presetParamIDs())
     {
+        if (introducedInVersion_(pid.getParamID()) > fileVersion)
+            continue;
         bool found = false;
         for (int i = 0; i < xml.getNumChildElements(); ++i)
         {
@@ -374,7 +404,7 @@ bool PresetManager::loadFactoryPreset(const String& name, const String& bank)
     ValueTree state(apvtsRef_.state.getType());
     state.setProperty("version", kFactoryStateVersion, nullptr);
 
-    for (const auto& pid : kParamIDs)
+    for (const auto& pid : presetParamIDs())
     {
         auto* param = apvtsRef_.getParameter(pid.getParamID());
         if (param == nullptr) continue;

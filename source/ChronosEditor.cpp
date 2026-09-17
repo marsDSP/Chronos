@@ -1,5 +1,6 @@
 #include "ChronosEditor.h"
 #include "gui/controls/SegmentButtons.h"
+#include "gui/filter/EqDisplay.h"
 #include "gui/MetricsConsumer.h"
 
 using Metrics = MarsDSP::GUI::Metrics;
@@ -429,69 +430,51 @@ private:
     std::unique_ptr<AudioProcessorValueTreeState::ButtonAttachment> enableAttach;
 };
 
-// 4. FILTER page of the right card.
+// 4. FILTER page of the right card: the Digital/Analog segment over the
+// spectrum analyser + EQ display, which carries the cut pair and the four
+// free bands and fills the rest of the page.
 class FilterPanel final : public Component, public AccentConsumer, public MetricsConsumer {
 public:
-    explicit FilterPanel(ChronosProcessor& proc, PedalKnob& knobLnf)
-        : hpfKnob("HPF", proc.getAPVTS(), hpfFreqParamID, knobLnf),
-          lpfKnob("LPF", proc.getAPVTS(), lpfFreqParamID, knobLnf),
-          modeSeg_(proc.getAPVTS(), filterModeParamID.getParamID(),
-                   StringArray{"Digital", "Analog"}, coreAccent(proc), false)
+    explicit FilterPanel(ChronosProcessor& proc, PedalKnob&)
+        : modeSeg_(proc.getAPVTS(), filterModeParamID.getParamID(),
+                   StringArray{"Digital", "Analog"}, coreAccent(proc), false),
+          eq_(proc)
     {
         addAndMakeVisible(modeSeg_);
-        addAndMakeVisible(hpfKnob);
-        addAndMakeVisible(lpfKnob);
-        hpfKnob.setTooltip("Set the output high-pass cutoff. Range 20 to 2000 hertz.");
-        lpfKnob.setTooltip("Set the output low-pass cutoff. Range 200 to 20000 hertz.");
+        addAndMakeVisible(eq_);
         modeSeg_.setTooltip("Select the output filter type.");
     }
 
     void resized() override
     {
         const auto m = metrics_;
-        const float w = static_cast<float>(getWidth());
-
-        const float g = m.pxf(static_cast<float>(Metrics::kKnobGutter));
-        const int gapPx = roundToInt(g);
-        const int knobRowH = m.px(static_cast<float>(Metrics::kKnobRowH));
         const int interRowGap = m.px(static_cast<float>(Metrics::kInterRowGap));
         const int selH = m.px(Metrics::kSelectorRowH);
+        const int plotH = m.px(static_cast<float>(Metrics::kEqPlotH));
 
-        // Row 1: the filter-mode segment.
-        int y = 0;
-        modeSeg_.setBounds(0, y, getWidth(), selH);
-
-        // Row 2: two knobs.
-        y += selH + interRowGap;
-        const int cellWPx = roundToInt((w - g) / 2.0f);
-        const float d = knobDiameterPx(m, w, static_cast<float>(knobRowH), 2, false);
-        const int cellH = knobCellHeightPx(m, roundToInt(d));
-        int x = 0;
-        hpfKnob.setBounds(x, y, cellWPx, cellH);  x += cellWPx + gapPx;
-        lpfKnob.setBounds(x, y, cellWPx, cellH);
+        // Row 1: the filter-mode segment. Row 2: the EQ display.
+        modeSeg_.setBounds(0, 0, getWidth(), selH);
+        eq_.setBounds(0, selH + interRowGap, getWidth(), plotH);
     }
 
     void setAccentColour(Colour c) override
     {
         modeSeg_.setAccentColour(c);
-        hpfKnob.setAccentColour(c);
-        lpfKnob.setAccentColour(c);
+        eq_.setAccentColour(c);
     }
 
     void setMetrics(const Metrics& m) override
     {
         metrics_ = m;
-        hpfKnob.setMetrics(m);
-        lpfKnob.setMetrics(m);
         modeSeg_.setMetrics(m);
+        eq_.setMetrics(m);
         resized();
     }
 
 private:
     Metrics metrics_;
-    PDLKnob hpfKnob;
-    PDLKnob lpfKnob;
     MarsDSP::GUI::SegmentButtons modeSeg_;
+    MarsDSP::GUI::EqDisplay eq_;
 };
 
 // 5. The output rail. Absorbs the DRIVE and LEVEL panels.
@@ -664,6 +647,9 @@ ChronosEditor::ChronosEditor(ChronosProcessor& p)
     processorRef.getAPVTS().addParameterListener(adaaOrderParamID.getParamID(), this);
     processorRef.getAPVTS().addParameterListener(hpfFreqParamID.getParamID(), this);
     processorRef.getAPVTS().addParameterListener(lpfFreqParamID.getParamID(), this);
+    for (const auto& band : eqBandParamIDs)
+        for (const auto* pid : { &band.on, &band.type, &band.gain })
+            processorRef.getAPVTS().addParameterListener(pid->getParamID(), this);
 
     paramPoll_ = std::make_unique<LambdaTimer>([this] { pollParameterChanges_(); }, 10);
 
@@ -756,6 +742,9 @@ ChronosEditor::~ChronosEditor()
     processorRef.getAPVTS().removeParameterListener(adaaOrderParamID.getParamID(), this);
     processorRef.getAPVTS().removeParameterListener(hpfFreqParamID.getParamID(), this);
     processorRef.getAPVTS().removeParameterListener(lpfFreqParamID.getParamID(), this);
+    for (const auto& band : eqBandParamIDs)
+        for (const auto* pid : { &band.on, &band.type, &band.gain })
+            processorRef.getAPVTS().removeParameterListener(pid->getParamID(), this);
     setLookAndFeel(nullptr);
 }
 
@@ -811,13 +800,20 @@ void ChronosEditor::parameterChanged(const String& parameterID, const float newV
     else if (parameterID == lpfFreqParamID.getParamID())
         pendingLpf_.store(newValue, std::memory_order_relaxed);
 
+    bool eqBand = false;
+    for (const auto& band : eqBandParamIDs)
+        eqBand = eqBand || parameterID == band.on.getParamID()
+                        || parameterID == band.type.getParamID()
+                        || parameterID == band.gain.getParamID();
+
     if (parameterID == delaySyncParamID.getParamID()
         || parameterID == timeLinkParamID.getParamID()
         || parameterID == enableDiffuserParamID.getParamID()
         || parameterID == adaaOrderParamID.getParamID()
         || parameterID == bypassParamID.getParamID()
         || parameterID == hpfFreqParamID.getParamID()
-        || parameterID == lpfFreqParamID.getParamID())
+        || parameterID == lpfFreqParamID.getParamID()
+        || eqBand)
         triggerAsyncUpdate();
 }
 
@@ -829,12 +825,21 @@ void ChronosEditor::handleAsyncUpdate()
 
 void ChronosEditor::updatePageMarks_()
 {
-    // The filter mark reads the normalised cutoffs. The filter is
-    // engaged when either cutoff leaves its neutral end.
+    // The filter mark reads the normalised cutoffs and the free bands. The
+    // filter is engaged when either cutoff leaves its neutral end or any
+    // free EQ band is on and audible: a notch, or a non-zero gain. The
+    // default flat bell does not mark the tab.
     bool filterEngaged = false;
     if (auto* hpf = processorRef.getAPVTS().getParameter(hpfFreqParamID.getParamID()))
         if (auto* lpf = processorRef.getAPVTS().getParameter(lpfFreqParamID.getParamID()))
             filterEngaged = hpf->getValue() > 0.0f || lpf->getValue() < 1.0f;
+    const auto& params = processorRef.getParameters();
+    for (int i = 0; i < kNumEqBands; ++i)
+    {
+        const bool notch = params.getRawEqType(i) == static_cast<int>(MarsDSP::Filters::ParametricEQ::Type::Notch);
+        const bool audible = notch || std::abs(params.getRawEqGain(i)) > 0.05f;
+        filterEngaged = filterEngaged || (params.getRawEqOn(i) && audible);
+    }
 
     leftCard_.setPageMark(1, processorRef.getParameters().getRawEnableDiffuser());
     rightCard_.setPageMark(1, filterEngaged);

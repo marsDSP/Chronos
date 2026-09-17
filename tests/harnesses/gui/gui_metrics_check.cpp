@@ -190,6 +190,10 @@ const float kDesignConsts[] = {
     static_cast<float>(MarsDSP::GUI::Metrics::kPadReadoutGap),
     MarsDSP::GUI::Metrics::kCubeAxisLen,
     MarsDSP::GUI::Metrics::kCubeRingR,
+    static_cast<float>(MarsDSP::GUI::Metrics::kEqPlotH),
+    MarsDSP::GUI::Metrics::kEqNodeR,
+    MarsDSP::GUI::Metrics::kEqHitRadius,
+    MarsDSP::GUI::Metrics::kEqWheelReachPx,
 };
 constexpr int kNumDesignConsts = static_cast<int>(std::size(kDesignConsts));
 
@@ -443,6 +447,13 @@ int runAll()
                      + 2 * MarsDSP::GUI::Metrics::kPadReadoutRowH
                      + MarsDSP::GUI::Metrics::kPadReadoutGap
                      + static_cast<int>(4 * MarsDSP::GUI::Metrics::kPadHandleR));
+        // The filter page fills its card: the mode row plus the EQ plot.
+        CHECK(MarsDSP::GUI::Metrics::kFilterPageH == MarsDSP::GUI::Metrics::kCardRowH);
+        CHECK(MarsDSP::GUI::Metrics::kEqPlotH
+              == MarsDSP::GUI::Metrics::kCardRowH - MarsDSP::GUI::Metrics::kFrameOverhead
+                     - MarsDSP::GUI::Metrics::kSelectorRowH - MarsDSP::GUI::Metrics::kInterRowGap);
+        // The EQ hit radius clears the node, so a grab never needs pixel aim.
+        CHECK(MarsDSP::GUI::Metrics::kEqHitRadius >= MarsDSP::GUI::Metrics::kEqNodeR);
 
         // The rail height equals its sum.
         CHECK(MarsDSP::GUI::Metrics::kRailH

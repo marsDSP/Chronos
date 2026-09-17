@@ -34,6 +34,27 @@ const ParameterID diffuserSizeParamID{"diffuserSize", 1};
 const ParameterID diffModDepthParamID{"diffModDepth", 1};
 const ParameterID diffModRateHzParamID{"diffModRateHz", 1};
 
+// The four free EQ bands of the FILTER page (slots 1..4). The low and high
+// cuts are hpfFreq / lpfFreq, the OutputFilterStage pair.
+struct EqBandParamIDs {
+    ParameterID on, type, freq, gain, q;
+};
+inline constexpr int kNumEqBands = 4;
+inline const std::array<EqBandParamIDs, kNumEqBands> eqBandParamIDs {{
+    { {"eq1On", 1}, {"eq1Type", 1}, {"eq1Freq", 1}, {"eq1Gain", 1}, {"eq1Q", 1} },
+    { {"eq2On", 1}, {"eq2Type", 1}, {"eq2Freq", 1}, {"eq2Gain", 1}, {"eq2Q", 1} },
+    { {"eq3On", 1}, {"eq3Type", 1}, {"eq3Freq", 1}, {"eq3Gain", 1}, {"eq3Q", 1} },
+    { {"eq4On", 1}, {"eq4Type", 1}, {"eq4Freq", 1}, {"eq4Gain", 1}, {"eq4Q", 1} },
+}};
+// The band types, in ParametricEQ::Type order.
+inline const StringArray kEqTypeNames { "Bell", "Low Shelf", "High Shelf", "Notch" };
+// The band defaults: a low shelf, the one bell that is on, a bell, a high shelf.
+inline constexpr float kEqDefaultFreq[kNumEqBands] = { 150.0f, 1000.0f, 4000.0f, 8000.0f };
+inline constexpr int   kEqDefaultType[kNumEqBands] = { 1, 0, 0, 2 };
+inline constexpr bool  kEqDefaultOn[kNumEqBands]   = { false, true, false, false };
+inline constexpr float kEqDefaultGain = 0.0f;
+inline constexpr float kEqDefaultQ = 0.707f;
+
 template<typename T>
 static void castParameter(const AudioProcessorValueTreeState &apvts, const ParameterID &id, T &destination)
 {
@@ -72,6 +93,15 @@ public:
         castParameter(apvts, diffuserSizeParamID, diffuserSizeParam);
         castParameter(apvts, diffModDepthParamID, diffModDepthParam);
         castParameter(apvts, diffModRateHzParamID, diffModRateHzParam);
+        for (int i = 0; i < kNumEqBands; ++i)
+        {
+            const auto& ids = eqBandParamIDs[static_cast<std::size_t>(i)];
+            castParameter(apvts, ids.on, eqOnParam[static_cast<std::size_t>(i)]);
+            castParameter(apvts, ids.type, eqTypeParam[static_cast<std::size_t>(i)]);
+            castParameter(apvts, ids.freq, eqFreqParam[static_cast<std::size_t>(i)]);
+            castParameter(apvts, ids.gain, eqGainParam[static_cast<std::size_t>(i)]);
+            castParameter(apvts, ids.q, eqQParam[static_cast<std::size_t>(i)]);
+        }
     }
 
     static AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
@@ -209,6 +239,39 @@ public:
                     return v >= 1000.0f ? String(v * 0.001f, 1) + " kHz" : String(v, 1) + " Hz";
                 })));
 
+        // The four free EQ bands. Frequency is log-like over three decades
+        // (632 Hz sits mid-travel); Q is log-like over 0.1..18 (1.34 mid).
+        // Gain text carries its sign so the display readout reads +3.0 dB.
+        {
+            const auto hzText = [](float v, int)
+            {
+                return v >= 1000.0f ? String(v * 0.001f, 2) + " kHz" : String(roundToInt(v)) + " Hz";
+            };
+            const auto gainText = [](float v, int)
+            {
+                const float g = std::abs(v) < 0.05f ? 0.0f : v;
+                return String(g >= 0.0f ? "+" : "") + String(g, 1) + " dB";
+            };
+            const auto qText = [](float v, int) { return String(v, 2); };
+
+            for (int i = 0; i < kNumEqBands; ++i)
+            {
+                const auto& ids = eqBandParamIDs[static_cast<std::size_t>(i)];
+                const String label = "EQ " + String(i + 1);
+                layout.add(std::make_unique<AudioParameterBool>(ids.on, label + " On", kEqDefaultOn[i]));
+                layout.add(std::make_unique<AudioParameterChoice>(ids.type, label + " Type", kEqTypeNames, kEqDefaultType[i]));
+                layout.add(std::make_unique<AudioParameterFloat>(ids.freq, label + " Freq",
+                    NormalisableRange{20.0f, 20000.0f, 0.0f, 0.199f}, kEqDefaultFreq[i],
+                    Attrs().withStringFromValueFunction(hzText)));
+                layout.add(std::make_unique<AudioParameterFloat>(ids.gain, label + " Gain",
+                    NormalisableRange{-18.0f, 18.0f}, kEqDefaultGain,
+                    Attrs().withStringFromValueFunction(gainText)));
+                layout.add(std::make_unique<AudioParameterFloat>(ids.q, label + " Q",
+                    NormalisableRange{0.1f, 18.0f, 0.0f, 0.26f}, kEqDefaultQ,
+                    Attrs().withStringFromValueFunction(qText)));
+            }
+        }
+
         layout.add(std::make_unique<AudioParameterFloat>(mixParamID, "Mix",
             NormalisableRange{0.0f, 100.0f}, 35.0f,
             Attrs().withStringFromValueFunction(
@@ -311,6 +374,33 @@ public:
     [[nodiscard]] float getRawDiffModRateHz() const noexcept { return diffModRateHzParam ? diffModRateHzParam->get() : 0.35f; }
     [[nodiscard]] bool getRawEnableDiffuser() const noexcept { return enableDiffuserParam != nullptr && enableDiffuserParam->get(); }
 
+    // The free EQ bands, slot i in 0..kNumEqBands-1. Null-guarded to the defaults.
+    [[nodiscard]] bool getRawEqOn(const int i) const noexcept
+    {
+        const auto* p = eqOnParam[static_cast<std::size_t>(i)];
+        return p != nullptr ? p->get() : kEqDefaultOn[i];
+    }
+    [[nodiscard]] int getRawEqType(const int i) const noexcept
+    {
+        const auto* p = eqTypeParam[static_cast<std::size_t>(i)];
+        return p != nullptr ? p->getIndex() : kEqDefaultType[i];
+    }
+    [[nodiscard]] float getRawEqFreq(const int i) const noexcept
+    {
+        const auto* p = eqFreqParam[static_cast<std::size_t>(i)];
+        return p != nullptr ? p->get() : kEqDefaultFreq[i];
+    }
+    [[nodiscard]] float getRawEqGain(const int i) const noexcept
+    {
+        const auto* p = eqGainParam[static_cast<std::size_t>(i)];
+        return p != nullptr ? p->get() : kEqDefaultGain;
+    }
+    [[nodiscard]] float getRawEqQ(const int i) const noexcept
+    {
+        const auto* p = eqQParam[static_cast<std::size_t>(i)];
+        return p != nullptr ? p->get() : kEqDefaultQ;
+    }
+
     static constexpr float minDelayTime = 1.0f;
     static constexpr float maxDelayTime = 5000.0f;
 
@@ -351,6 +441,11 @@ private:
     AudioParameterFloat *diffuserSizeParam{};
     AudioParameterFloat *diffModDepthParam{};
     AudioParameterFloat *diffModRateHzParam{};
+    std::array<AudioParameterBool*, kNumEqBands> eqOnParam{};
+    std::array<AudioParameterChoice*, kNumEqBands> eqTypeParam{};
+    std::array<AudioParameterFloat*, kNumEqBands> eqFreqParam{};
+    std::array<AudioParameterFloat*, kNumEqBands> eqGainParam{};
+    std::array<AudioParameterFloat*, kNumEqBands> eqQParam{};
 
     double sampleRate{};
 };

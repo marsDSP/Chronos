@@ -5,6 +5,7 @@
 
 #include "SimdDelayLine.h"
 #include "OutputFilterStage.h"
+#include "ParametricEQ.h"
 #include "StateVariable.h"
 #include "LinearSmoother.h"
 #include "nonlinear/ADAA1.h"
@@ -18,6 +19,7 @@
 #include "math/SaturatorMakeup.h"
 #include "math/Trigonometry.h"
 #include "utils/memory/BumpArena.h"
+#include "utils/memory/SampleFifo.h"
 
 #include <algorithm>
 #include <array>
@@ -34,6 +36,10 @@ namespace MarsDSP
     class ChronosEngine
     {
     public:
+        // The audio-to-GUI spectrum feed. Sized for about ten 30 Hz GUI
+        // ticks at 48 kHz, so a stalled message thread drops blocks late.
+        using SpectrumFifo = Memory::SampleFifo<16384>;
+
         struct Params
         {
             float delaySamplesL = 0.0f;
@@ -44,6 +50,8 @@ namespace MarsDSP
             float hpfHz = 20.0f;
             float lpfHz = 20000.0f;
             int filterMode = 0; // 0: Digital (SimdSVF), 1: Analog (Sallen-Key)
+            // The four free EQ bands after the cut pair (FILTER page).
+            std::array<Filters::ParametricEQ::Band, Filters::ParametricEQ::kNumBands> eq {};
             int bits = 32;
             int adaaOrder = 2;
             // --- feedback / diffusion ---
@@ -77,7 +85,7 @@ namespace MarsDSP
             wetBufCapacity_ = std::max(1, 2 * maxBlockSize);
 
             // The feedback line owns the delay and the in-loop diffuser.
-            constexpr int kNumScratch = 15;
+            constexpr int kNumScratch = 16;
             const auto cap = static_cast<std::size_t>(wetBufCapacity_);
             const std::size_t strideFloats = (cap + 15u) & ~static_cast<std::size_t>(15u);
 
@@ -114,6 +122,7 @@ namespace MarsDSP
             take(wetPostSvfR_);
             take(bypassDryInL_);
             take(bypassDryInR_);
+            take(spectrumMono_);
 
             bypassSmoother_.reset(sampleRate, 0.01);
             bypassDryL_.reset();
@@ -129,6 +138,7 @@ namespace MarsDSP
             driveSmoother_.reset(sampleRate, kRampSeconds);
 
             outFilters_.prepare(sampleRate, numChannels);
+            eq_.prepare(sampleRate, numChannels);
 
             reset();
         }
@@ -137,6 +147,7 @@ namespace MarsDSP
         {
             fbDelay_.reset();
             outFilters_.reset();
+            eq_.reset();
             adaa1L_.reset();
             adaa1R_.reset();
             adaa2L_.reset();
@@ -176,6 +187,7 @@ namespace MarsDSP
             enableDiffuser_ = p.enableDiffuser;
             outFilters_.setModeImmediate(static_cast<Filters::OutputFilterStage::Mode>(p.filterMode));
             outFilters_.setCutoffs(p.hpfHz, p.lpfHz);
+            applyEqParams_(p);
             applyFeedbackParams_(p, /*snap=*/true);
         }
 
@@ -194,8 +206,13 @@ namespace MarsDSP
             enableDiffuser_ = p.enableDiffuser;
             outFilters_.setMode(static_cast<Filters::OutputFilterStage::Mode>(p.filterMode));
             outFilters_.setCutoffs(p.hpfHz, p.lpfHz);
+            applyEqParams_(p);
             applyFeedbackParams_(p, /*snap=*/false);
         }
+
+        // The spectrum feed. Null when no editor is open: the engine then
+        // does no feed work at all. The processor sets it once per block.
+        void setSpectrumSink(SpectrumFifo* sink) noexcept { spectrumSink_ = sink; }
 
         void process(float *const*io, int numChannels, int numSamples) noexcept
         {
@@ -281,7 +298,9 @@ namespace MarsDSP
                     if (hasR) satR_[u] = alignR_.processWet(sat1);
                 }
 
-                // Output filter stage.
+                // Output filter stage: the cut pair, then the free EQ bands
+                // in place. A band that is off is skipped, so with every
+                // band off this is the pre-EQ chain byte for byte.
                 outFilters_.setCutoffs(hpfRamp_[static_cast<std::size_t>(chunk - 1)],
                                        lpfRamp_[static_cast<std::size_t>(chunk - 1)]);
                 outFilters_.process(satL_.data(),
@@ -289,6 +308,26 @@ namespace MarsDSP
                                     wetPostSvfL_.data(),
                                     hasR ? wetPostSvfR_.data() : nullptr,
                                     chunk);
+                eq_.process(wetPostSvfL_.data(), hasR ? wetPostSvfR_.data() : nullptr, chunk);
+
+                // The spectrum feed reads the post-EQ wet signal, mono sum.
+                // Best effort: a full FIFO drops the block.
+                if (spectrumSink_ != nullptr)
+                {
+                    if (hasR)
+                    {
+                        for (int s = 0; s < chunk; ++s)
+                        {
+                            const auto u = static_cast<std::size_t>(s);
+                            spectrumMono_[u] = 0.5f * (wetPostSvfL_[u] + wetPostSvfR_[u]);
+                        }
+                        (void) spectrumSink_->write(spectrumMono_.data(), static_cast<std::size_t>(chunk));
+                    }
+                    else
+                    {
+                        (void) spectrumSink_->write(wetPostSvfL_.data(), static_cast<std::size_t>(chunk));
+                    }
+                }
 
                 // Equal-power dry/wet crossfade.
                 const float mixVal = mixSmoother_.getCurrentValue();
@@ -509,6 +548,12 @@ namespace MarsDSP
             smoothedDrive_ = driveSmoother_.getNextValue();
         }
 
+        void applyEqParams_(const Params &p) noexcept
+        {
+            for (int i = 0; i < Filters::ParametricEQ::kNumBands; ++i)
+                eq_.setBand(i, p.eq[static_cast<std::size_t>(i)]);
+        }
+
         void applyFeedbackParams_(const Params &p, bool snap) noexcept
         {
             Delays::FeedbackDelay::Params fp;
@@ -538,6 +583,8 @@ namespace MarsDSP
         int wetBufCapacity_{0};
 
         Filters::OutputFilterStage outFilters_;
+        Filters::ParametricEQ eq_;
+        SpectrumFifo* spectrumSink_{nullptr};
 
         Nonlinear::ADAA1<Nonlinear::TanhNL> adaa1L_;
         Nonlinear::ADAA1<Nonlinear::TanhNL> adaa1R_;
@@ -606,6 +653,7 @@ namespace MarsDSP
         std::span<float> wetPostSvfR_;
         std::span<float> bypassDryInL_;
         std::span<float> bypassDryInR_;
+        std::span<float> spectrumMono_;
 
         double sampleRate_{0.0};
         int numChannels_{0};

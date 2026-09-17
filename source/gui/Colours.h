@@ -82,6 +82,12 @@ constexpr float kTapCursorAlpha     = 0.6f;
 constexpr float kCubeSliceAlpha     = 0.14f;
 constexpr float kCubeHandleAlpha    = 0.8f;
 
+// EQ display alphas (section 4.12).
+constexpr float kEqSpectrumFillAlpha = 0.16f;
+constexpr float kEqSpectrumLineAlpha = 0.45f;
+constexpr float kEqCurveFillAlpha    = 0.10f;
+constexpr float kEqNodeOffAlpha      = 0.55f;
+
 } // namespace MarsDSP::GUI
 
 #endif

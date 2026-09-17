@@ -86,6 +86,34 @@ if(BUILD_TEST_HARNESSES)
     target_link_libraries(bump_arena_check PRIVATE SharedCode)
     add_executable(spsc_fifo_check harnesses/cd/spsc_fifo_check.cpp)
     target_link_libraries(spsc_fifo_check PRIVATE SharedCode)
+
+    # ParametricEQ response harness: 65536-sample impulse responses through
+    # the FFT vs the analytic magnitude the display draws. -O2 keeps the
+    # 150-odd configurations quick; CHECK/FAIL stay live.
+    add_executable(eq_response_check harnesses/dsp/eq_response_check.cpp)
+    target_link_libraries(eq_response_check PRIVATE SharedCode)
+    if(MSVC)
+        target_compile_options(eq_response_check PRIVATE /O2)
+    else()
+        target_compile_options(eq_response_check PRIVATE -O2)
+    endif()
+
+    # FFT harness: the vendored SoA/SIMD FFT vs a naive DFT. Forced -O2 and
+    # -mfma so the vector stages run, the path the spectrum analyser takes.
+    add_executable(fft_check harnesses/cd/fft_check.cpp)
+    target_link_libraries(fft_check PRIVATE SharedCode)
+    if(MSVC)
+        target_compile_options(fft_check PRIVATE /O2)
+    else()
+        target_compile_options(fft_check PRIVATE -O2)
+    endif()
+    if(APPLE)
+        target_compile_options(fft_check PRIVATE "-Xarch_x86_64" "-mfma")
+    elseif(MSVC)
+        target_compile_options(fft_check PRIVATE "/arch:AVX2")
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64|AMD64)")
+        target_compile_options(fft_check PRIVATE "-mfma")
+    endif()
     add_executable(tap_sim_check harnesses/cd/tap_sim_check.cpp
         ${CMAKE_SOURCE_DIR}/source/gui/tap/TapSimulation.cpp)
     target_link_libraries(tap_sim_check PRIVATE SharedCode)
@@ -99,6 +127,23 @@ if(BUILD_TEST_HARNESSES)
     # Diffusion model harness (rev G7 appendix A). Header-only model vs the shipped Diffuser.
     add_executable(diffusion_halo_check harnesses/gui/diffusion_halo_check.cpp)
     target_link_libraries(diffusion_halo_check PRIVATE SharedCode)
+
+    # Spectrum analyser harness: the FILTER page pipeline, header-only and
+    # JUCE-free. -O2 for the FFT and -mfma for the vector stages.
+    add_executable(spectrum_check harnesses/gui/spectrum_check.cpp)
+    target_link_libraries(spectrum_check PRIVATE SharedCode)
+    if(MSVC)
+        target_compile_options(spectrum_check PRIVATE /O2)
+    else()
+        target_compile_options(spectrum_check PRIVATE -O2)
+    endif()
+    if(APPLE)
+        target_compile_options(spectrum_check PRIVATE "-Xarch_x86_64" "-mfma")
+    elseif(MSVC)
+        target_compile_options(spectrum_check PRIVATE "/arch:AVX2")
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|amd64|AMD64)")
+        target_compile_options(spectrum_check PRIVATE "-mfma")
+    endif()
 
     # Edit history harness (rev G7 appendix A). StubProcessor pattern.
     add_executable(edit_history_check harnesses/gui/edit_history_check.cpp
@@ -582,8 +627,8 @@ if(BUILD_TEST_HARNESSES)
         diffusion_onset_check diffuser_loop_check diffuser_transport_check
         diffuser_ring_check diffuser_decorrelation_check loop_gain_check
         bypass_null_check crossfade_parity dither_check bump_arena_check
-        spsc_fifo_check
-        tap_sim_check tap_tracker_check diffusion_halo_check edit_history_check
+        spsc_fifo_check fft_check eq_response_check
+        tap_sim_check tap_tracker_check diffusion_halo_check spectrum_check edit_history_check
         simd_delay_check frac_delay_tap_check dilog_check nonlinearity_check
         adaa2_check f2_oracle_check f2_minimax_check makeup_table_check
         alias_check simd_delay_parity diffuser_parity nested_allpass_check
